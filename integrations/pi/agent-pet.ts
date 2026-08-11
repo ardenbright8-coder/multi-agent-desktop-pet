@@ -176,8 +176,9 @@ export default function agentPetPiExtension(pi: ExtensionAPI) {
 
 function report(ctx: any, kind: string, details: Record<string, unknown>) {
   try {
-    const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-    const bridge = join(appData, "AgentPetHub", "integrations", "agent-pet-hook.mjs");
+    const root = process.env.AGENT_PET_HUB_HOME
+      || join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
+    const bridge = join(root, "integrations", "agent-pet-hook.mjs");
     const sessionId = ctx?.sessionManager?.getSessionId?.() || ctx?.sessionManager?.getSessionFile?.() || "pi-default";
     const payload = {
       ...details,
@@ -295,8 +296,9 @@ function sendRequest(method: string, params: unknown): Promise<any> {
 }
 
 function discoveryPath() {
-  const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  return join(appData, "AgentPetHub", "runtime", "ipc.json");
+  const root = process.env.AGENT_PET_HUB_HOME
+    || join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
+  return join(root, "runtime", "ipc.json");
 }
 
 function nextSequence(sessionId: string) {

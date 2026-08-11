@@ -90,6 +90,76 @@ test("question and permission stay distinct in renderer snapshots", () => {
   assert.equal(permission?.responseCapability, false);
 });
 
+test("pending interaction survives incidental thinking and working telemetry", () => {
+  const store = new SessionStore();
+  const base = Date.now();
+  store.apply({
+    ...event(1, base, "question.asked"),
+    requestId: "question-1",
+    interaction: {
+      mode: "question",
+      providerRequestId: "question-1",
+      prompts: [{ id: "choice", question: "选哪个？", options: [{ id: "a", label: "A" }], multiple: false, allowCustomInput: false }],
+      responseCapability: true,
+      responseStatus: "pending",
+    },
+  });
+  store.apply({ ...event(1, base + 1, "state.working"), sourceInstance: "hook-source" });
+  store.apply({ ...event(2, base + 2, "state.thinking"), sourceInstance: "hook-source" });
+  const snapshot = store.snapshot(3).sessions[0];
+  assert.equal(snapshot.state, "waiting");
+  assert.equal(snapshot.pendingInteraction?.providerRequestId, "question-1");
+});
+
+test("foreign completion, failure and mismatched resolution cannot dismiss a pending interaction", () => {
+  const store = new SessionStore();
+  const base = Date.now();
+  store.apply({
+    ...event(1, base, "permission.requested"),
+    sourceInstance: "interactive-source",
+    requestId: "permission-1",
+    interaction: {
+      mode: "permission",
+      providerRequestId: "permission-1",
+      prompts: [{ id: "permission", question: "允许吗？", options: [{ id: "once", label: "允许一次" }], multiple: false, allowCustomInput: false }],
+      responseCapability: true,
+      responseStatus: "pending",
+    },
+  });
+  store.apply({ ...event(1, base + 1, "task.completed"), sourceInstance: "telemetry-source" });
+  store.apply({ ...event(2, base + 2, "task.failed"), sourceInstance: "telemetry-source" });
+  store.apply({ ...event(3, base + 3, "permission.resolved"), sourceInstance: "telemetry-source", requestId: "other-request" });
+  const snapshot = store.snapshot(4).sessions[0];
+  assert.equal(snapshot.state, "waiting");
+  assert.equal(snapshot.pendingInteraction?.providerRequestId, "permission-1");
+});
+
+test("matching resolution and same-source terminal state dismiss pending interactions", () => {
+  const store = new SessionStore();
+  const base = Date.now();
+  const asked = {
+    ...event(1, base, "question.asked" as const),
+    sourceInstance: "interactive-source",
+    requestId: "question-1",
+    interaction: {
+      mode: "question" as const,
+      providerRequestId: "question-1",
+      prompts: [{ id: "choice", question: "选哪个？", options: [{ id: "a", label: "A" }], multiple: false, allowCustomInput: false }],
+      responseCapability: true,
+      responseStatus: "pending" as const,
+    },
+  };
+  store.apply(asked);
+  store.apply({ ...event(2, base + 1, "question.resolved"), sourceInstance: "interactive-source", requestId: "question-1" });
+  assert.equal(store.snapshot(2).sessions[0].pendingInteraction, undefined);
+  assert.equal(store.snapshot(2).sessions[0].state, "working");
+
+  store.apply({ ...asked, eventId: "question-2-event", sequence: 3, emittedAt: base + 2, requestId: "question-2", interaction: { ...asked.interaction, providerRequestId: "question-2" } });
+  store.apply({ ...event(4, base + 3, "task.completed"), sourceInstance: "interactive-source" });
+  assert.equal(store.snapshot(4).sessions[0].pendingInteraction, undefined);
+  assert.equal(store.snapshot(4).sessions[0].state, "done");
+});
+
 test("late session end cannot delete a newer live session", () => {
   const store = new SessionStore();
   const base = Date.now();

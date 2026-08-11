@@ -25,6 +25,9 @@ _session_lock = threading.Lock()
 
 
 def _bridge_path() -> Path:
+    root = os.environ.get("AGENT_PET_HUB_HOME")
+    if root:
+        return Path(root) / "integrations" / "agent-pet-hook.mjs"
     appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
     return Path(appdata) / "AgentPetHub" / "integrations" / "agent-pet-hook.mjs"
 

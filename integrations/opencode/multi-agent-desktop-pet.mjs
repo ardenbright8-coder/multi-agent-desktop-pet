@@ -15,8 +15,9 @@ const pendingStateBySession = new Map();
 const sendQueueBySession = new Map();
 
 function discoveryPath() {
-  const root = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  return join(root, "AgentPetHub", "runtime", "ipc.json");
+  const root = process.env.AGENT_PET_HUB_HOME
+    || join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
+  return join(root, "runtime", "ipc.json");
 }
 
 function nextSequence(sessionId) {

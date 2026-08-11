@@ -71,12 +71,26 @@ export class SessionStore {
     }
 
     if (event.kind === "permission.resolved" || event.kind === "question.resolved") {
-      if (!event.requestId || current.pendingInteraction?.providerRequestId === event.requestId) {
+      const resolvesPending = !current.pendingInteraction
+        || !event.requestId
+        || current.pendingInteraction.providerRequestId === event.requestId;
+      if (resolvesPending) {
         current.pendingInteraction = undefined;
         current.pendingSourceInstance = undefined;
+        current.state = "working";
+        current.stateSince = event.emittedAt;
+      } else {
+        current.state = "waiting";
       }
-      current.state = "working";
-      current.stateSince = event.emittedAt;
+      this.sessions.set(key, current);
+      return "accepted";
+    }
+
+    const isIncidentalState = event.kind === "state.thinking" || event.kind === "state.working";
+    const isForeignTerminalState = (event.kind === "task.completed" || event.kind === "task.failed")
+      && event.sourceInstance !== current.pendingSourceInstance;
+    if (current.pendingInteraction && (isIncidentalState || isForeignTerminalState)) {
+      current.state = "waiting";
       this.sessions.set(key, current);
       return "accepted";
     }
@@ -86,7 +100,7 @@ export class SessionStore {
     if (event.kind === "permission.requested" || event.kind === "question.asked") {
       current.pendingInteraction = presentInteraction(event);
       current.pendingSourceInstance = event.sourceInstance;
-    } else if (["task.completed", "task.failed", "state.thinking", "state.working"].includes(event.kind)) {
+    } else if (["task.completed", "task.failed"].includes(event.kind)) {
       current.pendingInteraction = undefined;
       current.pendingSourceInstance = undefined;
     }

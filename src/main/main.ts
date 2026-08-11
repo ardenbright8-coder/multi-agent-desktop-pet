@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
@@ -10,17 +10,23 @@ import { AgentHub } from "./hub";
 import { LocalIpcClient } from "./ipc-client";
 import { LocalIpcServer } from "./ipc-server";
 import { ensureGenericHookBridge, ensureOpenCodeIntegration } from "./integration-manager";
-import { discoveryPath, eventJournalPath, preferencesPath } from "./paths";
+import { appDataRoot, discoveryPath, eventJournalPath, preferencesPath } from "./paths";
 import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 
 const smokeMode = process.argv.includes("--smoke-test");
 const screenshotMode = process.argv.includes("--screenshot-test");
+const lifecycleMode = process.argv.includes("--lifecycle-test");
+const singleInstanceHostMode = process.argv.includes("--single-instance-host-test");
+const testMode = smokeMode || screenshotMode || lifecycleMode || singleInstanceHostMode;
+const skipIntegrationInstall = process.env.AGENT_PET_SKIP_INTEGRATION_INSTALL === "1"
+  || process.argv.includes("--skip-integration-install");
 if (screenshotMode) app.disableHardwareAcceleration();
-if (smokeMode || screenshotMode) {
-  const testRoot = join(tmpdir(), `agent-pet-hub-smoke-${process.pid}`);
+if (testMode && !process.env.AGENT_PET_HUB_HOME) {
+  const mode = smokeMode ? "smoke" : screenshotMode ? "screenshot" : lifecycleMode ? "lifecycle" : "single-instance";
+  const testRoot = join(process.cwd(), ".runtime", "test-runs", `${mode}-${process.pid}`);
   process.env.AGENT_PET_HUB_HOME = testRoot;
-  app.setPath("userData", join(testRoot, "electron"));
 }
+if (process.env.AGENT_PET_HUB_HOME) app.setPath("userData", join(process.env.AGENT_PET_HUB_HOME, "electron"));
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -31,6 +37,7 @@ let cleanupComplete = false;
 let simulatorSequence = 0;
 let positionBeforePanel: { x: number; y: number } | null = null;
 let petPickedUp = false;
+let secondInstanceCount = 0;
 const WINDOW_SIZE = { width: 440, height: 680 };
 const PET_VISIBLE_BOUNDS = { x: 218, y: 392, width: 213, height: 247 };
 const PET_WINDOW_SHAPE = { x: 205, y: 360, width: 235, height: 320 };
@@ -39,11 +46,13 @@ const gotLock = smokeMode || screenshotMode || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => showMainWindow());
+  app.on("second-instance", () => {
+    secondInstanceCount += 1;
+    showMainWindow();
+  });
   app.whenReady().then(bootstrap).catch((error) => {
     logError(error);
-    process.exitCode = 1;
-    app.quit();
+    app.exit(1);
   });
 }
 
@@ -65,7 +74,7 @@ async function bootstrap(): Promise<void> {
     hub.updateServerInfo({ running: false });
     logError(error);
   });
-  if (!smokeMode && !screenshotMode) {
+  if (!testMode && !skipIntegrationInstall) {
     try {
       ensureOpenCodeIntegration();
       ensureGenericHookBridge();
@@ -83,7 +92,6 @@ async function bootstrap(): Promise<void> {
     clearInterval(cleanupTimer);
     await ipcServer.close();
     ipcServer = null;
-    scheduleTestRootCleanup();
     app.quit();
     return;
   }
@@ -92,7 +100,9 @@ async function bootstrap(): Promise<void> {
     mainWindow = createWindow(hub);
     await new Promise<void>((resolve) => mainWindow?.webContents.once("did-finish-load", () => resolve()));
     hub.publish(makeSimulationEvent("permission.requested"));
+    mainWindow.webContents.send("hub:snapshot", hub.snapshot());
     await delay(500);
+    await assertRenderer("!document.querySelector('#interaction-panel').hidden && document.querySelector('#interaction-type').textContent.includes('权限') && document.querySelector('#interaction-heading').textContent.includes('允许')", "Permission panel did not render");
     const screenshotDir = join(process.cwd(), ".runtime");
     mkdirSync(screenshotDir, { recursive: true });
     const permissionImage = await mainWindow.webContents.capturePage();
@@ -100,18 +110,22 @@ async function bootstrap(): Promise<void> {
     hub.publish(makeSimulationEvent("question.asked"));
     mainWindow.webContents.send("hub:snapshot", hub.snapshot());
     await delay(350);
+    await assertRenderer("!document.querySelector('#interaction-panel').hidden && document.querySelector('#interaction-type').textContent.includes('询问') && document.querySelector('#interaction-heading').textContent.includes('滚动')", "Question panel did not render");
     const questionImage = await mainWindow.webContents.capturePage();
     writeFileSync(join(screenshotDir, "preview-question.png"), questionImage.toPNG());
     await mainWindow.webContents.executeJavaScript("document.querySelector('#open-button').click()");
     await delay(350);
+    await assertRenderer("!document.querySelector('#drawer').hidden", "Event drawer did not open");
     const drawerImage = await mainWindow.webContents.capturePage();
     writeFileSync(join(screenshotDir, "preview-drawer.png"), drawerImage.toPNG());
     await mainWindow.webContents.executeJavaScript("document.querySelector('#drawer-close').click(); document.querySelector('#settings-button').click()");
     await delay(350);
+    await assertRenderer("!document.querySelector('#settings-panel').hidden", "Settings panel did not open");
     const settingsImage = await mainWindow.webContents.capturePage();
     writeFileSync(join(screenshotDir, "preview-settings.png"), settingsImage.toPNG());
     await mainWindow.webContents.executeJavaScript("document.querySelector('#settings-close').click(); document.querySelector('#interaction-top-close').click(); document.querySelector('#pet').click()");
     await delay(250);
+    await assertRenderer("document.body.classList.contains('pet-picked-up')", "Pet pickup mode did not activate");
     const moveImage = await mainWindow.webContents.capturePage();
     writeFileSync(join(screenshotDir, "preview-move.png"), moveImage.toPNG());
     await mainWindow.webContents.executeJavaScript("document.querySelector('#pet').click()");
@@ -122,13 +136,13 @@ async function bootstrap(): Promise<void> {
       const poseImage = await mainWindow.webContents.capturePage({ x: 236, y: 448, width: 198, height: 218 });
       writeFileSync(join(screenshotDir, `pose-${pose}.png`), poseImage.toPNG());
     }
+    writeJsonAtomic(join(appDataRoot(), "screenshot-ok.json"), { version: app.getVersion(), panels: 4, poses: poses.length });
     process.stdout.write(`SCREENSHOT_OK ${screenshotDir}\n`);
     shuttingDown = true;
     mainWindow.destroy();
     mainWindow = null;
     await ipcServer.close();
     ipcServer = null;
-    scheduleTestRootCleanup();
     app.quit();
     return;
   }
@@ -161,6 +175,9 @@ async function bootstrap(): Promise<void> {
         app.quit();
       });
   });
+
+  if (lifecycleMode) await runLifecycleTest(hub);
+  if (singleInstanceHostMode) await runSingleInstanceHostTest(hub);
 }
 
 function createWindow(hub: AgentHub): BrowserWindow {
@@ -428,7 +445,91 @@ async function runSmokeTest(hub: AgentHub): Promise<void> {
   if (hits.length < 1 || snapshot.eventCount < 2 || snapshot.sessions.length < 1) {
     throw new Error(`Smoke test failed: hits=${hits.length}, events=${snapshot.eventCount}, sessions=${snapshot.sessions.length}`);
   }
+  writeJsonAtomic(join(appDataRoot(), "smoke-ok.json"), { version: app.getVersion(), events: snapshot.eventCount, hits: hits.length, transport: "named-pipe" });
   process.stdout.write(`SMOKE_OK events=${snapshot.eventCount} hits=${hits.length} endpoint=named-pipe\n`);
+}
+
+async function runLifecycleTest(hub: AgentHub): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed() || !tray) throw new Error("Lifecycle test did not create the window and tray");
+  if (mainWindow.webContents.isLoading()) {
+    await new Promise<void>((resolve) => mainWindow?.webContents.once("did-finish-load", () => resolve()));
+  }
+  await delay(150);
+  mainWindow.showInactive();
+  if (!mainWindow.isVisible()) throw new Error("Lifecycle test could not show the pet window");
+  mainWindow.close();
+  await waitForCondition(() => Boolean(mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()), 1_500);
+  if (mainWindow.isDestroyed() || mainWindow.isVisible()) throw new Error("Closing the pet did not keep it alive in the tray");
+  showMainWindow();
+  if (!mainWindow.isVisible()) throw new Error("Tray-style restore did not show the pet window");
+
+  const client = new LocalIpcClient();
+  const hello = await client.request("hello") as { healthy?: boolean };
+  if (!hello.healthy) throw new Error("Lifecycle test could not reach the background event hub");
+  const permission = makeSimulationEvent("permission.requested");
+  hub.publish(permission);
+  hub.publish({ ...makeSimulationEvent("state.working"), sourceInstance: "lifecycle-telemetry", sessionId: permission.sessionId });
+  const session = hub.snapshot().sessions.find((item) => item.sessionId === permission.sessionId);
+  if (session?.state !== "waiting" || session.pendingInteraction?.eventId !== permission.eventId) {
+    throw new Error("Lifecycle test lost the pending interaction after working telemetry");
+  }
+
+  writeJsonAtomic(join(appDataRoot(), "lifecycle-ok.json"), {
+    version: app.getVersion(),
+    window: "show-hide-restore",
+    tray: "alive",
+    hub: "healthy",
+    pendingInteraction: "preserved",
+  });
+  process.stdout.write("LIFECYCLE_OK window=show-hide-restore tray=alive hub=healthy pending=preserved\n");
+  shuttingDown = true;
+  mainWindow.destroy();
+  mainWindow = null;
+  tray.destroy();
+  tray = null;
+  await ipcServer?.close();
+  ipcServer = null;
+  cleanupComplete = true;
+  app.quit();
+}
+
+async function assertRenderer(expression: string, message: string): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error(message);
+  const passed = await mainWindow.webContents.executeJavaScript(`Boolean(${expression})`);
+  if (!passed) throw new Error(message);
+}
+
+async function runSingleInstanceHostTest(hub: AgentHub): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed() || !tray) throw new Error("Single-instance host did not create the window and tray");
+  const received = await waitForCondition(() => secondInstanceCount > 0, 8_000);
+  if (!received) throw new Error("First instance did not receive the second-instance signal");
+  const client = new LocalIpcClient();
+  const hello = await client.request("hello") as { healthy?: boolean };
+  if (!hello.healthy || !mainWindow.isVisible()) throw new Error("First instance was not healthy and visible after the second launch");
+  writeJsonAtomic(join(appDataRoot(), "single-instance-ok.json"), {
+    version: app.getVersion(),
+    secondInstanceSignals: secondInstanceCount,
+    firstInstance: "healthy",
+  });
+  process.stdout.write(`SINGLE_INSTANCE_OK signals=${secondInstanceCount} first=healthy\n`);
+  shuttingDown = true;
+  mainWindow.destroy();
+  mainWindow = null;
+  tray.destroy();
+  tray = null;
+  await ipcServer?.close();
+  ipcServer = null;
+  cleanupComplete = true;
+  app.quit();
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await delay(25);
+  }
+  return false;
 }
 
 function logError(error: unknown): void {
@@ -443,12 +544,4 @@ function logError(error: unknown): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function scheduleTestRootCleanup(): void {
-  const root = process.env.AGENT_PET_HUB_HOME;
-  if (!root) return;
-  app.once("quit", () => {
-    try { rmSync(root, { recursive: true, force: true }); } catch { /* Windows can release cache files after process exit. */ }
-  });
 }
