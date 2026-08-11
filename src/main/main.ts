@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
-import type { AgentEvent, EventKind, SearchQuery } from "../shared/protocol";
+import type { AgentEvent, EventKind, InteractionResponseInput, SearchQuery } from "../shared/protocol";
 import { PROTOCOL_VERSION } from "../shared/protocol";
 import { writeJsonAtomic } from "./atomic-file";
 import { AgentHub } from "./hub";
@@ -11,12 +11,15 @@ import { LocalIpcClient } from "./ipc-client";
 import { LocalIpcServer } from "./ipc-server";
 import { ensureGenericHookBridge, ensureOpenCodeIntegration } from "./integration-manager";
 import { discoveryPath, eventJournalPath, preferencesPath } from "./paths";
+import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 
 const smokeMode = process.argv.includes("--smoke-test");
 const screenshotMode = process.argv.includes("--screenshot-test");
 if (screenshotMode) app.disableHardwareAcceleration();
 if (smokeMode || screenshotMode) {
-  process.env.AGENT_PET_HUB_HOME = join(tmpdir(), `agent-pet-hub-smoke-${process.pid}`);
+  const testRoot = join(tmpdir(), `agent-pet-hub-smoke-${process.pid}`);
+  process.env.AGENT_PET_HUB_HOME = testRoot;
+  app.setPath("userData", join(testRoot, "electron"));
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -26,6 +29,11 @@ let shuttingDown = false;
 let quitCleanupStarted = false;
 let cleanupComplete = false;
 let simulatorSequence = 0;
+let positionBeforePanel: { x: number; y: number } | null = null;
+let petPickedUp = false;
+const WINDOW_SIZE = { width: 440, height: 680 };
+const PET_VISIBLE_BOUNDS = { x: 218, y: 392, width: 213, height: 247 };
+const PET_WINDOW_SHAPE = { x: 205, y: 360, width: 235, height: 320 };
 
 const gotLock = smokeMode || screenshotMode || app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -57,11 +65,13 @@ async function bootstrap(): Promise<void> {
     hub.updateServerInfo({ running: false });
     logError(error);
   });
-  try {
-    ensureOpenCodeIntegration();
-    ensureGenericHookBridge();
-  } catch (error) {
-    logError(error);
+  if (!smokeMode && !screenshotMode) {
+    try {
+      ensureOpenCodeIntegration();
+      ensureGenericHookBridge();
+    } catch (error) {
+      logError(error);
+    }
   }
 
   setupIpcHandlers(hub);
@@ -73,8 +83,7 @@ async function bootstrap(): Promise<void> {
     clearInterval(cleanupTimer);
     await ipcServer.close();
     ipcServer = null;
-    const smokeRoot = process.env.AGENT_PET_HUB_HOME;
-    if (smokeRoot) rmSync(smokeRoot, { recursive: true, force: true });
+    scheduleTestRootCleanup();
     app.quit();
     return;
   }
@@ -88,6 +97,11 @@ async function bootstrap(): Promise<void> {
     mkdirSync(screenshotDir, { recursive: true });
     const permissionImage = await mainWindow.webContents.capturePage();
     writeFileSync(join(screenshotDir, "preview-permission.png"), permissionImage.toPNG());
+    hub.publish(makeSimulationEvent("question.asked"));
+    mainWindow.webContents.send("hub:snapshot", hub.snapshot());
+    await delay(350);
+    const questionImage = await mainWindow.webContents.capturePage();
+    writeFileSync(join(screenshotDir, "preview-question.png"), questionImage.toPNG());
     await mainWindow.webContents.executeJavaScript("document.querySelector('#open-button').click()");
     await delay(350);
     const drawerImage = await mainWindow.webContents.capturePage();
@@ -96,11 +110,15 @@ async function bootstrap(): Promise<void> {
     await delay(350);
     const settingsImage = await mainWindow.webContents.capturePage();
     writeFileSync(join(screenshotDir, "preview-settings.png"), settingsImage.toPNG());
-    await mainWindow.webContents.executeJavaScript("document.querySelector('#settings-close').click()");
-    const poses = ["idle", "running-right", "running-left", "waving", "jumping", "failed", "waiting", "running", "review"];
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#settings-close').click(); document.querySelector('#interaction-top-close').click(); document.querySelector('#pet').click()");
+    await delay(250);
+    const moveImage = await mainWindow.webContents.capturePage();
+    writeFileSync(join(screenshotDir, "preview-move.png"), moveImage.toPNG());
+    await mainWindow.webContents.executeJavaScript("document.querySelector('#pet').click()");
+    const poses = ["idle", "thinking", "waving", "jumping", "failed", "waiting", "running", "working-focus", "working-rope", "review"];
     for (const pose of poses) {
       await mainWindow.webContents.executeJavaScript(`document.body.dataset.petPose = ${JSON.stringify(pose)}`);
-      await delay(pose === "jumping" ? 390 : pose.startsWith("running-") ? 210 : 180);
+      await delay(pose === "jumping" ? 390 : 210);
       const poseImage = await mainWindow.webContents.capturePage({ x: 236, y: 448, width: 198, height: 218 });
       writeFileSync(join(screenshotDir, `pose-${pose}.png`), poseImage.toPNG());
     }
@@ -110,13 +128,15 @@ async function bootstrap(): Promise<void> {
     mainWindow = null;
     await ipcServer.close();
     ipcServer = null;
-    const screenshotRoot = process.env.AGENT_PET_HUB_HOME;
-    if (screenshotRoot) rmSync(screenshotRoot, { recursive: true, force: true });
+    scheduleTestRootCleanup();
     app.quit();
     return;
   }
 
   mainWindow = createWindow(hub);
+  screen.on("display-added", keepWindowOnVisibleDisplay);
+  screen.on("display-removed", keepWindowOnVisibleDisplay);
+  screen.on("display-metrics-changed", keepWindowOnVisibleDisplay);
   tray = createTray(hub);
   hub.on("snapshot", (snapshot) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("hub:snapshot", snapshot);
@@ -132,6 +152,7 @@ async function bootstrap(): Promise<void> {
     if (quitCleanupStarted) return;
     quitCleanupStarted = true;
     shuttingDown = true;
+    persistWindowPosition();
     Promise.resolve(ipcServer?.close())
       .catch(logError)
       .finally(() => {
@@ -143,15 +164,16 @@ async function bootstrap(): Promise<void> {
 }
 
 function createWindow(hub: AgentHub): BrowserWindow {
-  const bounds = loadWindowBounds();
+  const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
-  const width = 440;
-  const height = 680;
+  const fallback = defaultWindowPosition(workArea, WINDOW_SIZE);
+  const bounds = saved
+    ? clampWindowPosition(saved, screen.getAllDisplays().map((display) => display.workArea), WINDOW_SIZE, PET_VISIBLE_BOUNDS)
+    : fallback;
   const win = new BrowserWindow({
-    width,
-    height,
-    x: bounds?.x ?? workArea.x + workArea.width - width - 28,
-    y: bounds?.y ?? workArea.y + workArea.height - height - 22,
+    ...WINDOW_SIZE,
+    x: bounds.x,
+    y: bounds.y,
     transparent: true,
     frame: false,
     resizable: false,
@@ -169,7 +191,7 @@ function createWindow(hub: AgentHub): BrowserWindow {
   });
   win.setAlwaysOnTop(true, "floating");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setIgnoreMouseEvents(true, { forward: true });
+  win.setShape([PET_WINDOW_SHAPE]);
   win.loadFile(join(__dirname, "..", "renderer", "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.once("ready-to-show", () => {
@@ -177,20 +199,11 @@ function createWindow(hub: AgentHub): BrowserWindow {
     win.webContents.send("hub:snapshot", hub.snapshot());
   });
   let saveTimer: NodeJS.Timeout | null = null;
-  let previousX = win.getBounds().x;
   win.on("move", () => {
-    const currentX = win.getBounds().x;
-    const deltaX = currentX - previousX;
-    if (Math.abs(deltaX) >= 2 && !win.webContents.isDestroyed()) {
-      win.webContents.send("window:pet-motion", deltaX < 0 ? "left" : "right");
-    }
-    previousX = currentX;
+    if (positionBeforePanel) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      if (!win.isDestroyed()) {
-        const { x, y } = win.getBounds();
-        writeJsonAtomic(preferencesPath(), { x, y });
-      }
+      if (!win.isDestroyed()) persistWindowPosition();
     }, 300);
   });
   win.on("close", (event) => {
@@ -206,14 +219,39 @@ function setupIpcHandlers(hub: AgentHub): void {
   ipcMain.handle("hub:snapshot", () => hub.snapshot());
   ipcMain.handle("hub:search", (_event, query: SearchQuery) => hub.search(query || {}));
   ipcMain.handle("hub:diagnostics", () => hub.diagnostics());
+  ipcMain.handle("hub:interaction-respond", (_event, response: InteractionResponseInput) => {
+    const result = hub.submitInteractionResponse(response);
+    if (response?.agent === "simulator") {
+      const claim = hub.claimInteractionResponse({
+        eventId: response.eventId,
+        agent: response.agent,
+        sessionId: response.sessionId,
+        providerRequestId: response.providerRequestId,
+        sourceInstance: "desktop-simulator",
+      });
+      if (claim) hub.completeInteractionResponse({ responseId: claim.responseId, claimToken: claim.claimToken, success: true });
+    }
+    return result;
+  });
   ipcMain.handle("hub:simulate", (_event, requestedKind?: string) => {
     const event = makeSimulationEvent(requestedKind as EventKind | undefined);
     hub.publish(event);
     return hub.snapshot();
   });
-  ipcMain.on("window:mouse-passthrough", (_event, enabled: boolean) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setIgnoreMouseEvents(Boolean(enabled), { forward: true });
+  ipcMain.on("window:move-to-pointer", (_event, position: { screenX?: unknown; screenY?: unknown; anchorX?: unknown; anchorY?: unknown }) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const values = [position?.screenX, position?.screenY, position?.anchorX, position?.anchorY];
+    if (!values.every(Number.isFinite)) return;
+    const x = Math.round(Number(position.screenX) - Number(position.anchorX));
+    const y = Math.round(Number(position.screenY) - Number(position.anchorY));
+    mainWindow.setPosition(x, y, false);
   });
+  ipcMain.on("window:finish-move", () => keepWindowOnVisibleDisplay());
+  ipcMain.on("window:pickup-state", (_event, pickedUp: boolean) => {
+    petPickedUp = Boolean(pickedUp);
+    updateWindowShape();
+  });
+  ipcMain.on("window:panel-visibility", (_event, visible: boolean) => setPanelVisibility(Boolean(visible)));
   ipcMain.on("window:hide", () => mainWindow?.hide());
 }
 
@@ -254,11 +292,61 @@ function loadWindowBounds(): { x: number; y: number } | null {
   }
 }
 
+function persistWindowPosition(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const { x, y } = mainWindow.getBounds();
+  writeJsonAtomic(preferencesPath(), { x, y });
+}
+
+function keepWindowOnVisibleDisplay(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const workAreas = screen.getAllDisplays().map((display) => display.workArea);
+  if (positionBeforePanel) {
+    positionBeforePanel = clampWindowPosition(positionBeforePanel, workAreas, WINDOW_SIZE, PET_VISIBLE_BOUNDS);
+    const currentPanelPosition = mainWindow.getBounds();
+    const visiblePanelPosition = clampWindowPosition(currentPanelPosition, workAreas, WINDOW_SIZE);
+    if (visiblePanelPosition.x !== currentPanelPosition.x || visiblePanelPosition.y !== currentPanelPosition.y) {
+      mainWindow.setPosition(visiblePanelPosition.x, visiblePanelPosition.y);
+    }
+    return;
+  }
+  const current = mainWindow.getBounds();
+  const next = clampWindowPosition(current, workAreas, WINDOW_SIZE, PET_VISIBLE_BOUNDS);
+  if (next.x !== current.x || next.y !== current.y) mainWindow.setPosition(next.x, next.y);
+  persistWindowPosition();
+}
+
+function setPanelVisibility(visible: boolean): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const workAreas = screen.getAllDisplays().map((display) => display.workArea);
+  if (visible) {
+    if (positionBeforePanel) return;
+    positionBeforePanel = mainWindow.getBounds();
+    const next = clampWindowPosition(positionBeforePanel, workAreas, WINDOW_SIZE);
+    mainWindow.setPosition(next.x, next.y, false);
+    updateWindowShape();
+    return;
+  }
+  if (!positionBeforePanel) return;
+  const restore = clampWindowPosition(positionBeforePanel, workAreas, WINDOW_SIZE, PET_VISIBLE_BOUNDS);
+  positionBeforePanel = null;
+  mainWindow.setPosition(restore.x, restore.y, false);
+  persistWindowPosition();
+  updateWindowShape();
+}
+
+function updateWindowShape(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setShape(positionBeforePanel || petPickedUp ? [{ x: 0, y: 0, ...WINDOW_SIZE }] : [PET_WINDOW_SHAPE]);
+}
+
 function makeSimulationEvent(kind?: EventKind): AgentEvent {
-  const kinds: EventKind[] = ["state.thinking", "state.working", "permission.requested", "task.completed", "task.failed"];
+  const kinds: EventKind[] = ["state.thinking", "state.working", "question.asked", "permission.requested", "task.completed", "task.failed"];
   const selected = kind && kinds.includes(kind) ? kind : kinds[simulatorSequence % kinds.length];
   simulatorSequence += 1;
   const isPermission = selected === "permission.requested";
+  const isQuestion = selected === "question.asked";
+  const requestId = isPermission || isQuestion ? randomUUID() : undefined;
   return {
     version: 1,
     eventId: randomUUID(),
@@ -270,12 +358,53 @@ function makeSimulationEvent(kind?: EventKind): AgentEvent {
     kind: selected,
     project: "多 Agent 桌面宠物",
     title: "验证统一通知链路",
-    summary: isPermission ? "正在实现实时内容索引" : stateSummary(selected),
-    reason: isPermission ? "需要写入索引模块并运行测试" : "这是一条本地模拟事件",
-    tool: isPermission ? "apply_patch" : selected === "state.working" ? "test" : undefined,
-    target: isPermission ? "src/main/event-index.ts" : undefined,
+    summary: isPermission ? "准备修改事件索引并运行验证" : isQuestion ? "正在确定长内容在面板里的呈现方式" : stateSummary(selected),
+    reason: isPermission ? "现有索引缺少交互状态，需要写入模块才能完成这次实现" : isQuestion ? "长说明必须保持可读，同时底部操作不能被滚出窗口" : "这是一条本地模拟事件",
+    tool: isPermission ? "apply_patch" : selected === "state.working" ? "test" : isQuestion ? "question" : undefined,
+    target: isPermission ? "src/main/event-index.ts" : isQuestion ? "面板内容较长时采用哪种布局" : undefined,
     paths: isPermission ? ["src/main/event-index.ts"] : undefined,
-    requestId: isPermission ? randomUUID() : undefined,
+    requestId,
+    interaction: isPermission ? {
+      mode: "permission",
+      title: "允许修改事件索引并运行测试吗？",
+      providerRequestId: requestId,
+      prompts: [{
+        id: "permission",
+        question: "请选择这次权限范围",
+        multiple: false,
+        allowCustomInput: false,
+        options: [
+          { id: "once", label: "允许一次", value: "once", description: "只执行当前这次修改和验证", recommended: true },
+          { id: "reject", label: "拒绝", value: "reject", description: "不执行，Agent 返回原窗口等待" },
+        ],
+      }],
+      recommendation: "允许一次，范围只覆盖列出的文件和测试",
+      action: "修改文件并运行项目测试",
+      resources: ["src/main/event-index.ts", "项目测试命令"],
+      impact: "会改动一个源码文件并启动本地测试进程，不删除文件。",
+      rollback: "源码有 Git 时可以回退；测试进程结束后不常驻。",
+      unknowns: "测试耗时还没核实",
+      responseCapability: true,
+      responseStatus: "pending",
+    } : isQuestion ? {
+      mode: "question",
+      title: "长内容应该怎么滚动？",
+      providerRequestId: requestId,
+      prompts: [{
+        id: "layout",
+        question: "面板内容超过一屏时，操作区应该放在哪里？",
+        multiple: false,
+        allowCustomInput: true,
+        options: [
+          { id: "sticky", label: "固定底部操作", value: "固定底部操作", description: "正文单独滚动，关闭和确认始终可用", recommended: true },
+          { id: "all-scroll", label: "整页一起滚动", value: "整页一起滚动", description: "结构简单，但长内容时要滚到底才能操作" },
+        ],
+      }],
+      recommendation: "固定底部操作，长说明只在正文区域滚动",
+      impact: "只影响面板布局和操作可达性，不改 Agent 原始选项。",
+      responseCapability: true,
+      responseStatus: "pending",
+    } : undefined,
   };
 }
 
@@ -314,4 +443,12 @@ function logError(error: unknown): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function scheduleTestRootCleanup(): void {
+  const root = process.env.AGENT_PET_HUB_HOME;
+  if (!root) return;
+  app.once("quit", () => {
+    try { rmSync(root, { recursive: true, force: true }); } catch { /* Windows can release cache files after process exit. */ }
+  });
 }

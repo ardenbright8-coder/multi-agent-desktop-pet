@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { APP_ID, MAX_FRAME_BYTES, PROTOCOL_VERSION, type AgentEvent, type RpcRequest, type RpcResponse, type SearchHit, type SearchQuery } from "../shared/protocol";
+import { APP_ID, MAX_FRAME_BYTES, PROTOCOL_VERSION, type AgentEvent, type InteractionResponseClaim, type RpcRequest, type RpcResponse, type SearchHit, type SearchQuery } from "../shared/protocol";
 import { discoveryPath } from "./paths";
 import type { DiscoveryDocument } from "./ipc-server";
 
@@ -24,6 +24,14 @@ export class LocalIpcClient {
 
   async search(query: SearchQuery): Promise<SearchHit[]> {
     return this.request("search.query", query) as Promise<SearchHit[]>;
+  }
+
+  claimInteraction(binding: Record<string, string>): Promise<InteractionResponseClaim | null> {
+    return this.request("interaction.response.claim", binding) as Promise<InteractionResponseClaim | null>;
+  }
+
+  completeInteraction(responseId: string, claimToken: string, success: boolean, error?: string): Promise<unknown> {
+    return this.request("interaction.response.complete", { responseId, claimToken, success, error });
   }
 
   private readDiscovery(): DiscoveryDocument {

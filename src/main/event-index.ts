@@ -14,6 +14,7 @@ interface SearchDocument {
   tool: string;
   target: string;
   paths: string;
+  interaction: string;
   all: string;
 }
 
@@ -43,7 +44,7 @@ export function multilingualTokenize(input: string): string[] {
 export class EventIndex {
   private readonly documents = new Map<string, SearchDocument>();
   private readonly index = new MiniSearch<SearchDocument>({
-    fields: ["title", "summary", "reason", "tool", "target", "paths", "agent", "project", "sessionId", "kind", "all"],
+    fields: ["title", "summary", "reason", "tool", "target", "paths", "interaction", "agent", "project", "sessionId", "kind", "all"],
     storeFields: ["event", "agent", "project", "sessionId", "kind"],
     tokenize: multilingualTokenize,
     processTerm: (term) => term,
@@ -51,7 +52,7 @@ export class EventIndex {
       prefix: true,
       fuzzy: 0.15,
       combineWith: "AND",
-      boost: { title: 4, summary: 3, tool: 2.5, target: 2.5, paths: 2.5, project: 2, reason: 1.5 },
+      boost: { title: 4, summary: 3, interaction: 2.8, tool: 2.5, target: 2.5, paths: 2.5, project: 2, reason: 1.5 },
     },
   });
 
@@ -112,6 +113,13 @@ export class EventIndex {
 }
 
 function toDocument(event: AgentEvent): SearchDocument {
+  const interaction = event.interaction ? [
+    event.interaction.title,
+    event.interaction.recommendation,
+    event.interaction.action,
+    event.interaction.resources?.join(" "),
+    ...event.interaction.prompts.flatMap((prompt) => [prompt.question, ...prompt.options.flatMap((option) => [option.label, option.description])]),
+  ].filter(Boolean).join(" ") : "";
   const fields = [
     event.title,
     event.summary,
@@ -119,6 +127,7 @@ function toDocument(event: AgentEvent): SearchDocument {
     event.tool,
     event.target,
     event.paths?.join(" "),
+    interaction,
     event.agent,
     event.project,
     event.sessionId,
@@ -137,6 +146,7 @@ function toDocument(event: AgentEvent): SearchDocument {
     tool: event.tool || "",
     target: event.target || "",
     paths: event.paths?.join(" ") || "",
+    interaction,
     all: fields,
   };
 }

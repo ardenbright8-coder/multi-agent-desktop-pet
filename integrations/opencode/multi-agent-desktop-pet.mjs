@@ -26,12 +26,12 @@ function nextSequence(sessionId) {
 }
 
 function sessionIdFrom(event) {
-  const properties = event?.properties || {};
+  const properties = event?.properties || event?.data || {};
   return properties.sessionID || properties.sessionId || properties.info?.id || event?.sessionID || "opencode-default";
 }
 
 function rememberContext(event, fallbackDirectory) {
-  const properties = event?.properties || {};
+  const properties = event?.properties || event?.data || {};
   const info = properties.info || {};
   const sessionId = sessionIdFrom(event);
   const previous = contextBySession.get(sessionId) || {};
@@ -62,6 +62,7 @@ function makeEvent(sessionId, kind, details = {}) {
     target: details.target,
     paths: details.paths,
     requestId: details.requestId,
+    interaction: details.interaction,
     metadata: sanitizeMetadataForWire(details.metadata),
   };
 }
@@ -177,8 +178,8 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function translateEvent(event, directory) {
-  const properties = event?.properties || {};
+function translateEvent(event, directory, ctx) {
+  const properties = event?.properties || event?.data || {};
   const sessionId = sessionIdFrom(event);
   rememberContext(event, directory);
   switch (event?.type) {
@@ -216,39 +217,94 @@ function translateEvent(event, directory) {
     case "permission.updated":
     case "permission.v2.asked":
     case "permission.asked": {
-      const permission = properties.permission || properties.type || "unknown";
+      const permission = properties.action || properties.permission || properties.type || "unknown";
       const metadata = properties.metadata && typeof properties.metadata === "object" ? properties.metadata : {};
-      const patterns = Array.isArray(properties.patterns) ? properties.patterns : properties.pattern ? [properties.pattern] : [];
+      const patterns = Array.isArray(properties.resources)
+        ? properties.resources
+        : Array.isArray(properties.patterns) ? properties.patterns : properties.pattern ? [properties.pattern] : [];
       const target = targetFrom(metadata, patterns);
-      publish(makeEvent(sessionId, "permission.requested", {
+      const requestId = properties.id || properties.requestID;
+      const supportsAlways = (Array.isArray(properties.always) && properties.always.length > 0)
+        || (Array.isArray(properties.save) && properties.save.length > 0);
+      const options = [
+        { id: "once", label: "允许一次", value: "once", description: "只允许当前这次操作" },
+        ...(supportsAlways ? [{ id: "always", label: "以后也允许", value: "always", description: "保存当前 Provider 给出的匹配范围" }] : []),
+        { id: "reject", label: "拒绝", value: "reject", description: "不执行当前操作" },
+      ];
+      const interaction = {
+        mode: "permission",
+        title: properties.title || `是否允许 ${permission}？`,
+        providerRequestId: requestId,
+        prompts: [{ id: "permission", question: "请选择权限范围", options, multiple: false, allowCustomInput: false }],
+        recommendation: stringValue(properties.recommendation, metadata.recommendation),
+        action: permission,
+        resources: patterns,
+        impact: stringValue(properties.impact, metadata.impact),
+        rollback: stringValue(properties.rollback, metadata.rollback),
+        unknowns: stringValue(properties.unknowns, metadata.unknowns),
+        responseCapability: Boolean(requestId && canReply(ctx)),
+        responseStatus: "pending",
+      };
+      const outbound = makeEvent(sessionId, "permission.requested", {
         summary: contextBySession.get(sessionId)?.title || "正在处理当前任务",
         reason: properties.message || `OpenCode 请求使用 ${permission} 继续执行`,
         tool: permission,
         target,
         paths: patterns.slice(0, 20),
-        requestId: properties.id || properties.requestID,
+        requestId,
+        interaction,
         metadata,
-      }));
+      });
+      publishInteraction(outbound, interaction, ctx);
       break;
     }
+    case "permission.v2.replied":
     case "permission.replied":
       publish(makeEvent(sessionId, "permission.resolved", {
         summary: "权限请求已经在 OpenCode 中处理",
         requestId: properties.requestID || properties.id || properties.permissionID,
       }));
       break;
+    case "question.v2.asked":
     case "question.asked": {
       const questions = Array.isArray(properties.questions) ? properties.questions : [];
       const target = questions.map((question) => question?.question || question?.header || question?.text).filter(Boolean).join("；").slice(0, 1800) || "OpenCode 正在等待你的回答";
-      publish(makeEvent(sessionId, "question.asked", {
+      const requestId = properties.requestID || properties.id;
+      const prompts = questions.map((question, index) => ({
+        id: `question-${index + 1}`,
+        question: String(question?.question || question?.text || question?.header || `问题 ${index + 1}`),
+        options: Array.isArray(question?.options) ? question.options.map((option, optionIndex) => ({
+          id: `option-${optionIndex + 1}`,
+          label: String(option?.label || option?.value || option),
+          value: String(option?.label || option?.value || option),
+          description: typeof option?.description === "string" ? option.description : undefined,
+        })) : [],
+        multiple: question?.multiple === true,
+        allowCustomInput: question?.custom === true,
+      }));
+      const interaction = {
+        mode: "question",
+        title: questions[0]?.header || properties.title || "请选择下一步怎么做",
+        providerRequestId: requestId,
+        prompts,
+        recommendation: stringValue(properties.recommendation, properties.metadata?.recommendation),
+        impact: stringValue(properties.impact, properties.metadata?.impact),
+        responseCapability: Boolean(requestId && prompts.length && canReply(ctx)),
+        responseStatus: "pending",
+      };
+      const outbound = makeEvent(sessionId, "question.asked", {
         summary: contextBySession.get(sessionId)?.title || "正在处理当前任务",
-        reason: "OpenCode 需要你补充信息后才能继续",
+        reason: properties.reason || properties.message || "OpenCode 没有在事件里提供这次询问的具体原因",
         tool: "question",
         target,
-        requestId: properties.requestID || properties.id,
-      }));
+        requestId,
+        interaction,
+      });
+      publishInteraction(outbound, interaction, ctx);
       break;
     }
+    case "question.v2.replied":
+    case "question.v2.rejected":
     case "question.replied":
     case "question.rejected":
       publish(makeEvent(sessionId, "question.resolved", {
@@ -263,7 +319,7 @@ export default async function MultiAgentDesktopPetPlugin(ctx) {
   const directory = typeof ctx?.directory === "string" ? ctx.directory : "";
   return {
     event: async ({ event }) => {
-      try { translateEvent(event, directory); } catch { /* state reporting must never block OpenCode */ }
+      try { translateEvent(event, directory, ctx); } catch { /* state reporting must never block OpenCode */ }
     },
     "tool.execute.before": async (input, output) => {
       try {
@@ -288,4 +344,101 @@ export default async function MultiAgentDesktopPetPlugin(ctx) {
       } catch { /* fail open */ }
     },
   };
+}
+
+function stringValue(...values) {
+  return values.find((value) => typeof value === "string" && value.trim());
+}
+
+function canReply(ctx) {
+  return Boolean(ctx?.client?.v2?.session || ctx?.serverUrl);
+}
+
+function publishInteraction(event, interaction, ctx) {
+  void publish(event).then((accepted) => {
+    if (accepted && interaction.responseCapability) void waitForDesktopResponse(event, interaction, ctx);
+  }).catch(() => {});
+}
+
+async function waitForDesktopResponse(event, interaction, ctx) {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    let claim;
+    try {
+      claim = await sendRequest("interaction.response.claim", {
+        eventId: event.eventId,
+        agent: event.agent,
+        sessionId: event.sessionId,
+        providerRequestId: interaction.providerRequestId,
+        sourceInstance,
+      });
+    } catch {
+      await delay(750);
+      continue;
+    }
+    if (!claim) {
+      await delay(450);
+      continue;
+    }
+    try {
+      await replyToOpenCode(ctx, interaction, claim);
+      await sendRequest("interaction.response.complete", { responseId: claim.responseId, claimToken: claim.claimToken, success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "OpenCode reply failed";
+      try {
+        await sendRequest("interaction.response.complete", { responseId: claim.responseId, claimToken: claim.claimToken, success: false, error: message });
+      } catch { /* the renderer timeout is the final fallback */ }
+    }
+    return;
+  }
+}
+
+async function replyToOpenCode(ctx, interaction, claim) {
+  const sessionID = claim.sessionId;
+  const requestID = claim.providerRequestId;
+  if (interaction.mode === "permission") {
+    const answer = claim.answers?.[0];
+    const optionId = answer?.optionIds?.[0];
+    const option = interaction.prompts[0]?.options.find((item) => item.id === optionId);
+    const reply = option?.value;
+    if (!["once", "always", "reject"].includes(reply)) throw new Error("Invalid permission response");
+    const method = ctx?.client?.v2?.session?.permission?.reply;
+    if (typeof method === "function") {
+      const result = await ctx.client.v2.session.permission.reply({ sessionID, requestID, reply });
+      assertClientSuccess(result);
+      return;
+    }
+    await postLocalReply(ctx, sessionID, requestID, "permission", { reply });
+    return;
+  }
+
+  const answers = interaction.prompts.map((prompt) => {
+    const answer = claim.answers.find((item) => item.promptId === prompt.id);
+    if (answer?.customText) return [answer.customText];
+    return (answer?.optionIds || []).map((id) => prompt.options.find((option) => option.id === id)?.value).filter(Boolean);
+  });
+  if (answers.some((answer) => answer.length === 0)) throw new Error("Invalid question response");
+  const method = ctx?.client?.v2?.session?.question?.reply;
+  if (typeof method === "function") {
+    const result = await ctx.client.v2.session.question.reply({ sessionID, requestID, questionV2Reply: { answers } });
+    assertClientSuccess(result);
+    return;
+  }
+  await postLocalReply(ctx, sessionID, requestID, "question", { answers });
+}
+
+function assertClientSuccess(result) {
+  if (result?.error) throw new Error(String(result.error?.message || result.error));
+  if (result?.response && !result.response.ok) throw new Error(`OpenCode replied ${result.response.status}`);
+}
+
+async function postLocalReply(ctx, sessionID, requestID, mode, body) {
+  if (!ctx?.serverUrl) throw new Error("OpenCode local server is unavailable");
+  const path = `/api/session/${encodeURIComponent(sessionID)}/${mode}/${encodeURIComponent(requestID)}/reply`;
+  const response = await fetch(new URL(path, ctx.serverUrl), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`OpenCode local reply failed (${response.status})`);
 }

@@ -107,7 +107,9 @@ export class LocalIpcServer {
         return;
       }
       try {
-        finish(this.dispatch(request));
+        void Promise.resolve(this.dispatch(request)).then(finish).catch(() => {
+          finish(errorResponse(request.id || "unknown", "internal-error", "事件中心处理请求时出错"));
+        });
       } catch {
         finish(errorResponse(request.id || "unknown", "internal-error", "事件中心处理请求时出错"));
       }
@@ -130,6 +132,10 @@ export class LocalIpcServer {
         return okResponse(request.id, this.hub.search(normalizeSearchQuery(request.params)));
       case "diagnostics.get":
         return okResponse(request.id, this.hub.diagnostics());
+      case "interaction.response.claim":
+        return okResponse(request.id, this.hub.claimInteractionResponse(request.params));
+      case "interaction.response.complete":
+        return okResponse(request.id, this.hub.completeInteractionResponse(request.params));
       default:
         return errorResponse(request.id, "method-not-found", "不支持的方法");
     }

@@ -53,7 +53,7 @@ export class EventJournal {
     const fd = openSync(this.path, "a", 0o600);
     try {
       writeSync(fd, `${JSON.stringify(event)}\n`, undefined, "utf8");
-      if (event.kind === "permission.requested" || event.kind === "task.completed" || event.kind === "task.failed") {
+      if (event.kind === "permission.requested" || event.kind === "question.asked" || event.kind === "task.completed" || event.kind === "task.failed") {
         fsyncSync(fd);
       }
     } finally {

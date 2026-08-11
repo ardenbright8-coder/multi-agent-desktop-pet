@@ -18,6 +18,40 @@ export type EventKind =
 
 export type RiskLevel = "low" | "medium" | "high" | "unknown";
 
+export type InteractionMode = "question" | "permission";
+export type InteractionResponseStatus = "pending" | "submitting" | "failed";
+
+export interface InteractionOption {
+  id: string;
+  label: string;
+  description?: string;
+  value?: string;
+  recommended?: boolean;
+}
+
+export interface InteractionPrompt {
+  id: string;
+  question: string;
+  options: InteractionOption[];
+  multiple: boolean;
+  allowCustomInput: boolean;
+}
+
+export interface InteractionPayload {
+  mode: InteractionMode;
+  title?: string;
+  providerRequestId?: string;
+  prompts: InteractionPrompt[];
+  recommendation?: string;
+  action?: string;
+  resources?: string[];
+  impact?: string;
+  rollback?: string;
+  unknowns?: string;
+  responseCapability: boolean;
+  responseStatus: InteractionResponseStatus;
+}
+
 export interface AgentEvent {
   version: 1;
   eventId: string;
@@ -37,6 +71,7 @@ export interface AgentEvent {
   paths?: string[];
   risk?: RiskLevel;
   requestId?: string;
+  interaction?: InteractionPayload;
   metadata?: Record<string, unknown>;
 }
 
@@ -60,7 +95,46 @@ export interface SessionSnapshot {
   summary: string;
   updatedAt: number;
   lastSeenAt: number;
-  pendingPermission?: PermissionExplanation & { requestId?: string; eventId: string };
+  pendingInteraction?: InteractionPresentation;
+}
+
+export interface InteractionPresentation {
+  eventId: string;
+  mode: InteractionMode;
+  title: string;
+  explanation: string;
+  providerRequestId?: string;
+  prompts: InteractionPrompt[];
+  recommendation?: string;
+  responseCapability: boolean;
+  responseStatus: InteractionResponseStatus;
+  responseError?: string;
+  risk: RiskLevel;
+}
+
+export interface InteractionAnswer {
+  promptId: string;
+  optionIds?: string[];
+  customText?: string;
+}
+
+export interface InteractionResponseInput {
+  eventId: string;
+  agent: string;
+  sessionId: string;
+  providerRequestId: string;
+  answers: InteractionAnswer[];
+}
+
+export interface InteractionSubmitResult {
+  ok: boolean;
+  status: "submitted" | "failed" | "duplicate" | "unavailable";
+  message: string;
+}
+
+export interface InteractionResponseClaim extends InteractionResponseInput {
+  responseId: string;
+  claimToken: string;
 }
 
 export interface HubSnapshot {
@@ -118,7 +192,14 @@ export interface RpcRequest {
   id: string;
   version: number;
   token: string;
-  method: "hello" | "event.publish" | "snapshot.get" | "search.query" | "diagnostics.get";
+  method:
+    | "hello"
+    | "event.publish"
+    | "snapshot.get"
+    | "search.query"
+    | "diagnostics.get"
+    | "interaction.response.claim"
+    | "interaction.response.complete";
   params?: unknown;
 }
 
@@ -193,6 +274,7 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
   const metadata = raw.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata)
     ? sanitizeMetadata(raw.metadata as Record<string, unknown>)
     : undefined;
+  const interaction = normalizeInteraction(raw.interaction, kind, raw.requestId);
 
   return {
     version: 1,
@@ -213,7 +295,73 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
     paths,
     risk,
     requestId: limitedString(raw.requestId, 200),
+    interaction,
     metadata,
+  };
+}
+
+function normalizeInteraction(value: unknown, kind: EventKind, legacyRequestId: unknown): InteractionPayload | undefined {
+  if (kind !== "question.asked" && kind !== "permission.requested") return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const expectedMode: InteractionMode = kind === "question.asked" ? "question" : "permission";
+  const mode = raw.mode === expectedMode ? expectedMode : expectedMode;
+  const rawPrompts = Array.isArray(raw.prompts) ? raw.prompts : [];
+  const prompts = rawPrompts.map((item, index) => normalizePrompt(item, index)).filter((item): item is InteractionPrompt => Boolean(item)).slice(0, 12);
+  const resources = Array.isArray(raw.resources)
+    ? raw.resources.map((item) => limitedString(item, 1000)).filter((item): item is string => Boolean(item)).slice(0, 30)
+    : undefined;
+  const status = ["pending", "submitting", "failed"].includes(String(raw.responseStatus))
+    ? raw.responseStatus as InteractionResponseStatus
+    : "pending";
+  return {
+    mode,
+    title: limitedString(raw.title, 500),
+    providerRequestId: limitedString(raw.providerRequestId, 200) || limitedString(legacyRequestId, 200),
+    prompts,
+    recommendation: limitedString(raw.recommendation, 1000),
+    action: limitedString(raw.action, 1000),
+    resources,
+    impact: limitedString(raw.impact, 1500),
+    rollback: limitedString(raw.rollback, 1000),
+    unknowns: limitedString(raw.unknowns, 1000),
+    responseCapability: raw.responseCapability === true,
+    responseStatus: status,
+  };
+}
+
+function normalizePrompt(value: unknown, index: number): InteractionPrompt | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const question = limitedString(raw.question, 1500);
+  if (!question) return null;
+  const options = Array.isArray(raw.options)
+    ? raw.options.map((item, optionIndex) => normalizeOption(item, optionIndex)).filter((item): item is InteractionOption => Boolean(item)).slice(0, 30)
+    : [];
+  return {
+    id: limitedString(raw.id, 120) || `prompt-${index + 1}`,
+    question,
+    options,
+    multiple: raw.multiple === true,
+    allowCustomInput: raw.allowCustomInput === true,
+  };
+}
+
+function normalizeOption(value: unknown, index: number): InteractionOption | null {
+  if (typeof value === "string") {
+    const label = limitedString(value, 300);
+    return label ? { id: `option-${index + 1}`, label, value: label } : null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const label = limitedString(raw.label, 300);
+  if (!label) return null;
+  return {
+    id: limitedString(raw.id, 120) || `option-${index + 1}`,
+    label,
+    description: limitedString(raw.description, 1000),
+    value: limitedString(raw.value, 500) || label,
+    recommended: raw.recommended === true,
   };
 }
 

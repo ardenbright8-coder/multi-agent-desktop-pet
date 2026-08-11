@@ -72,10 +72,10 @@ $payload | node "$env:APPDATA\AgentPetHub\integrations\agent-pet-hook.mjs" my-ag
 
 ## 当前四家的接法
 
-- **OpenCode**：全局 JavaScript 插件，监听会话和工具事件，保留 question／permission 原选项，并通过本机官方 reply 接口把桌宠选择交回 OpenCode。
-- **Claude Code**：在 `settings.json` 登记 Hooks；保留 Hook 暴露的结构化选项，但当前不从桌宠回传，明确回 Claude Code 原窗口处理。
-- **Pi**：全局 TypeScript Extension 除状态上报外，还注册 `desktop_pet_question` 和 `desktop_pet_permission` 两个顺序工具。Pi 需要询问或给具体操作加一道门时调用它们，桌宠有界等待后把结果交回 Pi。
-- **Hermes**：用户 Plugin 监听生命周期和工具 Hook；`clarify` 的结构化内容会进入询问面板，当前仍回 Hermes 原窗口回答。
+- **OpenCode**：全局 JavaScript 插件，监听会话事件和工具执行事件。
+- **Claude Code**：在 `settings.json` 登记 Hooks；不改变权限决定，权限仍回 Claude Code 原窗口处理。
+- **Pi**：全局 TypeScript Extension，监听 `session_start`、`before_agent_start`、工具执行和 `agent_settled`。Pi 本身没有权限弹窗，所以桌宠只报告状态。
+- **Hermes**：用户 Plugin，监听生命周期和工具 Hook；`clarify` 会显示为需要回答，普通权限仍以 Hermes 自己的机制为准。
 
 ## 新 Agent 接入判断顺序
 

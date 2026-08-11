@@ -1,9 +1,10 @@
-import type { AgentEvent, HubSnapshot, SessionSnapshot } from "../shared/protocol";
-import { explainPermission } from "./permission-explainer";
+import type { AgentEvent, HubSnapshot, InteractionResponseInput, SessionSnapshot } from "../shared/protocol";
+import { presentInteraction } from "./interaction-presenter";
 
 interface InternalSession extends SessionSnapshot {
   stateSince: number;
   lastSequenceBySource: Map<string, number>;
+  pendingSourceInstance?: string;
 }
 
 interface SessionTombstone {
@@ -70,7 +71,10 @@ export class SessionStore {
     }
 
     if (event.kind === "permission.resolved" || event.kind === "question.resolved") {
-      if (!event.requestId || current.pendingPermission?.requestId === event.requestId) current.pendingPermission = undefined;
+      if (!event.requestId || current.pendingInteraction?.providerRequestId === event.requestId) {
+        current.pendingInteraction = undefined;
+        current.pendingSourceInstance = undefined;
+      }
       current.state = "working";
       current.stateSince = event.emittedAt;
       this.sessions.set(key, current);
@@ -80,13 +84,11 @@ export class SessionStore {
     current.state = stateFor(event.kind);
     current.stateSince = event.emittedAt;
     if (event.kind === "permission.requested" || event.kind === "question.asked") {
-      current.pendingPermission = {
-        ...explainPermission(event),
-        requestId: event.requestId,
-        eventId: event.eventId,
-      };
+      current.pendingInteraction = presentInteraction(event);
+      current.pendingSourceInstance = event.sourceInstance;
     } else if (["task.completed", "task.failed", "state.thinking", "state.working"].includes(event.kind)) {
-      current.pendingPermission = undefined;
+      current.pendingInteraction = undefined;
+      current.pendingSourceInstance = undefined;
     }
 
     this.sessions.set(key, current);
@@ -125,6 +127,49 @@ export class SessionStore {
       topState: sessions[0]?.state || "idle",
       eventCount,
     };
+  }
+
+  matchesInteraction(input: InteractionResponseInput): boolean {
+    const session = this.sessions.get(`${input.agent}:${input.sessionId}`);
+    const pending = session?.pendingInteraction;
+    if (!pending || !pending.responseCapability || pending.eventId !== input.eventId) return false;
+    if (pending.providerRequestId !== input.providerRequestId || input.answers.length !== pending.prompts.length) return false;
+    const seen = new Set<string>();
+    for (const answer of input.answers) {
+      if (seen.has(answer.promptId)) return false;
+      seen.add(answer.promptId);
+      const prompt = pending.prompts.find((item) => item.id === answer.promptId);
+      if (!prompt) return false;
+      const optionIds = answer.optionIds || [];
+      if (!prompt.multiple && optionIds.length > 1) return false;
+      if (optionIds.some((id) => !prompt.options.some((option) => option.id === id))) return false;
+      if (answer.customText && !prompt.allowCustomInput) return false;
+      if (!optionIds.length && !answer.customText) return false;
+    }
+    return pending.prompts.every((prompt) => seen.has(prompt.id));
+  }
+
+  interactionSource(input: Pick<InteractionResponseInput, "agent" | "sessionId" | "eventId" | "providerRequestId">): string | undefined {
+    const session = this.sessions.get(`${input.agent}:${input.sessionId}`);
+    const pending = session?.pendingInteraction;
+    if (!pending || pending.eventId !== input.eventId || pending.providerRequestId !== input.providerRequestId) return undefined;
+    return session?.pendingSourceInstance;
+  }
+
+  updateInteractionStatus(input: InteractionResponseInput, status: "submitting" | "failed" | "submitted", error?: string): void {
+    const session = this.sessions.get(`${input.agent}:${input.sessionId}`);
+    const pending = session?.pendingInteraction;
+    if (!session || !pending || pending.eventId !== input.eventId || pending.providerRequestId !== input.providerRequestId) return;
+    if (status === "submitted") {
+      session.pendingInteraction = undefined;
+      session.pendingSourceInstance = undefined;
+      session.state = "working";
+      session.stateSince = Date.now();
+      session.updatedAt = Date.now();
+      return;
+    }
+    pending.responseStatus = status;
+    pending.responseError = error;
   }
 
   private capSessions(): void {
@@ -173,6 +218,6 @@ function toPublicSession(session: InternalSession): SessionSnapshot {
     summary: session.summary,
     updatedAt: session.updatedAt,
     lastSeenAt: session.lastSeenAt,
-    pendingPermission: session.pendingPermission,
+    pendingInteraction: session.pendingInteraction,
   };
 }

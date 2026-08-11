@@ -1,7 +1,10 @@
 const elements = {
   drawer: document.querySelector("#drawer"),
   settings: document.querySelector("#settings-panel"),
-  permission: document.querySelector("#permission-ticket"),
+  interaction: document.querySelector("#interaction-panel"),
+  interactionPrompts: document.querySelector("#interaction-prompts"),
+  interactionError: document.querySelector("#interaction-error"),
+  interactionConfirm: document.querySelector("#interaction-confirm"),
   pet: document.querySelector("#pet"),
   statusAgent: document.querySelector("#status-agent"),
   statusCopy: document.querySelector("#status-copy"),
@@ -43,7 +46,7 @@ const stateLabel = {
 
 const poseByState = {
   idle: "idle",
-  thinking: "running",
+  thinking: "thinking",
   working: "running",
   waiting: "waiting",
   done: "waving",
@@ -58,18 +61,29 @@ let searchGeneration = 0;
 let activeTab = "sessions";
 let lastLeadIdentity = "";
 let celebrationTimer = null;
-let movementTimer = null;
 let previewTimer = null;
 let ambientNextAt = Date.now() + 7_000;
 let motionPreference = "lively";
+let activeInteractionEventId = null;
+let interactionSubmitting = false;
+let petPickedUp = false;
+let pickupAnchor = null;
+let panelVisible = false;
+const dismissedInteractions = new Set();
 
 document.addEventListener("mousemove", (event) => {
-  const target = event.target;
-  const interactive = target instanceof Element && Boolean(target.closest("[data-interactive]"));
-  window.agentPet.setMousePassthrough(!interactive);
+  if (petPickedUp && pickupAnchor) {
+    window.agentPet.moveWindowToPointer({
+      screenX: event.screenX,
+      screenY: event.screenY,
+      anchorX: pickupAnchor.x,
+      anchorY: pickupAnchor.y,
+    });
+    return;
+  }
 });
 
-document.querySelector("#pet").addEventListener("click", toggleDrawer);
+document.querySelector("#pet").addEventListener("click", togglePetPickup);
 document.querySelector("#status-note").addEventListener("click", toggleDrawer);
 document.querySelector("#open-button").addEventListener("click", openDrawer);
 document.querySelector("#drawer-close").addEventListener("click", closeDrawer);
@@ -77,9 +91,14 @@ document.querySelector("#settings-button").addEventListener("click", toggleSetti
 document.querySelector("#settings-close").addEventListener("click", closeSettings);
 document.querySelector("#hide-button").addEventListener("click", () => window.agentPet.hideWindow());
 document.querySelector("#simulate-button").addEventListener("click", () => window.agentPet.simulate());
-document.querySelector("#ticket-detail-button").addEventListener("click", () => {
-  openDrawer();
-  activateTab("sessions");
+document.querySelector("#interaction-top-close").addEventListener("click", dismissInteraction);
+document.querySelector("#interaction-bottom-close").addEventListener("click", dismissInteraction);
+elements.interactionConfirm.addEventListener("click", submitInteraction);
+elements.sessionList.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-open-interaction]") : null;
+  if (!button) return;
+  const session = snapshot.sessions.find((item) => item.pendingInteraction?.eventId === button.dataset.openInteraction);
+  if (session) openInteraction(session);
 });
 
 for (const tab of document.querySelectorAll(".tab")) {
@@ -106,14 +125,9 @@ elements.petSize.addEventListener("input", () => applyPetSize(elements.petSize.v
 for (const option of document.querySelectorAll(".motion-option")) {
   option.addEventListener("click", () => applyMotionPreference(option.dataset.motion, true));
 }
-for (const button of document.querySelectorAll("[data-preview-pose]")) {
-  button.addEventListener("click", () => previewPose(button.dataset.previewPose));
-}
-
 restorePetPreferences();
 
 window.agentPet.onSnapshot((next) => renderSnapshot(next));
-window.agentPet.onPetMotion?.((direction) => showMovement(direction));
 window.agentPet.snapshot().then(renderSnapshot);
 runSearch();
 setInterval(() => {
@@ -126,7 +140,10 @@ setInterval(runAmbientMotion, 1_000);
 function renderSnapshot(next) {
   snapshot = next;
   const lead = next.sessions[0];
-  const pending = next.sessions.find((session) => session.pendingPermission);
+  let pending = activeInteractionEventId
+    ? next.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId)
+    : undefined;
+  if (!pending) pending = next.sessions.find((session) => session.pendingInteraction && !dismissedInteractions.has(session.pendingInteraction.eventId));
   const state = lead?.state || "idle";
   const identity = lead ? `${lead.key}:${lead.state}` : "idle";
   const changed = identity !== lastLeadIdentity;
@@ -142,7 +159,7 @@ function renderSnapshot(next) {
   else if (!celebrationTimer) updatePetPose();
   lastLeadIdentity = identity;
   renderSessions(next.sessions);
-  renderPermission(pending);
+  if (!interactionSubmitting) renderInteraction(pending);
   if (drawerOpen) renderDiagnostics();
 }
 
@@ -159,29 +176,126 @@ function renderSessions(sessions) {
         <small>${escapeHtml(labels[session.agent] || session.agent)}</small>
       </div>
       <p>${escapeHtml(session.summary || stateCopy[session.state])}</p>
-      ${session.pendingPermission ? `<p class="permission-inline"><strong>等待处理：</strong>${escapeHtml(session.pendingPermission.request)}</p>` : ""}
+      ${session.pendingInteraction ? `<button class="pending-inline" data-open-interaction="${escapeHtml(session.pendingInteraction.eventId)}" type="button"><strong>${session.pendingInteraction.mode === "question" ? "待回答" : "待授权"}：</strong>${escapeHtml(session.pendingInteraction.title)}</button>` : ""}
       <div class="row-meta">${escapeHtml(session.sessionId)} · ${formatTime(session.updatedAt)}</div>
     </article>
   `).join("");
 }
 
-function renderPermission(session) {
-  const pending = session?.pendingPermission;
-  if (!pending || drawerOpen || settingsOpen) {
-    elements.permission.hidden = true;
+function renderInteraction(session) {
+  const pending = session?.pendingInteraction;
+  if (!pending || drawerOpen || settingsOpen || dismissedInteractions.has(pending.eventId)) {
+    elements.interaction.hidden = true;
+    if (!pending || pending.eventId === activeInteractionEventId) activeInteractionEventId = null;
+    syncPanelVisibility();
     return;
   }
-  elements.permission.hidden = false;
-  document.querySelector("#ticket-agent").textContent = labels[session.agent] || session.agent;
-  document.querySelector("#ticket-heading").textContent = pending.heading;
-  document.querySelector("#ticket-context").textContent = `${session.project} · 会话 ${session.sessionId}`;
-  document.querySelector("#ticket-doing").textContent = pending.doing;
-  document.querySelector("#ticket-request").textContent = pending.request;
-  document.querySelector("#ticket-reason").textContent = pending.reason;
-  document.querySelector("#ticket-impact").textContent = pending.impact;
-  const risk = document.querySelector("#ticket-risk");
-  risk.className = `risk risk-${pending.risk}`;
-  risk.textContent = { low: "低风险", medium: "中风险", high: "高风险", unknown: "待核实" }[pending.risk];
+  activeInteractionEventId = pending.eventId;
+  elements.interaction.hidden = false;
+  document.querySelector("#interaction-agent").textContent = labels[session.agent] || session.agent;
+  const type = document.querySelector("#interaction-type");
+  type.textContent = pending.mode === "question" ? "询问" : "权限";
+  type.className = `type-badge ${pending.mode}`;
+  document.querySelector("#interaction-heading").textContent = pending.title;
+  document.querySelector("#interaction-explanation").textContent = pending.explanation;
+  elements.interactionPrompts.innerHTML = pending.prompts.map(renderPrompt).join("");
+  const fallback = document.querySelector("#interaction-fallback");
+  fallback.hidden = pending.responseCapability;
+  elements.interactionConfirm.disabled = !pending.responseCapability || pending.prompts.length === 0 || pending.responseStatus === "submitting";
+  elements.interactionConfirm.textContent = pending.responseCapability ? (pending.responseStatus === "submitting" ? "正在交回…" : "确认") : "回原窗口处理";
+  elements.interactionError.hidden = !pending.responseError;
+  elements.interactionError.textContent = pending.responseError || "";
+  syncPanelVisibility();
+}
+
+function renderPrompt(prompt, promptIndex) {
+  const inputType = prompt.multiple ? "checkbox" : "radio";
+  const options = prompt.options.map((option) => `
+    <label class="interaction-option">
+      <input type="${inputType}" name="prompt-${promptIndex}" value="${escapeHtml(option.id)}" />
+      <span><strong>${escapeHtml(option.label)}${option.recommended ? '<small>推荐</small>' : ""}</strong>${option.description ? `<em>${escapeHtml(option.description)}</em>` : ""}</span>
+    </label>
+  `).join("");
+  const custom = prompt.allowCustomInput ? `
+    <label class="interaction-option custom-choice">
+      <input type="${inputType}" name="prompt-${promptIndex}" value="__custom__" />
+      <span><strong>自己输入</strong><em>按你的原话交回 Agent，不替你扩写。</em></span>
+    </label>
+    <textarea data-custom-input="${escapeHtml(prompt.id)}" rows="3" placeholder="写下你的做法、限制或回答"></textarea>
+  ` : "";
+  return `<fieldset class="interaction-prompt" data-prompt-id="${escapeHtml(prompt.id)}"><legend>${escapeHtml(prompt.question)}</legend>${options}${custom}</fieldset>`;
+}
+
+function currentInteractionSession() {
+  return snapshot.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId);
+}
+
+function dismissInteraction() {
+  if (interactionSubmitting) return;
+  if (activeInteractionEventId) dismissedInteractions.add(activeInteractionEventId);
+  activeInteractionEventId = null;
+  elements.interaction.hidden = true;
+  syncPanelVisibility();
+}
+
+function openInteraction(session) {
+  closeDrawer();
+  closeSettings(false);
+  const eventId = session.pendingInteraction.eventId;
+  dismissedInteractions.delete(eventId);
+  activeInteractionEventId = eventId;
+  renderInteraction(session);
+}
+
+async function submitInteraction() {
+  const session = currentInteractionSession();
+  const pending = session?.pendingInteraction;
+  if (!session || !pending || !pending.responseCapability || interactionSubmitting) return;
+  const answers = [];
+  for (const prompt of pending.prompts) {
+    const fieldset = elements.interactionPrompts.querySelector(`[data-prompt-id="${cssEscape(prompt.id)}"]`);
+    const selected = [...fieldset.querySelectorAll("input:checked")].map((input) => input.value);
+    const customSelected = selected.includes("__custom__");
+    const customText = customSelected ? fieldset.querySelector("textarea")?.value.trim() : "";
+    const optionIds = selected.filter((value) => value !== "__custom__");
+    if ((!optionIds.length && !customText) || (customSelected && !customText)) {
+      showInteractionError("请先为每个问题选择一项，或写下自己的回答。");
+      return;
+    }
+    answers.push({ promptId: prompt.id, optionIds, customText: customText || undefined });
+  }
+  interactionSubmitting = true;
+  elements.interactionConfirm.disabled = true;
+  elements.interactionConfirm.textContent = "正在交回…";
+  showInteractionError("");
+  let result;
+  try {
+    result = await window.agentPet.respondInteraction({
+      eventId: pending.eventId,
+      agent: session.agent,
+      sessionId: session.sessionId,
+      providerRequestId: pending.providerRequestId,
+      answers,
+    });
+  } catch {
+    result = { ok: false, message: "桌宠回传链路出错，请回原窗口处理或重试。" };
+  }
+  interactionSubmitting = false;
+  if (result.ok) {
+    dismissedInteractions.add(pending.eventId);
+    activeInteractionEventId = null;
+    elements.interaction.hidden = true;
+    syncPanelVisibility();
+    return;
+  }
+  elements.interactionConfirm.disabled = false;
+  elements.interactionConfirm.textContent = "确认";
+  showInteractionError(result.message);
+}
+
+function showInteractionError(message) {
+  elements.interactionError.hidden = !message;
+  elements.interactionError.textContent = message;
 }
 
 async function runSearch() {
@@ -245,27 +359,28 @@ function diagnosticRow(label, value, cls) {
 
 function toggleDrawer() { drawerOpen ? closeDrawer() : openDrawer(); }
 function openDrawer() {
-  closeSettings(false);
   drawerOpen = true;
+  closeSettings(false);
   elements.drawer.hidden = false;
-  elements.permission.hidden = true;
+  elements.interaction.hidden = true;
   updatePetPose();
   renderDiagnostics();
+  syncPanelVisibility();
 }
 function closeDrawer() {
   drawerOpen = false;
   elements.drawer.hidden = true;
-  renderPermission(snapshot.sessions.find((session) => session.pendingPermission));
+  renderInteraction(snapshot.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId));
   updatePetPose();
 }
 
 function toggleSettings() { settingsOpen ? closeSettings() : openSettings(); }
 function openSettings() {
-  if (drawerOpen) closeDrawer();
   settingsOpen = true;
+  if (drawerOpen) closeDrawer();
   elements.settings.hidden = false;
-  elements.permission.hidden = true;
-  previewPose("jumping", 1_450);
+  elements.interaction.hidden = true;
+  syncPanelVisibility();
 }
 function closeSettings(restorePermission = true) {
   if (!settingsOpen) return;
@@ -276,14 +391,14 @@ function closeSettings(restorePermission = true) {
     previewTimer = null;
   }
   updatePetPose();
-  if (restorePermission) renderPermission(snapshot.sessions.find((session) => session.pendingPermission));
+  if (restorePermission) renderInteraction(snapshot.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId));
+  syncPanelVisibility();
 }
 
 function updatePetPose() {
-  if (movementTimer || celebrationTimer || previewTimer) return;
+  if (celebrationTimer || previewTimer) return;
   const state = snapshot.sessions[0]?.state || "idle";
-  const important = state === "waiting" || state === "error";
-  setPetPose((drawerOpen || settingsOpen) && !important ? "review" : poseByState[state]);
+  setPetPose(poseByState[state]);
 }
 
 function setPetPose(pose) {
@@ -299,17 +414,6 @@ function celebrateCompletion() {
   }, 1_450);
 }
 
-function showMovement(direction) {
-  const state = snapshot.sessions[0]?.state || "idle";
-  if (state === "waiting" || state === "error") return;
-  if (movementTimer) clearTimeout(movementTimer);
-  setPetPose(direction === "left" ? "running-left" : "running-right");
-  movementTimer = setTimeout(() => {
-    movementTimer = null;
-    updatePetPose();
-  }, 260);
-}
-
 function previewPose(pose, duration) {
   if (previewTimer) clearTimeout(previewTimer);
   if (celebrationTimer) {
@@ -317,7 +421,7 @@ function previewPose(pose, duration) {
     celebrationTimer = null;
   }
   setPetPose(pose);
-  const defaultDuration = pose === "jumping" ? 1_500 : pose.startsWith("running-") ? 1_150 : 2_050;
+  const defaultDuration = pose === "jumping" ? 1_500 : pose.startsWith("working-") ? 2_300 : 2_050;
   previewTimer = setTimeout(() => {
     previewTimer = null;
     updatePetPose();
@@ -360,13 +464,49 @@ function savePetPreferences() {
 function runAmbientMotion() {
   if (Date.now() < ambientNextAt) return;
   const state = snapshot.sessions[0]?.state || "idle";
-  if (motionPreference === "calm" || drawerOpen || settingsOpen || state !== "idle" || movementTimer || celebrationTimer || previewTimer) {
+  if (motionPreference === "calm" || drawerOpen || settingsOpen || celebrationTimer || previewTimer) {
+    ambientNextAt = Date.now() + 3_000;
+    return;
+  }
+  if (state === "working") {
+    const workingPoses = motionPreference === "lively" ? ["running", "working-rope", "working-focus"] : ["running", "working-focus"];
+    previewPose(workingPoses[Math.floor(Math.random() * workingPoses.length)], 2_300);
+    ambientNextAt = Date.now() + (motionPreference === "lively" ? 3_600 : 6_000);
+    return;
+  }
+  if (state !== "idle") {
     ambientNextAt = Date.now() + 3_000;
     return;
   }
   const poses = motionPreference === "lively" ? ["waving", "jumping", "review", "jumping"] : ["waving", "review", "jumping"];
   previewPose(poses[Math.floor(Math.random() * poses.length)]);
   ambientNextAt = Date.now() + (motionPreference === "lively" ? 5_500 : 10_000);
+}
+
+function togglePetPickup(event) {
+  if (petPickedUp) {
+    petPickedUp = false;
+    pickupAnchor = null;
+    document.body.classList.remove("pet-picked-up");
+    elements.pet.setAttribute("aria-pressed", "false");
+    elements.pet.setAttribute("aria-label", "点一下拿起幼苗，再点一下放下");
+    window.agentPet.setPetPickedUp(false);
+    window.agentPet.finishWindowMove();
+    return;
+  }
+  petPickedUp = true;
+  pickupAnchor = { x: event.clientX, y: event.clientY };
+  document.body.classList.add("pet-picked-up");
+  elements.pet.setAttribute("aria-pressed", "true");
+  elements.pet.setAttribute("aria-label", "再点一下放下幼苗");
+  window.agentPet.setPetPickedUp(true);
+}
+
+function syncPanelVisibility() {
+  const visible = drawerOpen || settingsOpen || !elements.interaction.hidden;
+  if (panelVisible === visible) return;
+  panelVisible = visible;
+  window.agentPet.setPanelVisibility(visible);
 }
 
 function activateTab(name) {
@@ -396,4 +536,8 @@ function formatTime(time) {
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+}
+
+function cssEscape(value) {
+  return window.CSS?.escape ? window.CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
 }

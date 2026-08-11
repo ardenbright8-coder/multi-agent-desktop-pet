@@ -61,6 +61,7 @@ function translate(agent, hook, input) {
   );
   const requestId = firstString(input.request_id, input.requestId, input.tool_use_id, input.toolUseId, input.id);
   const summary = firstString(input.summary, input.title, summaryFromHook(normalizedAgent, normalizedHook, tool));
+  const interaction = interactionFrom(kind, input, toolInput, requestId, tool);
   const emittedAt = Date.now();
 
   return {
@@ -81,8 +82,63 @@ function translate(agent, hook, input) {
     target: clean(target, 2_000),
     paths: pathList(toolInput, input),
     requestId: clean(requestId, 200),
+    interaction,
     metadata: safeMetadata(toolInput),
   };
+}
+
+function interactionFrom(kind, input, toolInput, requestId, tool) {
+  if (kind !== "question.asked" && kind !== "permission.requested") return undefined;
+  const mode = kind === "question.asked" ? "question" : "permission";
+  const sources = [input, toolInput].filter((value) => value && typeof value === "object");
+  const rawQuestions = sources.find((source) => Array.isArray(source.questions))?.questions;
+  const questions = Array.isArray(rawQuestions) && rawQuestions.length ? rawQuestions : [sources.find((source) => firstString(source.question, source.prompt, source.message)) || {}];
+  const prompts = questions.map((question, index) => {
+    const rawOptions = Array.isArray(question.options)
+      ? question.options
+      : Array.isArray(question.choices) ? question.choices : index === 0 ? firstArray(sources, "options", "choices") : [];
+    return {
+      id: clean(firstString(question.id, question.key), 120) || `question-${index + 1}`,
+      question: clean(firstString(question.question, question.prompt, question.text, question.message, input.question, input.prompt, "Agent 没有提供问题原文"), 1_500),
+      options: rawOptions.map((option, optionIndex) => normalizeInteractionOption(option, optionIndex)).filter(Boolean),
+      multiple: question.multiple === true || question.multiSelect === true,
+      allowCustomInput: question.custom === true || question.allowCustomInput === true || input.custom === true || input.allowCustomInput === true,
+    };
+  });
+  const resources = firstArray(sources, "resources", "paths").map((value) => clean(String(value), 1_000)).filter(Boolean);
+  return {
+    mode,
+    title: clean(firstString(input.interaction_title, input.header, input.title, prompts[0]?.question), 500),
+    providerRequestId: clean(requestId, 200),
+    prompts: mode === "question" ? prompts : prompts.map((prompt) => ({ ...prompt, question: prompt.question || "请选择权限范围" })),
+    recommendation: clean(firstString(input.recommendation, toolInput.recommendation), 1_000),
+    action: mode === "permission" ? clean(firstString(input.action, input.permission, tool), 1_000) : undefined,
+    resources,
+    impact: clean(firstString(input.impact, toolInput.impact), 1_500),
+    rollback: clean(firstString(input.rollback, toolInput.rollback), 1_000),
+    unknowns: clean(firstString(input.unknowns, toolInput.unknowns), 1_000),
+    responseCapability: false,
+    responseStatus: "pending",
+  };
+}
+
+function normalizeInteractionOption(option, index) {
+  if (typeof option === "string") return { id: `option-${index + 1}`, label: clean(option, 300), value: clean(option, 500) };
+  if (!option || typeof option !== "object") return null;
+  const label = clean(firstString(option.label, option.value, option.text, option.name), 300);
+  if (!label) return null;
+  return {
+    id: clean(firstString(option.id, option.key), 120) || `option-${index + 1}`,
+    label,
+    value: clean(firstString(option.value, option.label, option.text), 500) || label,
+    description: clean(firstString(option.description, option.hint), 1_000),
+    recommended: option.recommended === true,
+  };
+}
+
+function firstArray(sources, ...keys) {
+  for (const source of sources) for (const key of keys) if (Array.isArray(source?.[key])) return source[key];
+  return [];
 }
 
 function kindFromHook(hook, input) {

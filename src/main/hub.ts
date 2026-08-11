@@ -1,8 +1,18 @@
 import { EventEmitter } from "node:events";
-import type { AgentEvent, DiagnosticsSnapshot, HubSnapshot, SearchHit, SearchQuery } from "../shared/protocol";
+import type {
+  AgentEvent,
+  DiagnosticsSnapshot,
+  HubSnapshot,
+  InteractionResponseClaim,
+  InteractionResponseInput,
+  InteractionSubmitResult,
+  SearchHit,
+  SearchQuery,
+} from "../shared/protocol";
 import { normalizeAgentEvent } from "../shared/protocol";
 import { EventIndex } from "./event-index";
 import { EventJournal } from "./event-journal";
+import { InteractionBroker } from "./interaction-broker";
 import { SessionStore } from "./session-store";
 
 interface HubServerInfo {
@@ -23,11 +33,19 @@ export class AgentHub extends EventEmitter {
   private lastAcceptedAt: number | null = null;
   private lastAgent: string | null = null;
   private serverInfo: HubServerInfo;
+  private readonly interactionBroker: InteractionBroker;
 
   constructor(journalPath: string, serverInfo: HubServerInfo) {
     super();
     this.journal = new EventJournal(journalPath);
     this.serverInfo = serverInfo;
+    this.interactionBroker = new InteractionBroker(
+      (input) => this.sessions.matchesInteraction(input),
+      (input, status, error) => {
+        this.sessions.updateInteractionStatus(input, status, error);
+        this.emit("snapshot", this.snapshot());
+      },
+    );
     const events = this.journal.load();
     this.index.addAll(events);
     for (const event of events) {
@@ -100,6 +118,34 @@ export class AgentHub extends EventEmitter {
     }));
   }
 
+  submitInteractionResponse(input: InteractionResponseInput): Promise<InteractionSubmitResult> {
+    const normalized = normalizeInteractionResponse(input);
+    if (!normalized) return Promise.resolve({ ok: false, status: "unavailable", message: "回答内容不完整，请重新选择。" });
+    return this.interactionBroker.submit(normalized);
+  }
+
+  claimInteractionResponse(raw: unknown): InteractionResponseClaim | null {
+    const binding = normalizeInteractionBinding(raw);
+    if (!binding) return null;
+    const source = this.sessions.interactionSource(binding);
+    if (!source || source !== binding.sourceInstance) return null;
+    return this.interactionBroker.claim(binding);
+  }
+
+  completeInteractionResponse(raw: unknown): { completed: boolean } {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { completed: false };
+    const value = raw as Record<string, unknown>;
+    if (typeof value.responseId !== "string" || typeof value.claimToken !== "string" || typeof value.success !== "boolean") return { completed: false };
+    return {
+      completed: this.interactionBroker.complete(
+        value.responseId.slice(0, 200),
+        value.claimToken.slice(0, 200),
+        value.success,
+        typeof value.error === "string" ? value.error : undefined,
+      ),
+    };
+  }
+
   cleanup(): void {
     this.sessions.cleanup();
     this.emit("snapshot", this.snapshot());
@@ -132,4 +178,44 @@ export class AgentHub extends EventEmitter {
       integrations,
     };
   }
+}
+
+function normalizeInteractionBinding(value: unknown): (Pick<InteractionResponseInput, "eventId" | "agent" | "sessionId" | "providerRequestId"> & { sourceInstance: string }) | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const fields = ["eventId", "agent", "sessionId", "providerRequestId", "sourceInstance"] as const;
+  if (fields.some((field) => typeof raw[field] !== "string" || !(raw[field] as string).trim())) return null;
+  return {
+    eventId: (raw.eventId as string).slice(0, 160),
+    agent: (raw.agent as string).slice(0, 80),
+    sessionId: (raw.sessionId as string).slice(0, 200),
+    providerRequestId: (raw.providerRequestId as string).slice(0, 200),
+    sourceInstance: (raw.sourceInstance as string).slice(0, 160),
+  };
+}
+
+function normalizeInteractionResponse(value: unknown): InteractionResponseInput | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as unknown as Record<string, unknown>;
+  const text = (key: string, max: number): string | null => {
+    const item = raw[key];
+    return typeof item === "string" && item.trim() ? item.slice(0, max) : null;
+  };
+  const eventId = text("eventId", 160);
+  const agent = text("agent", 80);
+  const sessionId = text("sessionId", 200);
+  const providerRequestId = text("providerRequestId", 200);
+  if (!eventId || !agent || !sessionId || !providerRequestId || !Array.isArray(raw.answers) || raw.answers.length > 12) return null;
+  const answers = raw.answers.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const answer = item as Record<string, unknown>;
+    const promptId = typeof answer.promptId === "string" ? answer.promptId.slice(0, 120) : "";
+    const optionIds = Array.isArray(answer.optionIds)
+      ? answer.optionIds.filter((id): id is string => typeof id === "string").slice(0, 30).map((id) => id.slice(0, 120))
+      : undefined;
+    const customText = typeof answer.customText === "string" ? answer.customText.trim().slice(0, 10_000) : undefined;
+    return promptId ? { promptId, optionIds, customText: customText || undefined } : null;
+  });
+  if (answers.some((answer) => !answer)) return null;
+  return { eventId, agent, sessionId, providerRequestId, answers: answers as InteractionResponseInput["answers"] };
 }
