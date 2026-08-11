@@ -15,6 +15,7 @@
     "lifecycle": "npm run build && node scripts/run-electron-isolated.mjs --lifecycle-test",
     "single-instance": "npm run build && node scripts/single-instance-smoke.mjs",
     "single-instance:package": "node scripts/single-instance-smoke.mjs --packaged",
+    "controls": "npm run build && node scripts/run-electron-isolated.mjs --controls-test",
     "integration:smoke": "npm run build && node scripts/integration-smoke.mjs",
     "install:opencode": "node scripts/install-opencode.mjs",
     "install:claude": "node scripts/install-claude-code.mjs",

@@ -27,7 +27,7 @@ child.on("error", (error) => {
 });
 child.on("exit", (code, signal) => {
   if (signal) console.error(`Electron exited by signal ${signal}`);
-  const reportName = mode === "smoke" ? "smoke-ok.json" : mode === "screenshot" ? "screenshot-ok.json" : mode === "lifecycle" ? "lifecycle-ok.json" : "";
+  const reportName = mode === "smoke" ? "smoke-ok.json" : mode === "screenshot" ? "screenshot-ok.json" : mode === "lifecycle" ? "lifecycle-ok.json" : mode === "controls" ? "controls-ok.json" : "";
   const reportExists = reportName ? existsSync(join(root, reportName)) : true;
   if (!reportExists) console.error(`Electron ${mode} test did not write ${reportName}`);
   process.exitCode = code === 0 && reportExists ? 0 : code || 1;

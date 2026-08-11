@@ -6,6 +6,7 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "el
 import type { AgentEvent, EventKind, InteractionResponseInput, SearchQuery } from "../shared/protocol";
 import { PROTOCOL_VERSION } from "../shared/protocol";
 import { writeJsonAtomic } from "./atomic-file";
+import { runControlsTest, type ControlsTrayActions } from "./controls-test";
 import { AgentHub } from "./hub";
 import { LocalIpcClient } from "./ipc-client";
 import { LocalIpcServer } from "./ipc-server";
@@ -17,12 +18,13 @@ const smokeMode = process.argv.includes("--smoke-test");
 const screenshotMode = process.argv.includes("--screenshot-test");
 const lifecycleMode = process.argv.includes("--lifecycle-test");
 const singleInstanceHostMode = process.argv.includes("--single-instance-host-test");
-const testMode = smokeMode || screenshotMode || lifecycleMode || singleInstanceHostMode;
+const controlsMode = process.argv.includes("--controls-test");
+const testMode = smokeMode || screenshotMode || lifecycleMode || singleInstanceHostMode || controlsMode;
 const skipIntegrationInstall = process.env.AGENT_PET_SKIP_INTEGRATION_INSTALL === "1"
   || process.argv.includes("--skip-integration-install");
 if (screenshotMode) app.disableHardwareAcceleration();
 if (testMode && !process.env.AGENT_PET_HUB_HOME) {
-  const mode = smokeMode ? "smoke" : screenshotMode ? "screenshot" : lifecycleMode ? "lifecycle" : "single-instance";
+  const mode = smokeMode ? "smoke" : screenshotMode ? "screenshot" : lifecycleMode ? "lifecycle" : singleInstanceHostMode ? "single-instance" : "controls";
   const testRoot = join(process.cwd(), ".runtime", "test-runs", `${mode}-${process.pid}`);
   process.env.AGENT_PET_HUB_HOME = testRoot;
 }
@@ -38,11 +40,12 @@ let simulatorSequence = 0;
 let positionBeforePanel: { x: number; y: number } | null = null;
 let petPickedUp = false;
 let secondInstanceCount = 0;
+let lastControlsInteractionResponse: InteractionResponseInput | null = null;
 const WINDOW_SIZE = { width: 440, height: 680 };
 const PET_VISIBLE_BOUNDS = { x: 218, y: 392, width: 213, height: 247 };
 const PET_WINDOW_SHAPE = { x: 205, y: 360, width: 235, height: 320 };
 
-const gotLock = smokeMode || screenshotMode || app.requestSingleInstanceLock();
+const gotLock = smokeMode || screenshotMode || controlsMode || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
@@ -151,7 +154,8 @@ async function bootstrap(): Promise<void> {
   screen.on("display-added", keepWindowOnVisibleDisplay);
   screen.on("display-removed", keepWindowOnVisibleDisplay);
   screen.on("display-metrics-changed", keepWindowOnVisibleDisplay);
-  tray = createTray(hub);
+  const trayActions = createTrayActions(hub);
+  tray = createTray(hub, trayActions);
   hub.on("snapshot", (snapshot) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("hub:snapshot", snapshot);
   });
@@ -178,6 +182,18 @@ async function bootstrap(): Promise<void> {
 
   if (lifecycleMode) await runLifecycleTest(hub);
   if (singleInstanceHostMode) await runSingleInstanceHostTest(hub);
+  if (controlsMode && mainWindow && tray) {
+    await runControlsTest({
+      window: mainWindow,
+      tray,
+      hub,
+      trayActions,
+      reportPath: join(appDataRoot(), "controls-ok.json"),
+      failureScreenshotPath: join(appDataRoot(), "controls-failure.png"),
+      version: app.getVersion(),
+      getLastInteractionResponse: () => lastControlsInteractionResponse,
+    });
+  }
 }
 
 function createWindow(hub: AgentHub): BrowserWindow {
@@ -237,6 +253,7 @@ function setupIpcHandlers(hub: AgentHub): void {
   ipcMain.handle("hub:search", (_event, query: SearchQuery) => hub.search(query || {}));
   ipcMain.handle("hub:diagnostics", () => hub.diagnostics());
   ipcMain.handle("hub:interaction-respond", (_event, response: InteractionResponseInput) => {
+    if (controlsMode) lastControlsInteractionResponse = response;
     const result = hub.submitInteractionResponse(response);
     if (response?.agent === "simulator") {
       const claim = hub.claimInteractionResponse({
@@ -272,20 +289,28 @@ function setupIpcHandlers(hub: AgentHub): void {
   ipcMain.on("window:hide", () => mainWindow?.hide());
 }
 
-function createTray(hub: AgentHub): Tray {
+function createTrayActions(hub: AgentHub): ControlsTrayActions {
+  return {
+    show: showMainWindow,
+    simulate: () => { hub.publish(makeSimulationEvent("permission.requested")); },
+    quit: () => { shuttingDown = true; app.quit(); },
+  };
+}
+
+function createTray(hub: AgentHub, actions: ControlsTrayActions): Tray {
   const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 16, height: 16 });
   const appTray = new Tray(icon);
   appTray.setToolTip("多Agent桌面宠物");
   const rebuild = () => {
     const diagnostics = hub.diagnostics();
     appTray.setContextMenu(Menu.buildFromTemplate([
-      { label: "显示桌宠", click: showMainWindow },
+      { label: "显示桌宠", click: actions.show },
       { label: `事件中心：${diagnostics.server.running ? "正常" : "异常"}`, enabled: false },
       { label: `已索引：${diagnostics.journal.count} 条`, enabled: false },
       { type: "separator" },
-      { label: "发一条测试通知", click: () => hub.publish(makeSimulationEvent("permission.requested")) },
+      { label: "发一条测试通知", click: actions.simulate },
       { type: "separator" },
-      { label: "退出", click: () => { shuttingDown = true; app.quit(); } },
+      { label: "退出", click: actions.quit },
     ]));
   };
   rebuild();
