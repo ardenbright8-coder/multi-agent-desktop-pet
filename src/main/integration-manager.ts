@@ -1,0 +1,45 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+const OPENCODE_MARKER = "multi-agent-desktop-pet managed opencode plugin v1";
+const HOOK_BRIDGE_MARKER = "multi-agent-desktop-pet managed generic hook bridge v1";
+
+export function ensureOpenCodeIntegration(): { installed: boolean; changed: boolean; target: string; reason?: string } {
+  const source = join(__dirname, "..", "integrations", "opencode", "multi-agent-desktop-pet.mjs");
+  const target = join(homedir(), ".config", "opencode", "plugins", "multi-agent-desktop-pet.js");
+  const content = readFileSync(source, "utf8");
+  if (!content.includes(OPENCODE_MARKER)) throw new Error("Packaged OpenCode plugin marker is missing");
+
+  if (existsSync(target)) {
+    const current = readFileSync(target, "utf8");
+    if (!current.includes(OPENCODE_MARKER)) {
+      return { installed: false, changed: false, target, reason: "unmanaged-name-conflict" };
+    }
+    if (current === content) return { installed: true, changed: false, target };
+  }
+
+  mkdirSync(dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.tmp`;
+  writeFileSync(temp, content, { encoding: "utf8", mode: 0o600 });
+  renameSync(temp, target);
+  return { installed: true, changed: true, target };
+}
+
+export function ensureGenericHookBridge(): { installed: boolean; changed: boolean; target: string; reason?: string } {
+  const source = join(__dirname, "..", "integrations", "hooks", "agent-pet-hook.mjs");
+  const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+  const target = join(appData, "AgentPetHub", "integrations", "agent-pet-hook.mjs");
+  const content = readFileSync(source, "utf8");
+  if (!content.includes(HOOK_BRIDGE_MARKER)) throw new Error("Packaged generic hook bridge marker is missing");
+  if (existsSync(target)) {
+    const current = readFileSync(target, "utf8");
+    if (!current.includes(HOOK_BRIDGE_MARKER)) return { installed: false, changed: false, target, reason: "unmanaged-name-conflict" };
+    if (current === content) return { installed: true, changed: false, target };
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.tmp`;
+  writeFileSync(temp, content, { encoding: "utf8", mode: 0o600 });
+  renameSync(temp, target);
+  return { installed: true, changed: true, target };
+}

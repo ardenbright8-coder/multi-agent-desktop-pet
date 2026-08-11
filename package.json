@@ -1,0 +1,62 @@
+{
+  "name": "multi-agent-desktop-pet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows local desktop pet for unified coding-agent notifications and searchable permission context.",
+  "main": "dist/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "dev": "npm run build && electron .",
+    "test": "npm run build && node --check integrations/opencode/multi-agent-desktop-pet.mjs && node --check integrations/hooks/agent-pet-hook.mjs && node --check src/renderer/renderer.js && node --check scripts/install-claude-code.mjs && node --check scripts/install-pi.mjs && node --check scripts/install-hermes.mjs && node --test dist/tests/*.test.js",
+    "smoke": "npm run build && electron . --smoke-test",
+    "screenshot": "npm run build && electron . --screenshot-test",
+    "install:opencode": "node scripts/install-opencode.mjs",
+    "install:claude": "node scripts/install-claude-code.mjs",
+    "install:pi": "node scripts/install-pi.mjs",
+    "install:hermes": "node scripts/install-hermes.mjs",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder --win portable nsis --x64"
+  },
+  "dependencies": {
+    "minisearch": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.9.2"
+  },
+  "build": {
+    "appId": "local.jiakai.multiagentpet",
+    "productName": "多Agent桌面宠物",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/app-icon.ico",
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "多Agent桌面宠物",
+      "artifactName": "多Agent桌面宠物-安装包-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "多Agent桌面宠物-绿色版-${version}-${arch}.${ext}"
+    }
+  }
+}

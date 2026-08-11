@@ -1,0 +1,14 @@
+name: multi-agent-desktop-pet
+version: "0.1.0"
+description: "Forward Hermes lifecycle and tool events to the local multi-Agent desktop pet."
+author: "local"
+
+hooks:
+  - on_session_start
+  - pre_llm_call
+  - post_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - on_session_end
+  - on_session_finalize
+  - on_session_reset

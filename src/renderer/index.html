@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+    <title>多Agent桌面宠物</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!--
+      THESIS: 一株会替多个 Agent 值班的像素幼苗，用姿态直接说清工作、等待、完成和失败，拒绝死板机器人与通用仪表盘。
+      OWN-WORLD: 苔绿、嫩芽绿、夜林黑与一粒日光黄；清脆像素轮廓、纸签式信息层和克制的状态动画。
+      STORY: 先从幼苗姿态判断是否要回来，再读完整权限缘由，最后在现场索引中定位具体会话和事件。
+      FIRST VIEWPORT: 绿色幼苗扎在右下角，简短信笺悬在叶片上方；权限到来时工作票向上展开，详情抽屉覆盖信息区但保留幼苗陪伴。
+      FORM: Operate 模式的桌面值班幼苗；brief-pinned original sprout direction。
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
+    <main id="shell">
+      <section id="permission-ticket" class="permission-ticket" data-interactive role="alert" aria-live="assertive" aria-labelledby="ticket-heading" aria-describedby="ticket-context" hidden>
+        <div class="ticket-topline">
+          <span id="ticket-agent">OpenCode</span>
+          <span id="ticket-risk" class="risk risk-medium">中风险</span>
+        </div>
+        <h1 id="ticket-heading">需要你处理</h1>
+        <p id="ticket-context" class="ticket-context"></p>
+        <dl class="ticket-details">
+          <div><dt>正在做</dt><dd id="ticket-doing"></dd></div>
+          <div><dt>现在要</dt><dd id="ticket-request"></dd></div>
+          <div><dt>为什么</dt><dd id="ticket-reason"></dd></div>
+          <div><dt>影响</dt><dd id="ticket-impact"></dd></div>
+        </dl>
+        <button id="ticket-detail-button" class="primary-button" type="button">在会话列表中查看</button>
+      </section>
+
+      <section id="drawer" class="drawer" data-interactive aria-label="桌宠详情" hidden>
+        <div class="drawer-header">
+          <div>
+            <h2>现场索引</h2>
+            <p id="drawer-subtitle">所有 Agent 的实时事件</p>
+          </div>
+          <button id="drawer-close" class="text-button" type="button">收起</button>
+        </div>
+
+        <label class="search-field">
+          <span>查指定内容</span>
+          <input id="search-input" type="search" placeholder="项目、工具、路径或中文关键词" autocomplete="off" />
+        </label>
+
+        <div class="tabs" role="tablist" aria-label="详情分类">
+          <button id="sessions-tab" class="tab active" data-tab="sessions" role="tab" aria-selected="true" aria-controls="sessions-view" type="button">会话</button>
+          <button id="history-tab" class="tab" data-tab="history" role="tab" aria-selected="false" aria-controls="history-view" type="button">事件</button>
+          <button id="diagnostics-tab" class="tab" data-tab="diagnostics" role="tab" aria-selected="false" aria-controls="diagnostics-view" type="button">连接</button>
+        </div>
+
+        <div id="sessions-view" class="view active" role="tabpanel" aria-labelledby="sessions-tab">
+          <div id="session-list" class="plain-list"></div>
+        </div>
+        <div id="history-view" class="view" role="tabpanel" aria-labelledby="history-tab">
+          <div id="search-state" class="empty-state">输入关键词，或直接查看最近事件。</div>
+          <div id="search-results" class="plain-list"></div>
+        </div>
+        <div id="diagnostics-view" class="view" role="tabpanel" aria-labelledby="diagnostics-tab">
+          <div id="diagnostics-list" class="diagnostics-list"></div>
+        </div>
+
+        <div class="drawer-actions">
+          <button id="simulate-button" class="secondary-button" type="button">检查通知链路</button>
+        </div>
+      </section>
+
+      <section id="settings-panel" class="settings-panel" data-interactive aria-labelledby="settings-heading" hidden>
+        <div class="settings-header">
+          <div>
+            <h2 id="settings-heading">幼苗设置</h2>
+            <p>大小、活泼程度和动作试演</p>
+          </div>
+          <button id="settings-close" class="text-button" type="button">收起</button>
+        </div>
+
+        <label class="size-control" for="pet-size">
+          <span>幼苗大小</span>
+          <output id="pet-size-value" for="pet-size">100%</output>
+        </label>
+        <input id="pet-size" class="range-control" type="range" min="70" max="140" step="5" value="100" />
+
+        <fieldset class="motion-control">
+          <legend>活泼程度</legend>
+          <div class="motion-options">
+            <button class="motion-option" data-motion="calm" aria-pressed="false" type="button">安静</button>
+            <button class="motion-option" data-motion="normal" aria-pressed="false" type="button">自然</button>
+            <button class="motion-option active" data-motion="lively" aria-pressed="true" type="button">活泼</button>
+          </div>
+        </fieldset>
+
+        <div class="action-preview">
+          <div class="setting-label">试一下动作</div>
+          <div class="action-grid">
+            <button data-preview-pose="idle" type="button">待机</button>
+            <button data-preview-pose="running-right" type="button">向右跑</button>
+            <button data-preview-pose="running-left" type="button">向左跑</button>
+            <button data-preview-pose="waving" type="button">挥手</button>
+            <button data-preview-pose="jumping" type="button">跳跃</button>
+            <button data-preview-pose="failed" type="button">失败</button>
+            <button data-preview-pose="waiting" type="button">等你</button>
+            <button data-preview-pose="running" type="button">工作</button>
+            <button data-preview-pose="review" type="button">查看</button>
+          </div>
+        </div>
+
+        <p class="settings-note">Windows 关闭动画时，“安静”保持静态；选“自然”或“活泼”会只为幼苗重新开启动作。</p>
+      </section>
+
+      <section id="pet-zone" class="pet-zone" data-interactive aria-label="桌面宠物">
+        <div id="drag-handle" class="drag-handle" title="拖动桌宠"></div>
+        <button id="status-note" class="status-note" type="button">
+          <span class="note-topline"><span id="status-agent">事件中心</span><i id="status-dot" class="note-dot"></i></span>
+          <strong id="status-copy">连接正常，正在等消息</strong>
+          <small id="status-state">空闲</small>
+        </button>
+
+        <button id="pet" class="pet" type="button" aria-label="打开桌宠详情">
+          <span class="pet-motion">
+            <span class="leaf leaf-left"><i></i></span>
+            <span class="leaf leaf-right"><i></i></span>
+            <span class="stem"></span>
+            <span class="arm arm-left"><i></i></span>
+            <span class="arm arm-right"><i></i></span>
+            <span class="pet-body">
+              <span class="face">
+                <i class="eye eye-left"></i>
+                <i class="eye eye-right"></i>
+                <i class="mouth"></i>
+              </span>
+              <span class="cheek cheek-left"></span>
+              <span class="cheek cheek-right"></span>
+              <span class="chest-signal"><i></i><i></i><i></i></span>
+            </span>
+            <span class="foot foot-left"></span>
+            <span class="foot foot-right"></span>
+            <span class="work-pixels"><i></i><i></i><i></i></span>
+          </span>
+          <span class="ground-pixels"><i></i><i></i><i></i></span>
+        </button>
+
+        <div class="pet-controls">
+          <button id="open-button" class="control-button" type="button">详情</button>
+          <button id="settings-button" class="control-button" type="button">设置</button>
+          <button id="hide-button" class="control-button" type="button">隐藏</button>
+        </div>
+      </section>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
