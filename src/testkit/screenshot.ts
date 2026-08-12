@@ -29,12 +29,12 @@ export async function runScreenshotTest(hub: AgentHub, host: TestHost): Promise<
   await assertRenderer("!document.querySelector('#interaction-panel').hidden && document.querySelector('#interaction-type').textContent.includes('询问') && document.querySelector('#interaction-heading').textContent.includes('滚动')", "Question panel did not render");
   const questionImage = await mainWindow.webContents.capturePage();
   writeFileSync(join(screenshotDir, "preview-question.png"), questionImage.toPNG());
-  await mainWindow.webContents.executeJavaScript("document.querySelector('#open-button').click()");
+  await mainWindow.webContents.executeJavaScript("openDrawer()");
   await delay(350);
   await assertRenderer("!document.querySelector('#drawer').hidden", "Event drawer did not open");
   const drawerImage = await mainWindow.webContents.capturePage();
   writeFileSync(join(screenshotDir, "preview-drawer.png"), drawerImage.toPNG());
-  await mainWindow.webContents.executeJavaScript("document.querySelector('#drawer-close').click(); document.querySelector('#settings-button').click()");
+  await mainWindow.webContents.executeJavaScript("document.querySelector('#drawer-close').click(); openSettings()");
   await delay(350);
   await assertRenderer("!document.querySelector('#settings-panel').hidden", "Settings panel did not open");
   const settingsImage = await mainWindow.webContents.capturePage();

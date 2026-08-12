@@ -43,19 +43,17 @@ button { color: inherit; }
 
 [data-interactive] { pointer-events: auto; }
 
+/* 幼苗区占满整个小窗口。幼苗和状态框左右并排，不再上下摞——
+   摞着的时候框把幼苗顶得离屏幕顶老远，幼苗永远贴不到上边（用户 2026-08-12 提的）。 */
 .pet-zone {
   position: absolute;
-  right: 18px;
-  bottom: 14px;
-  width: 196px;
-  height: 284px;
+  inset: 0;
 }
 
 .status-note {
   position: absolute;
   z-index: 5;
-  top: 0;
-  right: 0;
+  top: 8px;
   width: 188px;
   min-height: 80px;
   padding: 12px 14px 11px;
@@ -69,16 +67,23 @@ button { color: inherit; }
   transition: transform 180ms ease-out, border-color 180ms ease-out;
 }
 
+/* 小尖角指向幼苗那一边，框换边时跟着换 */
 .status-note::after {
   content: "";
   position: absolute;
-  right: 34px;
-  bottom: -10px;
+  bottom: 22px;
   width: 10px;
   height: 10px;
   background: var(--forest);
-  box-shadow: 5px 0 0 var(--forest), 5px 5px 0 var(--forest);
 }
+body[data-note-side="right"] .status-note::after { left: -5px; }
+body[data-note-side="left"] .status-note::after { right: -5px; }
+
+/* 框在右 → 幼苗靠左；框在左 → 幼苗靠右 */
+body[data-note-side="right"] .status-note { right: 8px; }
+body[data-note-side="left"] .status-note { left: 8px; }
+body[data-note-side="right"] .pet { left: 14px; }
+body[data-note-side="left"] .pet { right: 14px; }
 
 .status-note:hover { transform: translateY(-2px); border-color: rgba(143,219,120,0.48); }
 .status-note:active { transform: translateY(0) scale(0.98); }
@@ -91,12 +96,15 @@ body[data-state="waiting"] .note-dot { background: var(--accent); box-shadow: 0 
 body[data-state="error"] .note-dot { background: var(--danger); box-shadow: 0 0 0 2px rgba(237,128,101,0.14); }
 body[data-state="done"] .note-dot { background: var(--sprout-light); }
 
+/* 幼苗顶部对齐窗口顶（不是底部对齐）：
+   ① 100% 时幼苗离窗口顶只有 8px，能真正贴到屏幕最上边；
+   ② 放大到 140% 时向下长，不会溢出窗口顶部去占本该穿透的角落
+      （2026-08-12 实测：底部对齐 + 140% 时幼苗长出窗口，整块都吃鼠标）。 */
 .pet {
   --user-pet-scale: 1;
   position: absolute;
   z-index: 3;
-  left: 22px;
-  bottom: 28px;
+  top: 8px;
   width: 152px;
   height: 176px;
   padding: 0;
@@ -105,7 +113,7 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   cursor: pointer;
   -webkit-app-region: no-drag;
   transform: scale(var(--user-pet-scale));
-  transform-origin: center bottom;
+  transform-origin: center top;
   transition: transform 180ms cubic-bezier(0.16,1,0.3,1);
 }
 
@@ -297,18 +305,8 @@ body[data-pet-pose="review"] .pet-motion { animation: review-lean 1.7s steps(3, 
 body[data-pet-pose="review"] .eye { animation: review-look 1.7s steps(3, end) infinite; }
 body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px, -6px); }
 
-.pet-controls {
-  position: absolute;
-  z-index: 6;
-  left: -3px;
-  bottom: 0;
-  display: flex;
-  gap: 7px;
-  opacity: 0;
-  transform: translateY(5px);
-  transition: opacity 160ms ease-out, transform 160ms ease-out;
-}
-.pet-zone:hover .pet-controls, .pet-zone:focus-within .pet-controls { opacity: 1; transform: translateY(0); }
+/* 幼苗底下那排「详情／设置／隐藏」已撤（2026-08-12 用户要求），改从托盘菜单进。
+   理由：那三个按钮常驻在幼苗脚下占地方、还挡视线，用得又不频繁。 */
 .control-button, .text-button {
   border: 0;
   background: transparent;
@@ -479,7 +477,6 @@ body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px
 .drawer:not([hidden]) .drawer-actions { right: 126px; }
 .drawer:not([hidden]) ~ .pet-zone { z-index: 12; pointer-events: none; }
 .drawer:not([hidden]) ~ .pet-zone .status-note,
-.drawer:not([hidden]) ~ .pet-zone .pet-controls { opacity: 0; pointer-events: none; }
 .drawer:not([hidden]) ~ .pet-zone .pet {
   z-index: 13;
   pointer-events: none;
@@ -489,7 +486,6 @@ body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px
 
 .settings-panel:not([hidden]) ~ .pet-zone { z-index: 12; pointer-events: none; }
 .settings-panel:not([hidden]) ~ .pet-zone .status-note,
-.settings-panel:not([hidden]) ~ .pet-zone .pet-controls { opacity: 0; pointer-events: none; }
 .settings-panel:not([hidden]) ~ .pet-zone .pet { z-index: 13; pointer-events: none; }
 
 body[data-motion="calm"][data-pet-pose="idle"] .pet-motion,

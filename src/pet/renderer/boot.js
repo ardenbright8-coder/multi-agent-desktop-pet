@@ -31,11 +31,8 @@ document.addEventListener("mouseup", endPetDrag);
 document.addEventListener("pointercancel", endPetDrag);
 window.addEventListener("blur", () => endPetDrag());
 document.querySelector("#status-note").addEventListener("click", toggleDrawer);
-document.querySelector("#open-button").addEventListener("click", openDrawer);
 document.querySelector("#drawer-close").addEventListener("click", closeDrawer);
-document.querySelector("#settings-button").addEventListener("click", toggleSettings);
 document.querySelector("#settings-close").addEventListener("click", closeSettings);
-document.querySelector("#hide-button").addEventListener("click", () => window.agentPet.hideWindow());
 document.querySelector("#simulate-button").addEventListener("click", () => window.agentPet.simulate());
 document.querySelector("#interaction-top-close").addEventListener("click", dismissInteraction);
 document.querySelector("#interaction-bottom-close").addEventListener("click", dismissInteraction);
@@ -72,6 +69,14 @@ for (const option of document.querySelectorAll(".motion-option")) {
   option.addEventListener("click", () => applyMotionPreference(option.dataset.motion, true));
 }
 restorePetPreferences();
+
+// 状态框摆哪边由主进程算好推过来（看幼苗在屏幕哪半边）
+window.agentPet.onNoteSide((side) => { document.body.dataset.noteSide = side === "left" ? "left" : "right"; });
+// 「详情 / 设置」已从幼苗脚下撤走，改从托盘菜单进
+window.agentPet.onPetCommand((command) => {
+  if (command === "drawer") openDrawer();
+  else if (command === "settings") openSettings();
+});
 
 window.agentPet.onSnapshot((next) => renderSnapshot(next));
 window.agentPet.snapshot().then(renderSnapshot);

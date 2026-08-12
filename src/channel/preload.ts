@@ -13,6 +13,12 @@ contextBridge.exposeInMainWorld("agentPet", {
   setPanelVisibility: (visible: boolean): void => ipcRenderer.send("window:panel-visibility", visible),
   hideWindow: (): void => ipcRenderer.send("window:hide"),
   reportError: (info: { message: string; where?: string; stack?: string }): void => ipcRenderer.send("window:renderer-error", info),
+  onNoteSide: (listener: (side: "left" | "right") => void): void => {
+    ipcRenderer.on("pet:note-side", (_event, side: "left" | "right") => listener(side));
+  },
+  onPetCommand: (listener: (command: string) => void): void => {
+    ipcRenderer.on("pet:command", (_event, command: string) => listener(command));
+  },
   onSnapshot: (listener: (snapshot: HubSnapshot) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: HubSnapshot) => listener(snapshot);
     ipcRenderer.on("hub:snapshot", handler);

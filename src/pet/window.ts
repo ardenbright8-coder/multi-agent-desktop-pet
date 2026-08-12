@@ -17,7 +17,12 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 // 上下就只剩 60 像素能挪 —— 用户拖起来是「只能左右平移，上下动不了」。
 // 缩成幼苗大小后，上下能挪 470+，整屏随便跑。
 // 界面 CSS 一行没改：幼苗区是 right/bottom 定位的，窗口一缩它自然贴在小窗口右下角。
-export const PET_WINDOW_SIZE = { width: 220, height: 304 };
+// 幼苗和状态框左右并排，尺寸按**幼苗放到最大（140%）**算，否则放大后会长出窗口，
+// 溢出的那块会把本该穿透的角落也占掉（2026-08-12 实测踩到）。
+//   宽 = 14 + 152×1.4 + 8 + 188 + 8 ≈ 435
+//   高 = 8 + 176×1.4 + 8 ≈ 265
+// 幼苗顶部对齐窗口顶，所以 100% 时它离屏幕上沿只有 8px，能真正顶上去。
+export const PET_WINDOW_SIZE = { width: 435, height: 265 };
 export const PANEL_WINDOW_SIZE = { width: 440, height: 680 };
 export const WINDOW_SIZE = PET_WINDOW_SIZE;
 
@@ -38,6 +43,7 @@ let dragging = false;
 let hoveringInteractive = false;
 let ignoringMouse = true;
 let shuttingDown = false;
+let keepOnTopTimer: NodeJS.Timeout | null = null;
 
 export function getPetWindow(): BrowserWindow | null {
   return mainWindow;
@@ -52,6 +58,10 @@ export function setShuttingDown(value: boolean): void {
 }
 
 export function destroyPetWindow(): void {
+  if (keepOnTopTimer) {
+    clearInterval(keepOnTopTimer);
+    keepOnTopTimer = null;
+  }
   mainWindow?.destroy();
   mainWindow = null;
 }
@@ -82,7 +92,10 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
       sandbox: true,
     },
   });
-  win.setAlwaysOnTop(true, "floating");
+  // 永远压在最前面（用户 2026-08-12 要求）。
+  // "screen-saver" 是 Electron 能给的最高层级，比 "floating" 更难被别的置顶窗口盖住；
+  // 再加一道定时重申——有些全屏程序/别的 topmost 窗口会把它挤下去，光设一次守不住。
+  win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // 默认整窗穿透：透明区域绝不许挡住底下的程序。
   // forward:true 让窗口在穿透状态下仍然收得到 mousemove，界面靠它判断鼠标有没有挪到幼苗上，
@@ -94,6 +107,8 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
   win.once("ready-to-show", () => {
     win.showInactive();
     win.webContents.send("hub:snapshot", hub.snapshot());
+    win.webContents.send("pet:note-side", noteSide);
+    syncNoteSide();
   });
   let saveTimer: NodeJS.Timeout | null = null;
   win.on("move", () => {
@@ -110,6 +125,17 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
     }
   });
   mainWindow = win;
+  keepOnTopTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!mainWindow.isAlwaysOnTop()) {
+      mainWindow.setAlwaysOnTop(true, "screen-saver");
+      log.记("有别的窗口把桌宠挤下去了，已重新置顶", "keepOnTop");
+    }
+  }, 3_000);
+  keepOnTopTimer.unref();
+  win.on("blur", () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(true, "screen-saver");
+  });
   const area = screen.getPrimaryDisplay().workArea;
   log.记(`建窗口 位置=${bounds.x},${bounds.y} 尺寸=${PET_WINDOW_SIZE.width}x${PET_WINDOW_SIZE.height} 工作区=${area.width}x${area.height} 缩放=${screen.getPrimaryDisplay().scaleFactor}`, "createPetWindow");
   return win;
@@ -138,6 +164,45 @@ function safeWindowSize(): { width: number; height: number } {
 function moveTo(x: number, y: number): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.setBounds({ x, y, ...designSize() }, false);
+  syncNoteSide();
+}
+
+// 状态框摆哪边：幼苗在屏幕左半边就把框放右边，在右半边就放左边——
+// 让框始终朝屏幕中间展开，不会顶到屏幕外，也不挡幼苗（用户 2026-08-12 提的）。
+// 用户手动换过边就以手动的为准，不再自动翻。
+let noteSide: "left" | "right" = "right";
+let noteSidePinned = false;
+
+function syncNoteSide(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || noteSidePinned) return;
+  const bounds = mainWindow.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  const petCenter = bounds.x + bounds.width / 2;
+  const side = petCenter < area.x + area.width / 2 ? "right" : "left";
+  if (side === noteSide) return;
+  noteSide = side;
+  log.记(`状态框换到幼苗${side === "right" ? "右" : "左"}边`, "syncNoteSide");
+  mainWindow.webContents.send("pet:note-side", noteSide);
+}
+
+/** 托盘里那个「聊天框换个边」。手动换过就钉住，不再自动翻。 */
+export function flipNoteSide(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  noteSide = noteSide === "right" ? "left" : "right";
+  noteSidePinned = true;
+  log.记(`用户手动把状态框换到幼苗${noteSide === "right" ? "右" : "左"}边（之后不再自动翻）`, "flipNoteSide");
+  mainWindow.webContents.send("pet:note-side", noteSide);
+}
+
+export function currentNoteSide(): "left" | "right" {
+  return noteSide;
+}
+
+/** 托盘的「详情 / 设置」要让界面开对应面板。 */
+export function sendPetCommand(command: "drawer" | "settings"): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.showInactive();
+  mainWindow.webContents.send("pet:command", command);
 }
 
 export function watchDisplayChanges(): void {
@@ -329,6 +394,11 @@ export function isDragging(): boolean {
 // 给自测用：现在窗口是不是让开鼠标的（true = 底下的程序点得到）。
 export function isIgnoringMouse(): boolean {
   return ignoringMouse;
+}
+
+/** 排障用：为什么现在是这个鼠标模式。 */
+export function mouseModeState(): string {
+  return `让开=${ignoringMouse} 面板=${panelOpen} 拖动=${dragging} 悬停可点=${hoveringInteractive}`;
 }
 
 // 什么时候该收回穿透：面板开着、正在拖、或者鼠标正压在可点的东西上。

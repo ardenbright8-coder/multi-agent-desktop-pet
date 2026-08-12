@@ -6,7 +6,7 @@ import type { BrowserWindow, Tray } from "electron";
 import type { AgentEvent, InteractionPayload, InteractionResponseInput } from "../shared/protocol";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import type { AgentHub } from "../events/hub";
-import { dragTick, isIgnoringMouse } from "../pet/window";
+import { dragTick, isIgnoringMouse, mouseModeState } from "../pet/window";
 
 import type { PetTrayActions } from "../pet/tray";
 
@@ -35,13 +35,14 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "hideWindow", "onSnapshot", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
+    assert.deepEqual(exposed, ["diagnostics", "hideWindow", "onNoteSide", "onPetCommand", "onSnapshot", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
 
     const marker = `controls-${Date.now()}`;
     hub.publish(makeEvent("state.working", "search-session", { summary: `${marker} searchable event`, target: "package.json" }));
     await waitForRenderer(win, `document.querySelector('#status-copy').textContent.includes(${json(marker)})`);
 
-    await click(win, "#open-button");
+    context.trayActions.openDrawer();
+    await delay(200);
     await visible(win, "#drawer");
     await selectedTab(win, "sessions");
 
@@ -71,7 +72,8 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await click(win, "#drawer-close");
     await hidden(win, "#drawer");
 
-    await click(win, "#settings-button");
+    context.trayActions.openSettings();
+    await delay(200);
     await visible(win, "#settings-panel");
     await click(win, ".motion-option[data-motion='calm']");
     await rendererAssert(win, "document.body.dataset.motion === 'calm' && document.querySelector(\".motion-option[data-motion='calm']\").getAttribute('aria-pressed') === 'true'", "Calm motion button did not apply");
@@ -86,7 +88,8 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await rendererAssert(win, "document.querySelector('#pet-size').value === '140' && document.querySelector('#pet-size-value').textContent === '140%'", "Pet size End key did not reach 140%");
     await click(win, "#settings-close");
     await hidden(win, "#settings-panel");
-    await click(win, "#settings-button");
+    context.trayActions.openSettings();
+    await delay(200);
     await rendererAssert(win, "document.querySelector('#pet-size').value === '140' && document.body.dataset.motion === 'lively'", "Appearance preferences were not retained after closing settings");
     await click(win, "#settings-close");
     const reloaded = onceDidFinishLoad(win);
@@ -132,7 +135,8 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await interactionVisible(win, bottomClose.eventId);
     await click(win, "#interaction-bottom-close");
     await hidden(win, "#interaction-panel");
-    await click(win, "#open-button");
+    context.trayActions.openDrawer();
+    await delay(200);
     await visible(win, "#drawer");
     await click(win, `[data-open-interaction='${bottomClose.eventId}']`);
     await interactionVisible(win, bottomClose.eventId);
@@ -156,7 +160,10 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.sendInputEvent({ type: "mouseMove", x: 2, y: 2, movementX: -60, movementY: -60 });
     await delay(120);
     win.webContents.sendInputEvent({ type: "mouseMove", x: 3, y: 3, movementX: 1, movementY: 1 });
-    await waitFor(() => isIgnoringMouse(), 3_000, "Pointer left the pet but the window still swallowed mouse events");
+    if (!await tolerate(() => isIgnoringMouse(), 3_000)) {
+      const dom = await evaluate<string>(win, "(() => { const el = document.elementFromPoint(3, 3); return el ? (el.id || el.className || el.tagName) + ' interactive=' + Boolean(el.closest('[data-interactive]')) : 'null'; })()");
+      assert.fail(`Pointer left the pet but the window still swallowed mouse events —— 主进程：${mouseModeState()}；界面 elementFromPoint(3,3)=${dom}`);
+    }
     const petCenter = await center(win, "#pet");
     win.webContents.sendInputEvent({ type: "mouseMove", x: petCenter.x, y: petCenter.y, movementX: 5, movementY: 5 });
     await waitFor(() => !isIgnoringMouse(), 1_500, "Pointer entered the pet but the window stayed click-through");
@@ -203,14 +210,17 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       dragTick({ x: area.x + 200 + (step % 7) * 40, y: area.y + 150 + (step % 5) * 50 });
     }
     const sizeAfter = win.getBounds();
-    assert.equal(sizeAfter.width, sizeBefore.width, `Window grew wider while dragging: ${sizeBefore.width} → ${sizeAfter.width}`);
-    assert.equal(sizeAfter.height, sizeBefore.height, `Window grew taller while dragging: ${sizeBefore.height} → ${sizeAfter.height}`);
+    // ±2 是高 DPI 下的取整抖动（每次挪窗口都会把尺寸钉回设计值，抖不出去）；
+    // 真正要拦的是「滚雪球」——那种一涨就是几十上百像素。
+    assert.ok(Math.abs(sizeAfter.width - sizeBefore.width) <= 2, `Window grew wider while dragging: ${sizeBefore.width} → ${sizeAfter.width}`);
+    assert.ok(Math.abs(sizeAfter.height - sizeBefore.height) <= 2, `Window grew taller while dragging: ${sizeBefore.height} → ${sizeAfter.height}`);
     assert.ok(sizeAfter.height <= area.height - 100, `Window is too tall to move vertically: ${sizeAfter.height} in ${area.height}`);
 
     win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
     await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'false'", 2_000);
 
-    await click(win, "#hide-button");
+    context.trayActions.hide();
+    await delay(150);
     await waitFor(() => !win.isVisible(), 1_500, "Hide button did not hide the window");
     context.tray.emit("click", {} as never, {} as never, {} as never);
     await waitFor(() => win.isVisible(), 1_500, "Tray click callback did not restore the window");
@@ -223,18 +233,28 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     context.trayActions.show();
     await waitFor(() => win.isVisible(), 1_500, "Tray show callback did not restore a closed window");
 
-    // 「把幼苗叫回来」：拖丢了要能一键回到右下角
+    // 永远压在最前面：任何时候都必须是置顶状态
+    assert.equal(win.isAlwaysOnTop(), true, "Pet window lost always-on-top");
+
+    // 「聊天框换个边」：托盘点一下，界面必须真的翻到另一边
+    const sideBefore = await evaluate<string>(win, "document.body.dataset.noteSide");
+    context.trayActions.flipNote();
+    await waitForRenderer(win, `document.body.dataset.noteSide !== ${json(sideBefore)}`, 2_000);
+    context.trayActions.flipNote();
+    await waitForRenderer(win, `document.body.dataset.noteSide === ${json(sideBefore)}`, 2_000);
+
+    // 「把幼苗叫回来」：拖丢了要能一键回到默认位置
     win.setPosition(-500, -900, false);
     context.trayActions.recall();
     await waitFor(() => { const b = win.getBounds(); return b.x > 0 && b.y > 0; }, 1_500, "Tray recall did not bring the pet back on screen");
 
     const report = {
       version: context.version,
-      fixedButtonsClicked: 17,
+      fixedButtonsClicked: 14,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
-      window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
-      trayCallbacks: ["show", "recall", "open-logs", "simulate", "quit"],
+      window: ["always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
+      trayCallbacks: ["show", "recall", "hide", "open-drawer", "open-settings", "flip-note", "open-logs", "simulate", "quit"],
       interactionAnswersVerified: true,
     };
     writeJsonAtomic(context.reportPath, report);
@@ -353,6 +373,15 @@ async function rendererAssert(win: BrowserWindow, expression: string, message: s
 
 async function waitForRenderer(win: BrowserWindow, expression: string, timeoutMs = 1_500): Promise<void> {
   await waitFor(async () => evaluate<boolean>(win, `Boolean(${expression})`), timeoutMs, `Renderer condition timed out: ${expression}`);
+}
+
+async function tolerate(predicate: () => boolean | Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await delay(25);
+  }
+  return false;
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs: number, message: string): Promise<void> {
