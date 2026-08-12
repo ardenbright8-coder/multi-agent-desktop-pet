@@ -6,7 +6,7 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app, type Tray } from "electron";
-import type { InteractionResponseInput } from "./shared/protocol";
+import type { InteractionResponseInput, SessionSnapshot } from "./shared/protocol";
 import { PROTOCOL_VERSION } from "./shared/protocol";
 import { appDataRoot, discoveryPath, eventJournalPath } from "./shared/paths";
 import { AgentHub } from "./events/hub";
@@ -15,6 +15,7 @@ import { registerHubIpc } from "./channel/ipc-handlers";
 import { ensureGenericHookBridge, ensureOpenCodeIntegration } from "./integrations/manager";
 import {
   createPetWindow,
+  ensureFullyVisible,
   getPetWindow,
   persistWindowPosition,
   setShuttingDown,
@@ -125,6 +126,9 @@ async function bootstrap(): Promise<void> {
   hub.on("snapshot", (snapshot) => {
     const window = getPetWindow();
     if (window && !window.isDestroyed()) window.webContents.send("hub:snapshot", snapshot);
+    // 兜底：有事等你处理时，不管界面那边的通知丢没丢，先保证整个窗口在屏幕里，
+    // 否则面板的确认按钮可能留在屏幕外，人点不着（2026-08-12 实机踩过）。
+    if (snapshot.sessions.some((session: SessionSnapshot) => session.pendingInteraction)) ensureFullyVisible();
   });
 
   app.on("activate", showMainWindow);

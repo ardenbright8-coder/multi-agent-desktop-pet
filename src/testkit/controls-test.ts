@@ -182,13 +182,18 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     context.trayActions.show();
     await waitFor(() => win.isVisible(), 1_500, "Tray show callback did not restore a closed window");
 
+    // 「把幼苗叫回来」：拖丢了要能一键回到右下角
+    win.setPosition(-500, -900, false);
+    context.trayActions.recall();
+    await waitFor(() => { const b = win.getBounds(); return b.x > 0 && b.y > 0; }, 1_500, "Tray recall did not bring the pet back on screen");
+
     const report = {
       version: context.version,
       fixedButtonsClicked: 17,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
       window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
-      trayCallbacks: ["show", "simulate", "quit"],
+      trayCallbacks: ["show", "recall", "simulate", "quit"],
       interactionAnswersVerified: true,
     };
     writeJsonAtomic(context.reportPath, report);

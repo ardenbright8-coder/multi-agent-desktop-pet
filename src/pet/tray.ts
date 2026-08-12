@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { Menu, Tray, app, nativeImage } from "electron";
 import type { AgentHub } from "../events/hub";
 import { makeSimulationEvent } from "../events/simulation";
-import { setShuttingDown, showMainWindow } from "./window";
+import { recallPetWindow, setShuttingDown, showMainWindow } from "./window";
 
 export interface PetTrayActions {
   show(): void;
+  recall(): void;
   simulate(): void;
   quit(): void;
 }
@@ -15,6 +16,7 @@ export interface PetTrayActions {
 export function createTrayActions(hub: AgentHub): PetTrayActions {
   return {
     show: showMainWindow,
+    recall: recallPetWindow,
     simulate: () => { hub.publish(makeSimulationEvent("permission.requested")); },
     quit: () => { setShuttingDown(true); app.quit(); },
   };
@@ -28,6 +30,7 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
     const diagnostics = hub.diagnostics();
     appTray.setContextMenu(Menu.buildFromTemplate([
       { label: "显示桌宠", click: actions.show },
+      { label: "把幼苗叫回来（回右下角）", click: actions.recall },
       { label: `事件中心：${diagnostics.server.running ? "正常" : "异常"}`, enabled: false },
       { label: `已索引：${diagnostics.journal.count} 条`, enabled: false },
       { type: "separator" },
