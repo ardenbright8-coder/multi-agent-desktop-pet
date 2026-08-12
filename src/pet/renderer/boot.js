@@ -26,6 +26,13 @@ document.addEventListener("mousemove", (event) => {
 });
 document.querySelector("#pet").addEventListener("pointerdown", beginPetDrag);
 document.querySelector("#pet").addEventListener("dragstart", (event) => event.preventDefault());
+// 右键幼苗直接开设置（用户 2026-08-12 要的：幼苗脚下那排按钮撤了，得留个快捷入口）
+document.querySelector("#pet").addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  openSettings();
+});
+// 滚轮缩放也一并挡掉，跟 Ctrl +/- 一个道理
+document.addEventListener("wheel", (event) => { if (event.ctrlKey) event.preventDefault(); }, { passive: false });
 document.addEventListener("pointerup", endPetDrag);
 document.addEventListener("mouseup", endPetDrag);
 document.addEventListener("pointercancel", endPetDrag);

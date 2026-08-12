@@ -233,6 +233,21 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     context.trayActions.show();
     await waitFor(() => win.isVisible(), 1_500, "Tray show callback did not restore a closed window");
 
+    // 面板弹出来不许遮住幼苗：幼苗那块必须整个露在面板上边（用户 2026-08-12 的硬要求）
+    const permissionForBand = makePermissionEvent("panel-band-session", "panel-band-request");
+    hub.publish(permissionForBand);
+    await interactionVisible(win, permissionForBand.eventId);
+    const overlap = await evaluate<{ petBottom: number; panelTop: number }>(
+      win,
+      "(() => { const pet = document.querySelector('#pet').getBoundingClientRect(); const panel = document.querySelector('#interaction-panel').getBoundingClientRect(); return { petBottom: Math.round(pet.bottom), panelTop: Math.round(panel.top) }; })()",
+    );
+    assert.ok(
+      overlap.panelTop >= overlap.petBottom,
+      `Panel covers the pet: 幼苗底 ${overlap.petBottom} vs 面板顶 ${overlap.panelTop}`,
+    );
+    await click(win, "#interaction-top-close");
+    await hidden(win, "#interaction-panel");
+
     // 永远压在最前面：任何时候都必须是置顶状态
     assert.equal(win.isAlwaysOnTop(), true, "Pet window lost always-on-top");
 
@@ -253,7 +268,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       fixedButtonsClicked: 14,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
-      window: ["always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
+      window: ["panel-keeps-pet-visible", "always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "recall", "hide", "open-drawer", "open-settings", "flip-note", "open-logs", "simulate", "quit"],
       interactionAnswersVerified: true,
     };

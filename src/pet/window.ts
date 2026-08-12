@@ -26,9 +26,9 @@ export const PET_WINDOW_SIZE = { width: 435, height: 265 };
 export const PANEL_WINDOW_SIZE = { width: 440, height: 680 };
 export const WINDOW_SIZE = PET_WINDOW_SIZE;
 
-// 面板尺寸减幼苗尺寸 = 长大时要往左上让出多少，这样幼苗在屏幕上的位置不跳。
-const GROW_X = PANEL_WINDOW_SIZE.width - PET_WINDOW_SIZE.width;
-const GROW_Y = PANEL_WINDOW_SIZE.height - PET_WINDOW_SIZE.height;
+// 面板往**下**长：窗口左上角不动，幼苗贴在窗口顶部，所以它纹丝不动。
+// （早先是往左上长，那时幼苗贴窗口底部；改成顶部对齐后必须跟着反过来，
+//  否则一弹面板幼苗就往上跳 400 多像素。2026-08-12）
 
 const log = createLogger("window");
 
@@ -104,6 +104,15 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
   ignoringMouse = true;
   win.loadFile(join(__dirname, "renderer", "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // 关掉页面缩放：用户误按 Ctrl +/- 会把整个桌宠缩放得莫名其妙，
+  // 而幼苗大小本来就有设置里的滑杆，不需要第二套（2026-08-12 用户提的）。
+  win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => { /* 老版本没这 API 就算了 */ });
+  win.webContents.setZoomFactor(1);
+  win.webContents.on("zoom-changed", () => win.webContents.setZoomFactor(1));
+  win.webContents.on("before-input-event", (event, input) => {
+    if (!input.control && !input.meta) return;
+    if (["+", "-", "=", "0", "_", "Add", "Subtract"].includes(input.key)) event.preventDefault();
+  });
   win.once("ready-to-show", () => {
     win.showInactive();
     win.webContents.send("hub:snapshot", hub.snapshot());
@@ -262,13 +271,13 @@ export function setPanelVisibility(visible: boolean): void {
       ensureFullyVisible();
       return;
     }
-    // 记住幼苗现在站在哪，长大时往左上让出面板那部分，幼苗在屏幕上原地不动。
+    // 只把窗口撑大，左上角不动 —— 幼苗贴在窗口顶部，所以它在屏幕上原地不动。
     const before = mainWindow.getBounds();
     positionBeforePanel = { x: before.x, y: before.y };
     panelOpen = true;
     mainWindow.setBounds({
-      x: before.x - GROW_X,
-      y: before.y - GROW_Y,
+      x: before.x,
+      y: before.y,
       width: PANEL_WINDOW_SIZE.width,
       height: PANEL_WINDOW_SIZE.height,
     }, false);
@@ -282,10 +291,10 @@ export function setPanelVisibility(visible: boolean): void {
     return;
   }
   panelOpen = false;
-  // 缩回幼苗大小：拿当前窗口的右下角当锚，幼苗照样不跳。
+  // 缩回幼苗大小：左上角还是不动，幼苗照样不跳。
   const current = mainWindow.getBounds();
   const shrunk = clampWindowPosition(
-    { x: current.x + GROW_X, y: current.y + GROW_Y },
+    { x: current.x, y: current.y },
     workAreas,
     { width: PET_WINDOW_SIZE.width + EDGE_SAFETY, height: PET_WINDOW_SIZE.height + EDGE_SAFETY },
   );

@@ -1,6 +1,6 @@
 {
   "name": "multi-agent-desktop-pet",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "description": "Windows local desktop pet for unified coding-agent notifications and searchable permission context.",
   "main": "dist/app.js",
