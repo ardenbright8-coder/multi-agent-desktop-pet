@@ -11,7 +11,6 @@ import type { AgentHub } from "../events/hub";
 import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 
 export const WINDOW_SIZE = { width: 440, height: 680 };
-const PET_VISIBLE_BOUNDS = { x: 218, y: 392, width: 213, height: 247 };
 
 let mainWindow: BrowserWindow | null = null;
 // panelOpen 是「面板开着没」的唯一真相。
@@ -47,7 +46,7 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
   const workArea = screen.getPrimaryDisplay().workArea;
   const fallback = defaultWindowPosition(workArea, WINDOW_SIZE);
   const bounds = saved
-    ? clampWindowPosition(saved, screen.getAllDisplays().map((display) => display.workArea), WINDOW_SIZE, PET_VISIBLE_BOUNDS)
+    ? clampWindowPosition(saved, screen.getAllDisplays().map((display) => display.workArea), WINDOW_SIZE)
     : fallback;
   const win = new BrowserWindow({
     ...WINDOW_SIZE,
@@ -99,6 +98,25 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
   return win;
 }
 
+
+// 🚨 算边界一律用这个，别用 WINDOW_SIZE 常量。
+// 两个坑叠在一起（2026-08-12 实测，这台机缩放 179%）：
+//  ① Windows 给无边框窗口留了一圈不可见边框：建的时候写 440x680，getBounds() 报 456x710。
+//  ② 这个尺寸还会飘：同一个窗口挪一下位置，报的是 456x710 还是 461x715 都可能，
+//     高 DPI 下的取整所致。
+// 拿常量或者拿某一次读到的尺寸去 clamp，右下角就总能露出十几像素在屏幕外，
+// 面板右边被切、按钮够不着就有它一份。所以取「设计尺寸和实测尺寸的大者」再加 8px 余量。
+const EDGE_SAFETY = 8;
+
+function safeWindowSize(): { width: number; height: number } {
+  if (!mainWindow || mainWindow.isDestroyed()) return WINDOW_SIZE;
+  const { width, height } = mainWindow.getBounds();
+  return {
+    width: Math.max(WINDOW_SIZE.width, width) + EDGE_SAFETY,
+    height: Math.max(WINDOW_SIZE.height, height) + EDGE_SAFETY,
+  };
+}
+
 export function watchDisplayChanges(): void {
   screen.on("display-added", keepWindowOnVisibleDisplay);
   screen.on("display-removed", keepWindowOnVisibleDisplay);
@@ -130,20 +148,17 @@ export function persistWindowPosition(): void {
   writeJsonAtomic(preferencesPath(), { x, y });
 }
 
+// 整个窗口一律锁在工作区内。用户 2026-08-12 明确要求「框不要超出屏幕」——
+// 以前只保证幼苗那一小块可见，窗口大半在屏幕外，结果面板一弹出来右半边和按钮就够不着。
 export function keepWindowOnVisibleDisplay(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
+  const size = safeWindowSize();
   if (panelOpen && positionBeforePanel) {
-    positionBeforePanel = clampWindowPosition(positionBeforePanel, workAreas, WINDOW_SIZE, PET_VISIBLE_BOUNDS);
-    const currentPanelPosition = mainWindow.getBounds();
-    const visiblePanelPosition = clampWindowPosition(currentPanelPosition, workAreas, WINDOW_SIZE);
-    if (visiblePanelPosition.x !== currentPanelPosition.x || visiblePanelPosition.y !== currentPanelPosition.y) {
-      mainWindow.setPosition(visiblePanelPosition.x, visiblePanelPosition.y);
-    }
-    return;
+    positionBeforePanel = clampWindowPosition(positionBeforePanel, workAreas, size);
   }
   const current = mainWindow.getBounds();
-  const next = clampWindowPosition(current, workAreas, WINDOW_SIZE, PET_VISIBLE_BOUNDS);
+  const next = clampWindowPosition(current, workAreas, size);
   if (next.x !== current.x || next.y !== current.y) mainWindow.setPosition(next.x, next.y);
   persistWindowPosition();
 }
@@ -165,7 +180,7 @@ export function setPanelVisibility(visible: boolean): void {
     applyMouseMode();
     return;
   }
-  const restore = clampWindowPosition(positionBeforePanel, workAreas, WINDOW_SIZE, PET_VISIBLE_BOUNDS);
+  const restore = clampWindowPosition(positionBeforePanel, workAreas, safeWindowSize());
   positionBeforePanel = null;
   mainWindow.setPosition(restore.x, restore.y, false);
   persistWindowPosition();
@@ -176,7 +191,7 @@ export function setPanelVisibility(visible: boolean): void {
 export function recallPetWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workArea = screen.getPrimaryDisplay().workArea;
-  const home = defaultWindowPosition(workArea, WINDOW_SIZE);
+  const home = defaultWindowPosition(workArea, safeWindowSize());
   mainWindow.setPosition(home.x, home.y, false);
   mainWindow.showInactive();
   persistWindowPosition();
@@ -188,13 +203,48 @@ export function ensureFullyVisible(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   const current = mainWindow.getBounds();
-  const next = clampWindowPosition(current, workAreas, WINDOW_SIZE);
+  const next = clampWindowPosition(current, workAreas, safeWindowSize());
   if (next.x !== current.x || next.y !== current.y) mainWindow.setPosition(next.x, next.y, false);
 }
 
-export function setDragging(value: boolean): void {
-  dragging = value;
+// 拖动：主进程自己读系统光标位置来挪窗口，不用界面传过来的坐标。
+// 🚨 为什么不能用界面的 event.screenX/screenY：那是**物理像素**，而 setPosition 要的是 DIP。
+// 这台机缩放 179%，两者差 1.79 倍 —— 越往下拖，窗口被送去的 DIP 坐标越离谱，
+// 一拖就漂出屏幕底部再也找不着（2026-08-12 实机踩的）。
+// screen.getCursorScreenPoint() 返回的就是 DIP，跟 setPosition 单位天生一致。
+let dragOffset = { x: 0, y: 0 };
+let dragTimer: NodeJS.Timeout | null = null;
+
+export function startDragging(offset: { x: number; y: number }): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  dragOffset = {
+    x: Number.isFinite(offset?.x) ? offset.x : WINDOW_SIZE.width / 2,
+    y: Number.isFinite(offset?.y) ? offset.y : WINDOW_SIZE.height / 2,
+  };
+  dragging = true;
   applyMouseMode();
+  if (dragTimer) clearInterval(dragTimer);
+  dragTimer = setInterval(() => dragTick(screen.getCursorScreenPoint()), 16);
+}
+
+export function stopDragging(): void {
+  if (dragTimer) {
+    clearInterval(dragTimer);
+    dragTimer = null;
+  }
+  dragging = false;
+  applyMouseMode();
+  persistWindowPosition();
+}
+
+// 按光标位置挪一格。整窗一律锁在工作区内——用户明确要求「框不要超出屏幕」，
+// 这样面板弹出来也永远是完整的。导出是为了自测能直接喂坐标，不然测不了真实光标。
+export function dragTick(cursor: { x: number; y: number }): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const workAreas = screen.getAllDisplays().map((display) => display.workArea);
+  const target = clampWindowPosition({ x: cursor.x - dragOffset.x, y: cursor.y - dragOffset.y }, workAreas, safeWindowSize());
+  const current = mainWindow.getBounds();
+  if (target.x !== current.x || target.y !== current.y) mainWindow.setPosition(target.x, target.y, false);
 }
 
 export function setHoveringInteractive(value: boolean): void {
@@ -209,11 +259,6 @@ export function isDragging(): boolean {
 // 给自测用：现在窗口是不是让开鼠标的（true = 底下的程序点得到）。
 export function isIgnoringMouse(): boolean {
   return ignoringMouse;
-}
-
-export function moveWindowToPointer(x: number, y: number): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.setPosition(x, y, false);
 }
 
 // 什么时候该收回穿透：面板开着、正在拖、或者鼠标正压在可点的东西上。

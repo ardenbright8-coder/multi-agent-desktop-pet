@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { screen } from "electron";
 import type { BrowserWindow, Tray } from "electron";
 import type { AgentEvent, InteractionPayload, InteractionResponseInput } from "../shared/protocol";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import type { AgentHub } from "../events/hub";
-import { isIgnoringMouse } from "../pet/window";
+import { dragTick, isIgnoringMouse } from "../pet/window";
 
 import type { PetTrayActions } from "../pet/tray";
 
@@ -34,7 +35,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "finishWindowMove", "hideWindow", "moveWindowToPointer", "onSnapshot", "respondInteraction", "search", "setDragging", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot"]);
+    assert.deepEqual(exposed, ["diagnostics", "hideWindow", "onSnapshot", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
 
     const marker = `controls-${Date.now()}`;
     hub.publish(makeEvent("state.working", "search-session", { summary: `${marker} searchable event`, target: "package.json" }));
@@ -155,18 +156,35 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.sendInputEvent({ type: "mouseMove", x: petCenter.x, y: petCenter.y, movementX: 5, movementY: 5 });
     await waitFor(() => !isIgnoringMouse(), 1_500, "Pointer entered the pet but the window stayed click-through");
 
-    // 拖动是「按住拖、松手放」：按下去要进拖动态，中途挪鼠标窗口跟着走，松手才结束。
+    // 拖动是「按住拖、松手放」，而且**整个窗口一律锁在屏幕里**（用户明确要求「框不要超出屏幕」）。
+    // 窗口位置由主进程读系统光标算，所以这儿直接喂坐标给 dragTick，不能靠 sendInputEvent 移动假光标。
     const beforeMove = win.getBounds();
     const petPoint = await center(win, "#pet");
     win.webContents.sendInputEvent({ type: "mouseMove", x: petPoint.x, y: petPoint.y, movementX: 0, movementY: 0 });
     win.webContents.sendInputEvent({ type: "mouseDown", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
     await waitForRenderer(win, "document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'true'", 2_000);
-    win.webContents.sendInputEvent({ type: "mouseMove", x: petPoint.x - 35, y: petPoint.y - 25, movementX: -35, movementY: -25 });
+
+    const area = screen.getPrimaryDisplay().workArea;
+    dragTick({ x: area.x + 260, y: area.y + 180 });
     await waitFor(() => {
       const current = win.getBounds();
       return current.x !== beforeMove.x || current.y !== beforeMove.y;
     }, 2_000, "Dragging the pet did not move the window");
-    win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x - 35, y: petPoint.y - 25, button: "left", clickCount: 1 });
+
+    // 往屏幕外死拖，窗口必须被拦在工作区里，一个边都不许越
+    dragTick({ x: area.x + area.width + 800, y: area.y + area.height + 800 });
+    const pushed = win.getBounds();
+    assert.ok(
+      pushed.x >= area.x && pushed.y >= area.y
+        && pushed.x + pushed.width <= area.x + area.width
+        && pushed.y + pushed.height <= area.y + area.height,
+      `Dragging past the screen edge left the window offscreen: ${JSON.stringify(pushed)} vs ${JSON.stringify(area)}`,
+    );
+    dragTick({ x: area.x - 900, y: area.y - 900 });
+    const pulled = win.getBounds();
+    assert.ok(pulled.x >= area.x && pulled.y >= area.y, `Dragging past the top-left corner left the window offscreen: ${JSON.stringify(pulled)}`);
+
+    win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
     await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'false'", 2_000);
 
     await click(win, "#hide-button");
@@ -192,7 +210,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       fixedButtonsClicked: 17,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
-      window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
+      window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "recall", "simulate", "quit"],
       interactionAnswersVerified: true,
     };

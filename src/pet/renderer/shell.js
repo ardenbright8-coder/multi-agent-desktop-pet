@@ -71,7 +71,6 @@ let motionPreference = "lively";
 let activeInteractionEventId = null;
 let interactionSubmitting = false;
 let petPickedUp = false;
-let pickupAnchor = null;
 let panelVisible = false;
 let hoveringInteractive = false;
 const dismissedInteractions = new Set();

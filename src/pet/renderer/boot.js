@@ -1,20 +1,11 @@
 // 启动：绑事件、拉第一份快照、开定时器。
 // 必须最后一个加载——上面几份声明的东西这儿全要用到。
 
-// 鼠标一动就干两件事：拖动中就挪窗口，没拖就重新判断鼠标底下有没有能点的东西。
+// 鼠标一动就重新判断底下有没有能点的东西（拖动中不用管，窗口位置由主进程读系统光标算）。
 // 窗口平时是穿透的，靠 setIgnoreMouseEvents 的 forward 把 mousemove 转发进来，所以这条一直收得到。
 document.addEventListener("mousemove", (event) => {
-  if (petPickedUp && pickupAnchor) {
-    dragPetTo(event);
-    return;
-  }
+  if (petPickedUp) return;
   syncHitTest(event);
-});
-
-// 拖动同时听 pointermove 和 mousemove：穿透状态下系统转发来的是 mouse 事件，
-// 按住之后走的是 pointer 事件，两个都接才不会在某一段丢掉。dragPetTo 是幂等的，重复调没副作用。
-document.addEventListener("pointermove", (event) => {
-  if (petPickedUp && pickupAnchor) dragPetTo(event);
 });
 document.querySelector("#pet").addEventListener("pointerdown", beginPetDrag);
 document.querySelector("#pet").addEventListener("dragstart", (event) => event.preventDefault());

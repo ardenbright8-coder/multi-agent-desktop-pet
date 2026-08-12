@@ -64,39 +64,26 @@ function beginPetDrag(event) {
   // 在 pointerdown 上 preventDefault 会把浏览器后续合成的 mousemove／mouseup 一起掐掉，
   // 结果就是"按得下去、拖不动"（2026-08-12 实机踩的）。挡拖影是在 dragstart 上挡的。
   petPickedUp = true;
-  pickupAnchor = { x: event.clientX, y: event.clientY };
   document.body.classList.add("pet-picked-up");
   elements.pet.setAttribute("aria-pressed", "true");
   elements.pet.setAttribute("aria-label", "松手放下幼苗");
-  // 指针捕获：拖快了、拖出窗口范围，事件也照样送回来，不会拖一半丢了。
   if (event.pointerId !== undefined && elements.pet.setPointerCapture) {
     try { elements.pet.setPointerCapture(event.pointerId); } catch { /* 捕获失败不影响拖动 */ }
   }
-  window.agentPet.setDragging(true);
-}
-
-function dragPetTo(event) {
-  if (!petPickedUp || !pickupAnchor) return;
-  window.agentPet.moveWindowToPointer({
-    screenX: event.screenX,
-    screenY: event.screenY,
-    anchorX: pickupAnchor.x,
-    anchorY: pickupAnchor.y,
-  });
+  // 只告诉主进程「鼠标按在窗口里的哪个点」，剩下的它自己读系统光标去算，别在这儿传屏幕坐标。
+  window.agentPet.startDragging({ x: event.clientX, y: event.clientY });
 }
 
 function endPetDrag(event) {
   if (!petPickedUp) return;
   petPickedUp = false;
-  pickupAnchor = null;
   document.body.classList.remove("pet-picked-up");
   elements.pet.setAttribute("aria-pressed", "false");
   elements.pet.setAttribute("aria-label", "按住幼苗拖动，松手放下");
   if (event?.pointerId !== undefined && elements.pet.releasePointerCapture) {
     try { elements.pet.releasePointerCapture(event.pointerId); } catch { /* 已经自动释放了 */ }
   }
-  window.agentPet.setDragging(false);
-  window.agentPet.finishWindowMove();
+  window.agentPet.stopDragging();
   syncHitTest(event);
 }
 
