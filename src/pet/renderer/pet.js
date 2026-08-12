@@ -71,7 +71,19 @@ function beginPetDrag(event) {
     try { elements.pet.setPointerCapture(event.pointerId); } catch { /* 捕获失败不影响拖动 */ }
   }
   // 只告诉主进程「鼠标按在窗口里的哪个点」，剩下的它自己读系统光标去算，别在这儿传屏幕坐标。
-  window.agentPet.startDragging({ x: event.clientX, y: event.clientY });
+  // 把当时的视口和幼苗位置一并报上去，出问题时日志里能直接对账（2026-08-12 排「越拖越往下」用）。
+  const rect = elements.pet.getBoundingClientRect();
+  window.agentPet.startDragging({
+    x: event.clientX,
+    y: event.clientY,
+    viewportW: window.innerWidth,
+    viewportH: window.innerHeight,
+    dpr: window.devicePixelRatio,
+    petTop: Math.round(rect.top),
+    petLeft: Math.round(rect.left),
+    petW: Math.round(rect.width),
+    petH: Math.round(rect.height),
+  });
 }
 
 function endPetDrag(event) {

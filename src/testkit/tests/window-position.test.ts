@@ -4,8 +4,18 @@ import { clampWindowPosition, defaultWindowPosition } from "../../pet/window-pos
 
 const size = { width: 440, height: 680 };
 
-test("default position uses the primary work area's lower-right spacing", () => {
-  assert.deepEqual(defaultWindowPosition({ x: 0, y: 0, width: 1920, height: 1040 }, size), { x: 1452, y: 338 });
+const petSize = { width: 220, height: 304 };
+
+test("default position keeps the pet on the right at about two thirds of the screen height", () => {
+  // 1040 高的工作区：2/3 处是 693，减掉半个窗高 152 → 541。幼苗停在屏幕 2/3，不是贴着底边
+  assert.deepEqual(defaultWindowPosition({ x: 0, y: 0, width: 1920, height: 1040 }, petSize), { x: 1672, y: 541 });
+});
+
+test("default position never sinks past the bottom margin on a short screen", () => {
+  // 矮屏幕上 2/3 会算到底边以下，得被底边规则接住
+  const shortArea = { x: 0, y: 0, width: 1920, height: 500 };
+  const position = defaultWindowPosition(shortArea, petSize);
+  assert.ok(position.y + petSize.height <= shortArea.height, `窗口沉到屏幕外了：${JSON.stringify(position)}`);
 });
 
 test("restored position is clamped fully into its visible display", () => {

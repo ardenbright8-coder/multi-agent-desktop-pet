@@ -151,8 +151,12 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     // 点击穿透：鼠标不在幼苗上时，窗口必须让开，否则透明区域会挡住底下的程序（踩过的 bug）。
     await hidden(win, "#interaction-panel");
     // 窗口缩成幼苗大小后，幼苗区占了绝大部分，只有左上角这几像素是真空——拿它验穿透。
+    // 面板刚收起、窗口刚缩回，界面要一小会儿才重新布局好，所以等一下再连发两次移动。
+    await delay(250);
     win.webContents.sendInputEvent({ type: "mouseMove", x: 2, y: 2, movementX: -60, movementY: -60 });
-    await waitFor(() => isIgnoringMouse(), 1_500, "Pointer left the pet but the window still swallowed mouse events");
+    await delay(120);
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 3, y: 3, movementX: 1, movementY: 1 });
+    await waitFor(() => isIgnoringMouse(), 3_000, "Pointer left the pet but the window still swallowed mouse events");
     const petCenter = await center(win, "#pet");
     win.webContents.sendInputEvent({ type: "mouseMove", x: petCenter.x, y: petCenter.y, movementX: 5, movementY: 5 });
     await waitFor(() => !isIgnoringMouse(), 1_500, "Pointer entered the pet but the window stayed click-through");
@@ -191,6 +195,18 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     const pulled = win.getBounds();
     assert.ok(pulled.x >= area.x && pulled.y >= area.y, `Dragging past the top-left corner left the window offscreen: ${JSON.stringify(pulled)}`);
 
+    // 🚨 窗口尺寸在拖动中必须纹丝不动。
+    // 2026-08-12 踩过：非整数 DPI 缩放（179%）下每次挪窗口尺寸都涨一点，涨过屏幕高度后
+    // 窗口被一路推出屏幕顶部，用户只能往下拖、永远上不去。连拖 60 次，一个像素都不许变。
+    const sizeBefore = win.getBounds();
+    for (let step = 0; step < 60; step += 1) {
+      dragTick({ x: area.x + 200 + (step % 7) * 40, y: area.y + 150 + (step % 5) * 50 });
+    }
+    const sizeAfter = win.getBounds();
+    assert.equal(sizeAfter.width, sizeBefore.width, `Window grew wider while dragging: ${sizeBefore.width} → ${sizeAfter.width}`);
+    assert.equal(sizeAfter.height, sizeBefore.height, `Window grew taller while dragging: ${sizeBefore.height} → ${sizeAfter.height}`);
+    assert.ok(sizeAfter.height <= area.height - 100, `Window is too tall to move vertically: ${sizeAfter.height} in ${area.height}`);
+
     win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
     await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'false'", 2_000);
 
@@ -217,7 +233,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       fixedButtonsClicked: 17,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
-      window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
+      window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "recall", "open-logs", "simulate", "quit"],
       interactionAnswersVerified: true,
     };

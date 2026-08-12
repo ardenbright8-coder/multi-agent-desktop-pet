@@ -116,23 +116,28 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
 }
 
 
-// 🚨 算边界一律用这个，别用 WINDOW_SIZE 常量。
-// 两个坑叠在一起（2026-08-12 实测，这台机缩放 179%）：
-//  ① Windows 给无边框窗口留了一圈不可见边框：建的时候写 440x680，getBounds() 报 456x710。
-//  ② 这个尺寸还会飘：同一个窗口挪一下位置，报的是 456x710 还是 461x715 都可能，
-//     高 DPI 下的取整所致。
-// 拿常量或者拿某一次读到的尺寸去 clamp，右下角就总能露出十几像素在屏幕外，
-// 面板右边被切、按钮够不着就有它一份。所以取「设计尺寸和实测尺寸的大者」再加 8px 余量。
+// 🚨 算边界一律用设计尺寸，**绝对不许拿 getBounds() 的实测尺寸当基准**。
+// 2026-08-12 血的教训（靠日志抓到）：这台机缩放 179%（非整数），Electron 每次 setPosition
+// 都会把窗口尺寸四舍五入涨一点点；上一版拿实测尺寸当基准去算边界，涨了之后又被当成新基准，
+// 自己喂自己滚雪球 —— 窗口从 220x304 一路长到 940x961。
+// 长过屏幕高度后，clamp 算出的上界比下界还小，窗口被一路推出屏幕顶部，
+// 用户看到的就是「只能往下拖，永远上不去」。
+// 配套措施：所有挪窗口的地方都用 setBounds 带着尺寸一起写，把尺寸钉死（见 fixedBounds）。
 const EDGE_SAFETY = 8;
 
+function designSize(): { width: number; height: number } {
+  return panelOpen ? PANEL_WINDOW_SIZE : PET_WINDOW_SIZE;
+}
+
 function safeWindowSize(): { width: number; height: number } {
-  const design = panelOpen ? PANEL_WINDOW_SIZE : PET_WINDOW_SIZE;
-  if (!mainWindow || mainWindow.isDestroyed()) return design;
-  const { width, height } = mainWindow.getBounds();
-  return {
-    width: Math.max(design.width, width) + EDGE_SAFETY,
-    height: Math.max(design.height, height) + EDGE_SAFETY,
-  };
+  const design = designSize();
+  return { width: design.width + EDGE_SAFETY, height: design.height + EDGE_SAFETY };
+}
+
+/** 挪窗口一律走这儿：位置照给，尺寸每次钉回设计值，不给它膨胀的机会。 */
+function moveTo(x: number, y: number): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setBounds({ x, y, ...designSize() }, false);
 }
 
 export function watchDisplayChanges(): void {
@@ -180,7 +185,7 @@ export function keepWindowOnVisibleDisplay(): void {
   }
   const current = mainWindow.getBounds();
   const next = clampWindowPosition(current, workAreas, size);
-  if (next.x !== current.x || next.y !== current.y) mainWindow.setPosition(next.x, next.y);
+  if (next.x !== current.x || next.y !== current.y) moveTo(next.x, next.y);
   persistWindowPosition();
 }
 
@@ -231,8 +236,8 @@ export function recallPetWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   log.记("用户从托盘把幼苗叫回来了", "recallPetWindow");
   const workArea = screen.getPrimaryDisplay().workArea;
-  const home = defaultWindowPosition(workArea, panelOpen ? safeWindowSize() : PET_WINDOW_SIZE);
-  mainWindow.setPosition(home.x, home.y, false);
+  const home = defaultWindowPosition(workArea, designSize());
+  moveTo(home.x, home.y);
   mainWindow.showInactive();
   persistWindowPosition();
 }
@@ -244,9 +249,9 @@ export function ensureFullyVisible(): void {
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   const current = mainWindow.getBounds();
   const next = clampWindowPosition(current, workAreas, safeWindowSize());
-  if (next.x !== current.x || next.y !== current.y) {
-    log.记(`窗口越界被拉回 ${current.x},${current.y} → ${next.x},${next.y}`, "ensureFullyVisible");
-    mainWindow.setPosition(next.x, next.y, false);
+  if (next.x !== current.x || next.y !== current.y || current.width !== designSize().width || current.height !== designSize().height) {
+    log.记(`窗口归位 ${current.x},${current.y} ${current.width}x${current.height} → ${next.x},${next.y} ${designSize().width}x${designSize().height}`, "ensureFullyVisible");
+    moveTo(next.x, next.y);
   }
 }
 
@@ -258,9 +263,19 @@ export function ensureFullyVisible(): void {
 let dragOffset = { x: 0, y: 0 };
 let dragTimer: NodeJS.Timeout | null = null;
 
-export function startDragging(offset: { x: number; y: number }): void {
+export function startDragging(offset: { x: number; y: number }, diagnostics?: Record<string, unknown>): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  log.记(`开始拖动 抓手偏移=${Math.round(Number(offset?.x))},${Math.round(Number(offset?.y))}`, "startDragging");
+  const bounds = mainWindow.getBounds();
+  const content = mainWindow.getContentBounds();
+  const cursor = screen.getCursorScreenPoint();
+  log.记(
+    `开始拖动 抓手偏移=${Math.round(Number(offset?.x))},${Math.round(Number(offset?.y))}`
+    + ` 窗口=${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`
+    + ` 内容区=${content.x},${content.y} ${content.width}x${content.height}`
+    + ` 光标=${cursor.x},${cursor.y}`
+    + (diagnostics ? ` 界面报=视口${diagnostics.viewportW}x${diagnostics.viewportH} dpr=${diagnostics.dpr} 幼苗@${diagnostics.petLeft},${diagnostics.petTop} ${diagnostics.petW}x${diagnostics.petH}` : ""),
+    "startDragging",
+  );
   dragOffset = {
     x: Number.isFinite(offset?.x) ? offset.x : WINDOW_SIZE.width / 2,
     y: Number.isFinite(offset?.y) ? offset.y : WINDOW_SIZE.height / 2,
@@ -273,7 +288,8 @@ export function startDragging(offset: { x: number; y: number }): void {
 
 export function stopDragging(): void {
   const landed = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
-  if (landed) log.记(`放下 落点=${landed.x},${landed.y}`, "stopDragging");
+  if (landed) log.记(`放下 落点=${landed.x},${landed.y} 尺寸=${landed.width}x${landed.height}`, "stopDragging");
+  tickCount = 0;
   if (dragTimer) {
     clearInterval(dragTimer);
     dragTimer = null;
@@ -285,12 +301,20 @@ export function stopDragging(): void {
 
 // 按光标位置挪一格。整窗一律锁在工作区内——用户明确要求「框不要超出屏幕」，
 // 这样面板弹出来也永远是完整的。导出是为了自测能直接喂坐标，不然测不了真实光标。
+let tickCount = 0;
+
 export function dragTick(cursor: { x: number; y: number }): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
-  const target = clampWindowPosition({ x: cursor.x - dragOffset.x, y: cursor.y - dragOffset.y }, workAreas, safeWindowSize());
+  const wanted = { x: cursor.x - dragOffset.x, y: cursor.y - dragOffset.y };
+  const size = safeWindowSize();
+  const target = clampWindowPosition(wanted, workAreas, size);
   const current = mainWindow.getBounds();
-  if (target.x !== current.x || target.y !== current.y) mainWindow.setPosition(target.x, target.y, false);
+  tickCount += 1;
+  if (tickCount % 30 === 0) {
+    log.记(`拖动中 光标=${cursor.x},${cursor.y} 想去=${Math.round(wanted.x)},${Math.round(wanted.y)} 实际=${target.x},${target.y} 现在=${current.x},${current.y} 用的尺寸=${size.width}x${size.height}`, "dragTick");
+  }
+  moveTo(target.x, target.y);
 }
 
 export function setHoveringInteractive(value: boolean): void {

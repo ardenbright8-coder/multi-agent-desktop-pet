@@ -1,10 +1,14 @@
 export interface Point { x: number; y: number }
 export interface Rectangle extends Point { width: number; height: number }
 
+// 默认落脚点：靠右，竖直方向让幼苗停在屏幕高度约 2/3 处（用户 2026-08-12 指定，
+// 原来是贴着底边，太靠下）。算完还是会被 clampWindowPosition 收进工作区。
 export function defaultWindowPosition(workArea: Rectangle, windowSize: { width: number; height: number }): Point {
+  const wanted = workArea.y + Math.round(workArea.height * 2 / 3 - windowSize.height / 2);
+  const lowest = workArea.y + workArea.height - windowSize.height - 22;
   return {
     x: workArea.x + workArea.width - windowSize.width - 28,
-    y: workArea.y + workArea.height - windowSize.height - 22,
+    y: Math.max(workArea.y, Math.min(wanted, lowest)),
   };
 }
 
@@ -44,5 +48,9 @@ function distanceToRectangle(point: Point, rectangle: Rectangle): number {
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
+  // 窗口比屏幕还大时 maximum 会小于 minimum，直接 min/max 会把窗口推到屏幕外
+  // （2026-08-12 踩过：窗口膨胀到比屏幕高之后，被一路推出顶部，怎么拖都上不去）。
+  // 这种情况下贴左上，至少让人看得见、够得着。
+  if (maximum < minimum) return Math.round(minimum);
   return Math.round(Math.min(Math.max(value, minimum), maximum));
 }
