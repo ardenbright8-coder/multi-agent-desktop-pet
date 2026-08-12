@@ -35,7 +35,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "hideWindow", "onSnapshot", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
+    assert.deepEqual(exposed, ["diagnostics", "hideWindow", "onSnapshot", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
 
     const marker = `controls-${Date.now()}`;
     hub.publish(makeEvent("state.working", "search-session", { summary: `${marker} searchable event`, target: "package.json" }));
@@ -218,7 +218,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
       window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
-      trayCallbacks: ["show", "recall", "simulate", "quit"],
+      trayCallbacks: ["show", "recall", "open-logs", "simulate", "quit"],
       interactionAnswersVerified: true,
     };
     writeJsonAtomic(context.reportPath, report);

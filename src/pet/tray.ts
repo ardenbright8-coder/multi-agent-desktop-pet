@@ -1,14 +1,16 @@
 // 托盘图标和它的右键菜单。菜单文字随事件中心状态实时重建。
 
 import { join } from "node:path";
-import { Menu, Tray, app, nativeImage } from "electron";
+import { Menu, Tray, app, nativeImage, shell } from "electron";
 import type { AgentHub } from "../events/hub";
 import { makeSimulationEvent } from "../events/simulation";
 import { recallPetWindow, setShuttingDown, showMainWindow } from "./window";
+import { logRoot } from "../shared/log";
 
 export interface PetTrayActions {
   show(): void;
   recall(): void;
+  openLogs(): void;
   simulate(): void;
   quit(): void;
 }
@@ -17,6 +19,7 @@ export function createTrayActions(hub: AgentHub): PetTrayActions {
   return {
     show: showMainWindow,
     recall: recallPetWindow,
+    openLogs: () => { void shell.openPath(logRoot()); },
     simulate: () => { hub.publish(makeSimulationEvent("permission.requested")); },
     quit: () => { setShuttingDown(true); app.quit(); },
   };
@@ -35,6 +38,7 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
       { label: `已索引：${diagnostics.journal.count} 条`, enabled: false },
       { type: "separator" },
       { label: "发一条测试通知", click: actions.simulate },
+      { label: "打开日志文件夹", click: actions.openLogs },
       { type: "separator" },
       { label: "退出", click: actions.quit },
     ]));

@@ -4,6 +4,9 @@ import type {
   InteractionResponseInput,
   InteractionSubmitResult,
 } from "../shared/protocol";
+import { createLogger } from "../shared/log";
+
+const log = createLogger("permission");
 
 interface QueuedResponse extends InteractionResponseInput {
   responseId: string;
@@ -32,6 +35,7 @@ export class InteractionBroker {
       return Promise.resolve({ ok: false, status: "unavailable", message: "这条待处理事项已经变化，请回会话列表重新打开。" });
     }
 
+    log.记(`用户在桌宠上交了答案 agent=${input.agent} 会话=${input.sessionId} 共${input.answers?.length ?? 0}题`, "submit");
     this.updateStatus(input, "submitting");
     return new Promise((resolve) => {
       const responseId = randomUUID();
@@ -41,6 +45,7 @@ export class InteractionBroker {
         if (!queued || queued.responseId !== responseId) return;
         this.queued.delete(input.eventId);
         const message = "Agent 没有在限定时间内接收回答，请回原窗口处理或稍后重试。";
+        log.出事(`答案等了 ${this.timeoutMs}ms 没人接，退回原窗口 agent=${input.agent} 会话=${input.sessionId}`, undefined, "submit");
         this.updateStatus(input, "failed", message);
         finish({ ok: false, status: "failed", message });
       }, this.timeoutMs);
@@ -72,6 +77,7 @@ export class InteractionBroker {
     clearTimeout(queued.timer);
     this.queued.delete(queued.eventId);
     if (success) {
+      log.记(`答案已交回 agent=${queued.agent} 会话=${queued.sessionId}`, "complete");
       this.completed.set(queued.eventId, Date.now() + 30 * 60 * 1000);
       this.updateStatus(queued, "submitted");
       queued.finish({ ok: true, status: "submitted", message: "回答已交回 Agent。" });

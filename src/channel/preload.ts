@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("agentPet", {
   setHoveringInteractive: (hovering: boolean): void => ipcRenderer.send("window:hover-interactive", hovering),
   setPanelVisibility: (visible: boolean): void => ipcRenderer.send("window:panel-visibility", visible),
   hideWindow: (): void => ipcRenderer.send("window:hide"),
+  reportError: (info: { message: string; where?: string; stack?: string }): void => ipcRenderer.send("window:renderer-error", info),
   onSnapshot: (listener: (snapshot: HubSnapshot) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: HubSnapshot) => listener(snapshot);
     ipcRenderer.on("hub:snapshot", handler);

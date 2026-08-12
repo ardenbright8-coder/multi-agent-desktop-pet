@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { BrowserWindow, screen } from "electron";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { preferencesPath } from "../shared/paths";
+import { createLogger } from "../shared/log";
 import type { AgentHub } from "../events/hub";
 import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 
@@ -23,6 +24,8 @@ export const WINDOW_SIZE = PET_WINDOW_SIZE;
 // 面板尺寸减幼苗尺寸 = 长大时要往左上让出多少，这样幼苗在屏幕上的位置不跳。
 const GROW_X = PANEL_WINDOW_SIZE.width - PET_WINDOW_SIZE.width;
 const GROW_Y = PANEL_WINDOW_SIZE.height - PET_WINDOW_SIZE.height;
+
+const log = createLogger("window");
 
 let mainWindow: BrowserWindow | null = null;
 // panelOpen 是「面板开着没」的唯一真相。
@@ -107,6 +110,8 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
     }
   });
   mainWindow = win;
+  const area = screen.getPrimaryDisplay().workArea;
+  log.记(`建窗口 位置=${bounds.x},${bounds.y} 尺寸=${PET_WINDOW_SIZE.width}x${PET_WINDOW_SIZE.height} 工作区=${area.width}x${area.height} 缩放=${screen.getPrimaryDisplay().scaleFactor}`, "createPetWindow");
   return win;
 }
 
@@ -157,6 +162,9 @@ function loadWindowBounds(): { x: number; y: number } | null {
 
 export function persistWindowPosition(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  // 🚨 面板开着时窗口是「长大」状态，坐标跟幼苗待的地方不是一回事。
+  // 存了它，下次启动就拿这个坐标去摆小窗口，幼苗开机即跑偏（2026-08-12 日志抓到的）。
+  if (panelOpen) return;
   const { x, y } = mainWindow.getBounds();
   writeJsonAtomic(preferencesPath(), { x, y });
 }
@@ -195,6 +203,7 @@ export function setPanelVisibility(visible: boolean): void {
       height: PANEL_WINDOW_SIZE.height,
     }, false);
     ensureFullyVisible();
+    log.记(`面板展开，窗口长大 ${before.x},${before.y} → ${mainWindow.getBounds().x},${mainWindow.getBounds().y}`, "setPanelVisibility");
     applyMouseMode();
     return;
   }
@@ -211,6 +220,7 @@ export function setPanelVisibility(visible: boolean): void {
     { width: PET_WINDOW_SIZE.width + EDGE_SAFETY, height: PET_WINDOW_SIZE.height + EDGE_SAFETY },
   );
   mainWindow.setBounds({ x: shrunk.x, y: shrunk.y, ...PET_WINDOW_SIZE }, false);
+  log.记(`面板收起，窗口缩回 ${shrunk.x},${shrunk.y}`, "setPanelVisibility");
   positionBeforePanel = null;
   persistWindowPosition();
   applyMouseMode();
@@ -219,6 +229,7 @@ export function setPanelVisibility(visible: boolean): void {
 // 把幼苗叫回默认位置（右下角）。拖丢了、跑到看不见的地方了，托盘菜单点一下就回来。
 export function recallPetWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  log.记("用户从托盘把幼苗叫回来了", "recallPetWindow");
   const workArea = screen.getPrimaryDisplay().workArea;
   const home = defaultWindowPosition(workArea, panelOpen ? safeWindowSize() : PET_WINDOW_SIZE);
   mainWindow.setPosition(home.x, home.y, false);
@@ -233,7 +244,10 @@ export function ensureFullyVisible(): void {
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   const current = mainWindow.getBounds();
   const next = clampWindowPosition(current, workAreas, safeWindowSize());
-  if (next.x !== current.x || next.y !== current.y) mainWindow.setPosition(next.x, next.y, false);
+  if (next.x !== current.x || next.y !== current.y) {
+    log.记(`窗口越界被拉回 ${current.x},${current.y} → ${next.x},${next.y}`, "ensureFullyVisible");
+    mainWindow.setPosition(next.x, next.y, false);
+  }
 }
 
 // 拖动：主进程自己读系统光标位置来挪窗口，不用界面传过来的坐标。
@@ -246,6 +260,7 @@ let dragTimer: NodeJS.Timeout | null = null;
 
 export function startDragging(offset: { x: number; y: number }): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  log.记(`开始拖动 抓手偏移=${Math.round(Number(offset?.x))},${Math.round(Number(offset?.y))}`, "startDragging");
   dragOffset = {
     x: Number.isFinite(offset?.x) ? offset.x : WINDOW_SIZE.width / 2,
     y: Number.isFinite(offset?.y) ? offset.y : WINDOW_SIZE.height / 2,
@@ -257,6 +272,8 @@ export function startDragging(offset: { x: number; y: number }): void {
 }
 
 export function stopDragging(): void {
+  const landed = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
+  if (landed) log.记(`放下 落点=${landed.x},${landed.y}`, "stopDragging");
   if (dragTimer) {
     clearInterval(dragTimer);
     dragTimer = null;
@@ -297,6 +314,7 @@ function applyMouseMode(): void {
   const shouldIgnore = !(panelOpen || dragging || hoveringInteractive);
   if (shouldIgnore === ignoringMouse) return;
   ignoringMouse = shouldIgnore;
+  log.调试(`鼠标模式 → ${shouldIgnore ? "让开（底下点得到）" : "接管（可点桌宠）"} 面板=${panelOpen} 拖动=${dragging} 悬停=${hoveringInteractive}`, "applyMouseMode");
   if (shouldIgnore) mainWindow.setIgnoreMouseEvents(true, { forward: true });
   else mainWindow.setIgnoreMouseEvents(false);
 }

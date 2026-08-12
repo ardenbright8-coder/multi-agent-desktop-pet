@@ -9,6 +9,7 @@ import { app, type Tray } from "electron";
 import type { InteractionResponseInput, SessionSnapshot } from "./shared/protocol";
 import { PROTOCOL_VERSION } from "./shared/protocol";
 import { appDataRoot, discoveryPath, eventJournalPath } from "./shared/paths";
+import { createLogger, lastLogError, logRoot, startLog } from "./shared/log";
 import { AgentHub } from "./events/hub";
 import { LocalIpcServer } from "./channel/ipc-server";
 import { registerHubIpc } from "./channel/ipc-handlers";
@@ -40,6 +41,8 @@ if (testMode && !process.env.AGENT_PET_HUB_HOME) {
   process.env.AGENT_PET_HUB_HOME = testRoot;
 }
 if (process.env.AGENT_PET_HUB_HOME) app.setPath("userData", join(process.env.AGENT_PET_HUB_HOME, "electron"));
+
+const log = createLogger("app");
 
 let tray: Tray | null = null;
 let ipcServer: LocalIpcServer | null = null;
@@ -73,6 +76,7 @@ if (!gotLock) {
 async function bootstrap(): Promise<void> {
   app.setAppUserModelId("local.jiakai.multiagentpet");
   app.setName("多Agent桌面宠物");
+  startLog({ version: app.getVersion(), electron: process.versions.electron, pid: process.pid, testMode });
 
   const hub = new AgentHub(eventJournalPath(), {
     running: false,
@@ -84,15 +88,19 @@ async function bootstrap(): Promise<void> {
   ipcServer = new LocalIpcServer(hub);
   const discovery = await ipcServer.start();
   hub.updateServerInfo({ running: true, endpoint: discovery.endpoint });
+  log.记(`本机通道已就绪 endpoint=${discovery.endpoint}`, "bootstrap");
   hub.on("server-error", (error) => {
     hub.updateServerInfo({ running: false });
+    log.出事("本机通道出错，事件中心已标记为异常", error, "server-error");
     logError(error);
   });
   if (!testMode && !skipIntegrationInstall) {
     try {
       ensureOpenCodeIntegration();
       ensureGenericHookBridge();
+      log.记("四家接入已同步", "bootstrap");
     } catch (error) {
+      log.出事("装接入失败", error, "bootstrap");
       logError(error);
     }
   }
@@ -140,6 +148,7 @@ async function bootstrap(): Promise<void> {
     event.preventDefault();
     if (quitCleanupStarted) return;
     quitCleanupStarted = true;
+    log.记("收到退出请求，开始清理", "before-quit");
     setShuttingDown(true);
     persistWindowPosition();
     Promise.resolve(ipcServer?.close())

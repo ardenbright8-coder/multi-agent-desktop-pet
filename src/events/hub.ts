@@ -10,6 +10,7 @@ import type {
   SearchQuery,
 } from "../shared/protocol";
 import { normalizeAgentEvent } from "../shared/protocol";
+import { createLogger } from "../shared/log";
 import { EventIndex } from "./event-index";
 import { EventJournal } from "./event-journal";
 import { InteractionBroker } from "../interaction/broker";
@@ -22,6 +23,8 @@ interface HubServerInfo {
   ownerPid: number;
   protocolVersion: number;
 }
+
+const log = createLogger("session");
 
 export class AgentHub extends EventEmitter {
   private readonly journal: EventJournal;
@@ -64,8 +67,10 @@ export class AgentHub extends EventEmitter {
     const event = normalizeAgentEvent(raw);
     if (!event) {
       this.counters.invalid += 1;
+      log.出事("收到一条读不懂的事件，已丢弃", raw, "publish");
       return { accepted: false, status: "invalid" };
     }
+    log.记(`收到事件 agent=${event.agent} kind=${event.kind} 会话=${event.sessionId}${event.interaction ? ` 待${event.interaction.mode === "question" ? "回答" : "授权"}` : ""}`, "publish");
     if (this.seenEventIds.has(event.eventId)) {
       this.counters.duplicate += 1;
       return { accepted: false, status: "duplicate", eventId: event.eventId, sequence: event.sequence };

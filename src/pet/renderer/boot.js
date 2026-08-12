@@ -1,6 +1,23 @@
 // 启动：绑事件、拉第一份快照、开定时器。
 // 必须最后一个加载——上面几份声明的东西这儿全要用到。
 
+// 界面塌了要留痕：以前渲染层报错谁也看不见，只能干瞪眼。
+window.addEventListener("error", (event) => {
+  window.agentPet?.reportError?.({
+    message: event.message || String(event.error || "未知错误"),
+    where: event.filename ? `${event.filename}:${event.lineno}` : "renderer",
+    stack: event.error && event.error.stack ? String(event.error.stack) : undefined,
+  });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason;
+  window.agentPet?.reportError?.({
+    message: `未处理的 Promise 失败：${reason && reason.message ? reason.message : String(reason)}`,
+    where: "renderer/promise",
+    stack: reason && reason.stack ? String(reason.stack) : undefined,
+  });
+});
+
 // 鼠标一动就重新判断底下有没有能点的东西（拖动中不用管，窗口位置由主进程读系统光标算）。
 // 窗口平时是穿透的，靠 setIgnoreMouseEvents 的 forward 把 mousemove 转发进来，所以这条一直收得到。
 document.addEventListener("mousemove", (event) => {
