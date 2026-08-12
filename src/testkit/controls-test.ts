@@ -145,6 +145,21 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     const permission = makePermissionEvent("permission-submit-session", "permission-submit-request");
     hub.publish(permission);
     await interactionVisible(win, permission.eventId);
+    // 🚨 面板一打开，第一个选项就得在视野里。
+    // 以前这条没测，是因为 click() 会先 scrollIntoView 自动滚过去——测试永远绿，
+    // 用户却看不到选项，点确认只报个同样看不见的错，以为按钮是死的（2026-08-12 实机踩到）。
+    const optionInView = await evaluate<boolean>(win, `(() => {
+      const scroll = document.querySelector('.interaction-scroll');
+      const option = document.querySelector('.interaction-option');
+      if (!scroll || !option) return false;
+      const s = scroll.getBoundingClientRect();
+      const o = option.getBoundingClientRect();
+      return o.top >= s.top - 1 && o.top < s.bottom;
+    })()`);
+    assert.ok(optionInView, "面板一打开，第一个选项就在视野外——用户会以为确认按钮是死的");
+    // 错误提示必须钉在滚动区外面（否则报错也看不见）
+    const errorPinned = await evaluate<boolean>(win, "!document.querySelector('.interaction-scroll').contains(document.querySelector('#interaction-error'))");
+    assert.ok(errorPinned, "错误提示还在滚动正文里，会被滚出视野");
     await click(win, "[data-prompt-id='permission'] input[value='once']");
     await click(win, "#interaction-confirm");
     await waitForRenderer(win, "document.querySelector('#interaction-panel').hidden");
@@ -266,7 +281,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     const report = {
       version: context.version,
       fixedButtonsClicked: 14,
-      dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
+      dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm", "option-in-view"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
       window: ["panel-keeps-pet-visible", "always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "recall", "hide", "open-drawer", "open-settings", "flip-note", "open-logs", "simulate", "quit"],

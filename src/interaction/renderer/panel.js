@@ -88,6 +88,9 @@ async function submitInteraction() {
     const optionIds = selected.filter((value) => value !== "__custom__");
     if ((!optionIds.length && !customText) || (customSelected && !customText)) {
       showInteractionError("请先为每个问题选择一项，或写下自己的回答。");
+      // 把没选的那题滚到眼前——面板矮的时候选项可能在视野外，
+      // 不滚过去用户只会觉得「点了没反应」（2026-08-12 实机踩到）。
+      fieldset?.scrollIntoView({ block: "center" });
       return;
     }
     answers.push({ promptId: prompt.id, optionIds, customText: customText || undefined });

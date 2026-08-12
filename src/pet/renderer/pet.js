@@ -148,6 +148,10 @@ function applyPetSize(value, persist) {
   elements.pet.style.setProperty("--user-pet-scale", String(size / 100));
   elements.petSize.value = String(size);
   elements.petSizeValue.textContent = `${size}%`;
+  // 幼苗那条顶带按**当前实际大小**算，别死按最大 140% 占着——
+  // 占多了面板就被压得太扁，选项挤出视野（2026-08-12 实机踩到）。
+  const band = Math.round(8 + 176 * (size / 100) + 12);
+  document.documentElement.style.setProperty("--pet-band", `${band}px`);
   if (persist) savePetPreferences();
 }
 

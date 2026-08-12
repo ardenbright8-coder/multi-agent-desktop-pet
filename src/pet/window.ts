@@ -23,7 +23,8 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 //   高 = 8 + 176×1.4 + 8 ≈ 265
 // 幼苗顶部对齐窗口顶，所以 100% 时它离屏幕上沿只有 8px，能真正顶上去。
 export const PET_WINDOW_SIZE = { width: 435, height: 265 };
-export const PANEL_WINDOW_SIZE = { width: 440, height: 680 };
+// 高度尽量吃满工作区（这台机 778），面板让出幼苗顶带之后正文才不至于被压扁。
+export const PANEL_WINDOW_SIZE = { width: 440, height: 740 };
 export const WINDOW_SIZE = PET_WINDOW_SIZE;
 
 // 面板往**下**长：窗口左上角不动，幼苗贴在窗口顶部，所以它纹丝不动。

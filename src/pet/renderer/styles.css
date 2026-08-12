@@ -394,7 +394,7 @@ body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px
 .type-badge.permission { border-color: rgba(242,200,75,0.42); color: var(--accent); }
 .icon-button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--paper-muted); font-size: 21px; line-height: 1; cursor: pointer; }
 .icon-button:hover { color: var(--paper); background: rgba(255,255,255,0.05); }
-.interaction-scroll { min-height: 0; flex: 1 1 auto; padding: 0 18px 14px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ink-soft) transparent; }
+.interaction-scroll { min-height: 0; flex: 1 1 auto; padding: 0 18px 14px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--ink-soft) transparent; }
 .interaction-panel h1 { margin: 3px 0 11px; font-size: 23px; line-height: 1.25; letter-spacing: -0.025em; }
 .interaction-explanation { margin: 0; color: var(--paper-muted); font-size: 15px; line-height: 1.7; user-select: text; }
 .interaction-prompts { display: grid; gap: 16px; margin-top: 17px; }
@@ -410,7 +410,11 @@ body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px
 .interaction-option em { margin-top: 3px; color: var(--paper-muted); font-size: 13px; font-style: normal; line-height: 1.45; }
 .interaction-prompt textarea { width: 100%; min-height: 72px; padding: 10px 11px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; outline: none; background: rgba(255,255,255,0.045); color: var(--paper); font: inherit; font-size: 14px; line-height: 1.55; user-select: text; }
 .interaction-prompt textarea:focus { border-color: rgba(143,219,120,0.72); box-shadow: 0 0 0 3px rgba(143,219,120,0.12); }
-.interaction-fallback, .interaction-error { margin: 15px 0 0; padding: 11px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
+.interaction-fallback { margin: 15px 0 0; padding: 11px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
+/* 🚨 错误提示钉在按钮上方的固定区，绝不能塞进滚动正文里——
+   塞进去就会被滚出视野，用户点确认看不到任何反馈，只会觉得「按钮是死的」
+   （2026-08-12 实机踩到）。 */
+.interaction-error { flex: 0 0 auto; margin: 0 18px 10px; padding: 11px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
 .interaction-fallback { border: 1px solid rgba(242,200,75,0.35); background: rgba(242,200,75,0.08); color: var(--accent); }
 .interaction-error { border: 1px solid rgba(237,128,101,0.38); background: rgba(237,128,101,0.09); color: #ffae9a; }
 .interaction-actions { flex: 0 0 auto; display: grid; grid-template-columns: 0.72fr 1.28fr; gap: 8px; padding: 12px 18px 17px; border-top: 1px solid var(--line); background: rgba(15,28,21,0.98); border-radius: 0 0 6px 16px; }
