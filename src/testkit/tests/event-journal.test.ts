@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { EventJournal } from "../main/event-journal";
-import type { AgentEvent } from "../shared/protocol";
+import { EventJournal } from "../../events/event-journal";
+import type { AgentEvent } from "../../shared/protocol";
 
 test("journal truncates a partial crash tail before appending the next event", () => {
   const root = mkdtempSync(join(tmpdir(), "agent-pet-journal-"));

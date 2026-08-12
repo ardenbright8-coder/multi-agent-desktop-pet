@@ -14,10 +14,10 @@ copyFileSync(resolve("integrations", "hooks", "agent-pet-hook.mjs"), join(bridge
 process.env.AGENT_PET_HUB_HOME = root;
 process.env.AGENT_PET_SKIP_INTEGRATION_INSTALL = "1";
 
-const { AgentHub } = require("../dist/main/hub.js");
-const { LocalIpcServer } = require("../dist/main/ipc-server.js");
-const { LocalIpcClient } = require("../dist/main/ipc-client.js");
-const { discoveryPath } = require("../dist/main/paths.js");
+const { AgentHub } = require("../dist/events/hub.js");
+const { LocalIpcServer } = require("../dist/channel/ipc-server.js");
+const { LocalIpcClient } = require("../dist/channel/ipc-client.js");
+const { discoveryPath } = require("../dist/shared/paths.js");
 const journal = join(root, "data", "events.ndjson");
 const hub = new AgentHub(journal, {
   running: false,

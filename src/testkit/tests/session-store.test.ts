@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SessionStore } from "../main/session-store";
-import type { AgentEvent, EventKind } from "../shared/protocol";
+import { SessionStore } from "../../events/session-store";
+import type { AgentEvent, EventKind } from "../../shared/protocol";
 
 test("session store rejects duplicate sequence and late state regression", () => {
   const store = new SessionStore();

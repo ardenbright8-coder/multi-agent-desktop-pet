@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "description": "Windows local desktop pet for unified coding-agent notifications and searchable permission context.",
-  "main": "dist/main/main.js",
+  "main": "dist/app.js",
   "type": "commonjs",
   "scripts": {
     "clean": "node scripts/clean.mjs",

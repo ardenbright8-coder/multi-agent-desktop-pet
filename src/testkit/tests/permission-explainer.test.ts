@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { explainPermission } from "../main/permission-explainer";
-import { normalizeAgentEvent } from "../shared/protocol";
+import { explainPermission } from "../../interaction/permission-explainer";
+import { normalizeAgentEvent } from "../../shared/protocol";
 
 test("dangerous Windows command is marked high risk and irreversible", () => {
   const explanation = explainPermission({

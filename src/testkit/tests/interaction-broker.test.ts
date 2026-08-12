@@ -3,9 +3,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHub } from "../main/hub";
-import { InteractionBroker } from "../main/interaction-broker";
-import type { InteractionResponseInput } from "../shared/protocol";
+import { AgentHub } from "../../events/hub";
+import { InteractionBroker } from "../../interaction/broker";
+import type { InteractionResponseInput } from "../../shared/protocol";
 
 const response: InteractionResponseInput = {
   eventId: "event-1",

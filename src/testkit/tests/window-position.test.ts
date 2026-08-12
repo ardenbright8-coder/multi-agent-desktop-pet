@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clampWindowPosition, defaultWindowPosition } from "../main/window-position";
+import { clampWindowPosition, defaultWindowPosition } from "../../pet/window-position";
 
 const size = { width: 440, height: 680 };
 

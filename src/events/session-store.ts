@@ -1,5 +1,5 @@
 import type { AgentEvent, HubSnapshot, InteractionResponseInput, SessionSnapshot } from "../shared/protocol";
-import { presentInteraction } from "./interaction-presenter";
+import { presentInteraction } from "../interaction/presenter";
 
 interface InternalSession extends SessionSnapshot {
   stateSince: number;

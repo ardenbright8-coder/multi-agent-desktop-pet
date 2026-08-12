@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { APP_ID, MAX_FRAME_BYTES, PROTOCOL_VERSION, type AgentEvent, type InteractionResponseClaim, type RpcRequest, type RpcResponse, type SearchHit, type SearchQuery } from "../shared/protocol";
-import { discoveryPath } from "./paths";
+import { discoveryPath } from "../shared/paths";
 import type { DiscoveryDocument } from "./ipc-server";
 
 export class LocalIpcClient {

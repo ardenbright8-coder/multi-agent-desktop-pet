@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { presentInteraction } from "../main/interaction-presenter";
-import type { AgentEvent } from "../shared/protocol";
+import { presentInteraction } from "../../interaction/presenter";
+import type { AgentEvent } from "../../shared/protocol";
 
 test("question presenter gives situation, cause, recommendation and impact without tautology", () => {
   const presentation = presentInteraction(baseEvent("question.asked", {

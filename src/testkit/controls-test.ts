@@ -3,8 +3,8 @@ import { writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, Tray } from "electron";
 import type { AgentEvent, InteractionPayload, InteractionResponseInput } from "../shared/protocol";
-import { writeJsonAtomic } from "./atomic-file";
-import type { AgentHub } from "./hub";
+import { writeJsonAtomic } from "../shared/atomic-file";
+import type { AgentHub } from "../events/hub";
 
 export interface ControlsTrayActions {
   show(): void;

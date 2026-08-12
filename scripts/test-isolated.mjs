@@ -19,7 +19,7 @@ run(process.execPath, ["scripts/copy-assets.mjs"]);
 for (const file of [
   "integrations/opencode/multi-agent-desktop-pet.mjs",
   "integrations/hooks/agent-pet-hook.mjs",
-  "src/renderer/renderer.js",
+  "src/pet/renderer/renderer.js",
   "scripts/install-claude-code.mjs",
   "scripts/install-pi.mjs",
   "scripts/install-hermes.mjs",
@@ -30,9 +30,9 @@ for (const file of [
   "scripts/verify-package.mjs",
 ]) run(process.execPath, ["--check", file]);
 
-const tests = readdirSync(resolve("dist", "tests"))
+const tests = readdirSync(resolve("dist", "testkit", "tests"))
   .filter((name) => name.endsWith(".test.js"))
-  .map((name) => join("dist", "tests", name));
+  .map((name) => join("dist", "testkit", "tests", name));
 run(process.execPath, ["--test", ...tests]);
 
 function run(command, args) {

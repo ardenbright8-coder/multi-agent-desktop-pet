@@ -4,11 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentHub } from "../main/hub";
-import { LocalIpcClient } from "../main/ipc-client";
-import { LocalIpcServer } from "../main/ipc-server";
-import { discoveryPath } from "../main/paths";
-import type { AgentEvent } from "../shared/protocol";
+import { AgentHub } from "../../events/hub";
+import { LocalIpcClient } from "../../channel/ipc-client";
+import { LocalIpcServer } from "../../channel/ipc-server";
+import { discoveryPath } from "../../shared/paths";
+import type { AgentEvent } from "../../shared/protocol";
 
 test("named pipe roundtrip publishes, indexes and discovers after startup", async () => {
   const root = mkdtempSync(join(tmpdir(), "agent-pet-hub-test-"));

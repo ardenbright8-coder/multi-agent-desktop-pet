@@ -3,16 +3,16 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
-import type { AgentEvent, EventKind, InteractionResponseInput, SearchQuery } from "../shared/protocol";
-import { PROTOCOL_VERSION } from "../shared/protocol";
-import { writeJsonAtomic } from "./atomic-file";
-import { runControlsTest, type ControlsTrayActions } from "./controls-test";
-import { AgentHub } from "./hub";
-import { LocalIpcClient } from "./ipc-client";
-import { LocalIpcServer } from "./ipc-server";
-import { ensureGenericHookBridge, ensureOpenCodeIntegration } from "./integration-manager";
-import { appDataRoot, discoveryPath, eventJournalPath, preferencesPath } from "./paths";
-import { clampWindowPosition, defaultWindowPosition } from "./window-position";
+import type { AgentEvent, EventKind, InteractionResponseInput, SearchQuery } from "./shared/protocol";
+import { PROTOCOL_VERSION } from "./shared/protocol";
+import { writeJsonAtomic } from "./shared/atomic-file";
+import { runControlsTest, type ControlsTrayActions } from "./testkit/controls-test";
+import { AgentHub } from "./events/hub";
+import { LocalIpcClient } from "./channel/ipc-client";
+import { LocalIpcServer } from "./channel/ipc-server";
+import { ensureGenericHookBridge, ensureOpenCodeIntegration } from "./integrations/manager";
+import { appDataRoot, discoveryPath, eventJournalPath, preferencesPath } from "./shared/paths";
+import { clampWindowPosition, defaultWindowPosition } from "./pet/window-position";
 
 const smokeMode = process.argv.includes("--smoke-test");
 const screenshotMode = process.argv.includes("--screenshot-test");
@@ -216,7 +216,7 @@ function createWindow(hub: AgentHub): BrowserWindow {
     hasShadow: false,
     backgroundColor: "#00000000",
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "channel", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -225,7 +225,7 @@ function createWindow(hub: AgentHub): BrowserWindow {
   win.setAlwaysOnTop(true, "floating");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setShape([PET_WINDOW_SHAPE]);
-  win.loadFile(join(__dirname, "..", "renderer", "index.html"));
+  win.loadFile(join(__dirname, "pet", "renderer", "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.once("ready-to-show", () => {
     win.showInactive();
@@ -298,7 +298,7 @@ function createTrayActions(hub: AgentHub): ControlsTrayActions {
 }
 
 function createTray(hub: AgentHub, actions: ControlsTrayActions): Tray {
-  const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 16, height: 16 });
+  const icon = nativeImage.createFromPath(join(__dirname, "assets", "app-icon.png")).resize({ width: 16, height: 16 });
   const appTray = new Tray(icon);
   appTray.setToolTip("多Agent桌面宠物");
   const rebuild = () => {

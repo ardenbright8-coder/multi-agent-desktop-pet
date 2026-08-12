@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeAgentEvent } from "../shared/protocol";
+import { normalizeAgentEvent } from "../../shared/protocol";
 
 test("protocol keeps ordered question options and response metadata", () => {
   const event = normalizeAgentEvent({

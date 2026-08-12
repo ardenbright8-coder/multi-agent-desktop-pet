@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EventIndex, multilingualTokenize } from "../main/event-index";
-import type { AgentEvent } from "../shared/protocol";
+import { EventIndex, multilingualTokenize } from "../../events/event-index";
+import type { AgentEvent } from "../../shared/protocol";
 
 test("CJK tokenizer emits unigram and bigram tokens", () => {
   const tokens = multilingualTokenize("实时索引 OpenCode src/event-index.ts");

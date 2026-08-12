@@ -13,8 +13,8 @@ assert.equal(existsSync(executable), true, "Packaged executable is missing");
 assert.equal(existsSync(asar), true, "Packaged app.asar is missing");
 
 const packagedPackage = JSON.parse(extractFile(asar, "package.json").toString("utf8"));
-const sessionStore = extractFile(asar, "dist\\main\\session-store.js").toString("utf8");
-const main = extractFile(asar, "dist\\main\\main.js").toString("utf8");
+const sessionStore = extractFile(asar, "dist\\events\\session-store.js").toString("utf8");
+const main = extractFile(asar, "dist\\app.js").toString("utf8");
 const hook = extractFile(asar, "dist\\integrations\\hooks\\agent-pet-hook.mjs").toString("utf8");
 assert.equal(packagedPackage.version, sourcePackage.version, "Packaged version does not match source");
 assert.match(sessionStore, /isForeignTerminalState/, "Pending-interaction protection is missing from the package");

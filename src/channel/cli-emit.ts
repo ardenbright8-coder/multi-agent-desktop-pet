@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AgentEvent, EventKind } from "../shared/protocol";
-import { LocalIpcClient } from "../main/ipc-client";
+import { LocalIpcClient } from "./ipc-client";
 
 const args = parseArgs(process.argv.slice(2));
 const agent = args.agent || "custom";

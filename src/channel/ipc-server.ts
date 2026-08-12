@@ -4,9 +4,9 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APP_ID, MAX_FRAME_BYTES, PROTOCOL_VERSION, type RpcRequest, type RpcResponse, type SearchQuery } from "../shared/protocol";
-import { writeJsonAtomic } from "./atomic-file";
-import type { AgentHub } from "./hub";
-import { discoveryPath, runtimeDirectory } from "./paths";
+import { writeJsonAtomic } from "../shared/atomic-file";
+import type { AgentHub } from "../events/hub";
+import { discoveryPath, runtimeDirectory } from "../shared/paths";
 
 export interface DiscoveryDocument {
   app: string;

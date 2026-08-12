@@ -12,7 +12,7 @@ import type {
 import { normalizeAgentEvent } from "../shared/protocol";
 import { EventIndex } from "./event-index";
 import { EventJournal } from "./event-journal";
-import { InteractionBroker } from "./interaction-broker";
+import { InteractionBroker } from "../interaction/broker";
 import { SessionStore } from "./session-store";
 
 interface HubServerInfo {
