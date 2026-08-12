@@ -6,11 +6,9 @@ import type { AgentEvent, InteractionPayload, InteractionResponseInput } from ".
 import { writeJsonAtomic } from "../shared/atomic-file";
 import type { AgentHub } from "../events/hub";
 
-export interface ControlsTrayActions {
-  show(): void;
-  simulate(): void;
-  quit(): void;
-}
+import type { PetTrayActions } from "../pet/tray";
+
+export type ControlsTrayActions = PetTrayActions;
 
 interface ControlsTestContext {
   window: BrowserWindow;
