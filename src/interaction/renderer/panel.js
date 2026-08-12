@@ -20,8 +20,12 @@ function renderInteraction(session) {
   elements.interactionPrompts.innerHTML = pending.prompts.map(renderPrompt).join("");
   const fallback = document.querySelector("#interaction-fallback");
   fallback.hidden = pending.responseCapability;
-  elements.interactionConfirm.disabled = !pending.responseCapability || pending.prompts.length === 0 || pending.responseStatus === "submitting";
-  elements.interactionConfirm.textContent = pending.responseCapability ? (pending.responseStatus === "submitting" ? "正在交回…" : "确认") : "回原窗口处理";
+  // 不支持回传时按钮写着「回原窗口处理」，那它就得点得动——点了把面板收起来，人回终端去办。
+  // 以前这里连按钮一起禁用，写着字却点不动，等于摆了个死按钮（2026-08-12 实机踩的，也违反 D-06「不放假按钮」）。
+  elements.interactionConfirm.disabled = pending.responseCapability
+    ? (pending.prompts.length === 0 || pending.responseStatus === "submitting")
+    : false;
+  elements.interactionConfirm.textContent = pending.responseCapability ? (pending.responseStatus === "submitting" ? "正在交回…" : "确认") : "知道了，回原窗口处理";
   elements.interactionError.hidden = !pending.responseError;
   elements.interactionError.textContent = pending.responseError || "";
   syncPanelVisibility();
@@ -69,7 +73,12 @@ function openInteraction(session) {
 async function submitInteraction() {
   const session = currentInteractionSession();
   const pending = session?.pendingInteraction;
-  if (!session || !pending || !pending.responseCapability || interactionSubmitting) return;
+  if (!session || !pending || interactionSubmitting) return;
+  // 这家 Agent 没有回传通道：按钮的意思就是「我知道了，去终端办」，收起面板即可。
+  if (!pending.responseCapability) {
+    dismissInteraction();
+    return;
+  }
   const answers = [];
   for (const prompt of pending.prompts) {
     const fieldset = elements.interactionPrompts.querySelector(`[data-prompt-id="${cssEscape(prompt.id)}"]`);

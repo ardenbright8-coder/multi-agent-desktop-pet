@@ -132,7 +132,7 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   filter: drop-shadow(3px 3px 0 rgba(20,49,30,0.5));
 }
 .pet::after {
-  content: "再点一下放下";
+  content: "松手放下";
   left: 50%;
   bottom: 5px;
   width: max-content;

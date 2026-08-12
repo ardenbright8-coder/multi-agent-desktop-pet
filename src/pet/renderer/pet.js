@@ -60,7 +60,9 @@ function runAmbientMotion() {
 // （旧版是"点一下拿起、再点一下放下"，拖到别的屏幕就找不着幼苗、也就再也放不下，已废弃。）
 function beginPetDrag(event) {
   if (event.button !== 0) return;
-  event.preventDefault();
+  // 🚨 这里千万别调 event.preventDefault()。
+  // 在 pointerdown 上 preventDefault 会把浏览器后续合成的 mousemove／mouseup 一起掐掉，
+  // 结果就是"按得下去、拖不动"（2026-08-12 实机踩的）。挡拖影是在 dragstart 上挡的。
   petPickedUp = true;
   pickupAnchor = { x: event.clientX, y: event.clientY };
   document.body.classList.add("pet-picked-up");

@@ -121,8 +121,9 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     });
     hub.publish(fallback);
     await interactionVisible(win, fallback.eventId);
-    await rendererAssert(win, "document.querySelector('#interaction-confirm').disabled && !document.querySelector('#interaction-fallback').hidden", "Unsupported interaction fallback was not shown");
-    await click(win, "#interaction-top-close");
+    // 没有回传通道的那种：按钮必须点得动（写着「回原窗口处理」却禁用 = 死按钮），点了要能收起面板
+    await rendererAssert(win, "!document.querySelector('#interaction-confirm').disabled && document.querySelector('#interaction-confirm').textContent.includes('回原窗口') && !document.querySelector('#interaction-fallback').hidden", "Fallback confirm button was dead or mislabelled");
+    await click(win, "#interaction-confirm");
     await hidden(win, "#interaction-panel");
 
     const bottomClose = makePermissionEvent("bottom-close-session", "bottom-close-request");
@@ -184,7 +185,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     const report = {
       version: context.version,
       fixedButtonsClicked: 17,
-      dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen"],
+      dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
       window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "simulate", "quit"],

@@ -11,8 +11,15 @@ document.addEventListener("mousemove", (event) => {
   syncHitTest(event);
 });
 
+// 拖动同时听 pointermove 和 mousemove：穿透状态下系统转发来的是 mouse 事件，
+// 按住之后走的是 pointer 事件，两个都接才不会在某一段丢掉。dragPetTo 是幂等的，重复调没副作用。
+document.addEventListener("pointermove", (event) => {
+  if (petPickedUp && pickupAnchor) dragPetTo(event);
+});
 document.querySelector("#pet").addEventListener("pointerdown", beginPetDrag);
+document.querySelector("#pet").addEventListener("dragstart", (event) => event.preventDefault());
 document.addEventListener("pointerup", endPetDrag);
+document.addEventListener("mouseup", endPetDrag);
 document.addEventListener("pointercancel", endPetDrag);
 window.addEventListener("blur", () => endPetDrag());
 document.querySelector("#status-note").addEventListener("click", toggleDrawer);
