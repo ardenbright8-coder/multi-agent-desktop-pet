@@ -10,7 +10,19 @@ import { preferencesPath } from "../shared/paths";
 import type { AgentHub } from "../events/hub";
 import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 
-export const WINDOW_SIZE = { width: 440, height: 680 };
+// 平时窗口只有幼苗那么大，面板要弹的时候才临时长大。
+// 🚨 为什么必须这样（2026-08-12 实机）：这台机 3440x1440 缩放 179%，
+// Electron 眼里的工作区只有 1922x778 高。窗口按面板尺寸做成 680 高（算上系统边框 710+），
+// 上下就只剩 60 像素能挪 —— 用户拖起来是「只能左右平移，上下动不了」。
+// 缩成幼苗大小后，上下能挪 470+，整屏随便跑。
+// 界面 CSS 一行没改：幼苗区是 right/bottom 定位的，窗口一缩它自然贴在小窗口右下角。
+export const PET_WINDOW_SIZE = { width: 220, height: 304 };
+export const PANEL_WINDOW_SIZE = { width: 440, height: 680 };
+export const WINDOW_SIZE = PET_WINDOW_SIZE;
+
+// 面板尺寸减幼苗尺寸 = 长大时要往左上让出多少，这样幼苗在屏幕上的位置不跳。
+const GROW_X = PANEL_WINDOW_SIZE.width - PET_WINDOW_SIZE.width;
+const GROW_Y = PANEL_WINDOW_SIZE.height - PET_WINDOW_SIZE.height;
 
 let mainWindow: BrowserWindow | null = null;
 // panelOpen 是「面板开着没」的唯一真相。
@@ -44,12 +56,12 @@ export function destroyPetWindow(): void {
 export function createPetWindow(hub: AgentHub): BrowserWindow {
   const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
-  const fallback = defaultWindowPosition(workArea, WINDOW_SIZE);
+  const fallback = defaultWindowPosition(workArea, PET_WINDOW_SIZE);
   const bounds = saved
-    ? clampWindowPosition(saved, screen.getAllDisplays().map((display) => display.workArea), WINDOW_SIZE)
+    ? clampWindowPosition(saved, screen.getAllDisplays().map((display) => display.workArea), PET_WINDOW_SIZE)
     : fallback;
   const win = new BrowserWindow({
-    ...WINDOW_SIZE,
+    ...PET_WINDOW_SIZE,
     x: bounds.x,
     y: bounds.y,
     transparent: true,
@@ -109,11 +121,12 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
 const EDGE_SAFETY = 8;
 
 function safeWindowSize(): { width: number; height: number } {
-  if (!mainWindow || mainWindow.isDestroyed()) return WINDOW_SIZE;
+  const design = panelOpen ? PANEL_WINDOW_SIZE : PET_WINDOW_SIZE;
+  if (!mainWindow || mainWindow.isDestroyed()) return design;
   const { width, height } = mainWindow.getBounds();
   return {
-    width: Math.max(WINDOW_SIZE.width, width) + EDGE_SAFETY,
-    height: Math.max(WINDOW_SIZE.height, height) + EDGE_SAFETY,
+    width: Math.max(design.width, width) + EDGE_SAFETY,
+    height: Math.max(design.height, height) + EDGE_SAFETY,
   };
 }
 
@@ -167,22 +180,38 @@ export function setPanelVisibility(visible: boolean): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   if (visible) {
-    // 记一次面板前的落脚点（已经记过就不覆盖），然后每次都把整窗拉回屏幕内——
-    // 幂等，重复调没坏处，漏调才要命。
-    if (!positionBeforePanel) positionBeforePanel = mainWindow.getBounds();
+    if (panelOpen) {
+      ensureFullyVisible();
+      return;
+    }
+    // 记住幼苗现在站在哪，长大时往左上让出面板那部分，幼苗在屏幕上原地不动。
+    const before = mainWindow.getBounds();
+    positionBeforePanel = { x: before.x, y: before.y };
     panelOpen = true;
+    mainWindow.setBounds({
+      x: before.x - GROW_X,
+      y: before.y - GROW_Y,
+      width: PANEL_WINDOW_SIZE.width,
+      height: PANEL_WINDOW_SIZE.height,
+    }, false);
     ensureFullyVisible();
     applyMouseMode();
     return;
   }
-  panelOpen = false;
-  if (!positionBeforePanel) {
+  if (!panelOpen) {
     applyMouseMode();
     return;
   }
-  const restore = clampWindowPosition(positionBeforePanel, workAreas, safeWindowSize());
+  panelOpen = false;
+  // 缩回幼苗大小：拿当前窗口的右下角当锚，幼苗照样不跳。
+  const current = mainWindow.getBounds();
+  const shrunk = clampWindowPosition(
+    { x: current.x + GROW_X, y: current.y + GROW_Y },
+    workAreas,
+    { width: PET_WINDOW_SIZE.width + EDGE_SAFETY, height: PET_WINDOW_SIZE.height + EDGE_SAFETY },
+  );
+  mainWindow.setBounds({ x: shrunk.x, y: shrunk.y, ...PET_WINDOW_SIZE }, false);
   positionBeforePanel = null;
-  mainWindow.setPosition(restore.x, restore.y, false);
   persistWindowPosition();
   applyMouseMode();
 }
@@ -191,7 +220,7 @@ export function setPanelVisibility(visible: boolean): void {
 export function recallPetWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workArea = screen.getPrimaryDisplay().workArea;
-  const home = defaultWindowPosition(workArea, safeWindowSize());
+  const home = defaultWindowPosition(workArea, panelOpen ? safeWindowSize() : PET_WINDOW_SIZE);
   mainWindow.setPosition(home.x, home.y, false);
   mainWindow.showInactive();
   persistWindowPosition();

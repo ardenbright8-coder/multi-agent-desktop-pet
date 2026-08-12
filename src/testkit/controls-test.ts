@@ -150,7 +150,8 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
 
     // 点击穿透：鼠标不在幼苗上时，窗口必须让开，否则透明区域会挡住底下的程序（踩过的 bug）。
     await hidden(win, "#interaction-panel");
-    win.webContents.sendInputEvent({ type: "mouseMove", x: 12, y: 12, movementX: -60, movementY: -60 });
+    // 窗口缩成幼苗大小后，幼苗区占了绝大部分，只有左上角这几像素是真空——拿它验穿透。
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 2, y: 2, movementX: -60, movementY: -60 });
     await waitFor(() => isIgnoringMouse(), 1_500, "Pointer left the pet but the window still swallowed mouse events");
     const petCenter = await center(win, "#pet");
     win.webContents.sendInputEvent({ type: "mouseMove", x: petCenter.x, y: petCenter.y, movementX: 5, movementY: 5 });
@@ -165,6 +166,12 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await waitForRenderer(win, "document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'true'", 2_000);
 
     const area = screen.getPrimaryDisplay().workArea;
+    // 平时窗口必须是幼苗那么小，否则上下没地方挪（用户实机：只能左右平移）
+    const idleBounds = win.getBounds();
+    assert.ok(
+      idleBounds.height <= 340 && area.height - idleBounds.height >= 200,
+      `Idle window is too tall to move vertically: ${idleBounds.height} in a ${area.height}-tall work area`,
+    );
     dragTick({ x: area.x + 260, y: area.y + 180 });
     await waitFor(() => {
       const current = win.getBounds();

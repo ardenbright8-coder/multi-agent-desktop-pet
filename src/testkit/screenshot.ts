@@ -52,11 +52,16 @@ export async function runScreenshotTest(hub: AgentHub, host: TestHost): Promise<
   mainWindow.webContents.sendInputEvent({ type: "mouseUp", x: petBox.x, y: petBox.y, button: "left", clickCount: 1 });
   await delay(150);
   await assertRenderer("!document.body.classList.contains('pet-picked-up')", "Releasing the mouse did not end the drag");
+  const petRect = await mainWindow.webContents.executeJavaScript(
+    "(() => { const r = document.querySelector('#pet').getBoundingClientRect(); return { x: Math.max(0, Math.round(r.x) - 8), y: Math.max(0, Math.round(r.y) - 8), width: Math.round(r.width) + 16, height: Math.round(r.height) + 16 }; })()",
+  ) as { x: number; y: number; width: number; height: number };
   const poses = ["idle", "thinking", "waving", "jumping", "failed", "waiting", "running", "working-focus", "working-rope", "review"];
   for (const pose of poses) {
     await mainWindow.webContents.executeJavaScript(`document.body.dataset.petPose = ${JSON.stringify(pose)}`);
     await delay(pose === "jumping" ? 390 : 210);
-    const poseImage = await mainWindow.webContents.capturePage({ x: 236, y: 448, width: 198, height: 218 });
+    // 裁剪框按幼苗在**当前窗口**里的实际位置算，别写死——窗口平时是幼苗大小，
+    // 面板弹出来才长大，写死坐标会截到窗口外面去（capturePage 直接抛 UnknownVizError）。
+    const poseImage = await mainWindow.webContents.capturePage(petRect);
     writeFileSync(join(screenshotDir, `pose-${pose}.png`), poseImage.toPNG());
   }
   writeJsonAtomic(join(appDataRoot(), "screenshot-ok.json"), { version: app.getVersion(), panels: 4, poses: poses.length });
