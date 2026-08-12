@@ -1,0 +1,181 @@
+// =====================================================================
+//  检查边界 —— 谁不许调谁，机器说了算
+//
+//  为什么要这个：分块靠自觉是守不住的。门牌是纸面规矩，AI（和人）改着改着
+//  就会顺手从 channel 里直接摸 pet 的内部函数，一次没人发现，块就白分了。
+//  这个脚本是机器执行那一道。
+//
+//  怎么用：改完代码跑一次
+//      node 检查边界.mjs
+//      node 检查边界.mjs --接口      顺带列出每块对外露出哪些东西（写门牌时照抄）
+//  全绿 → 边界还在。报红 → 要么改代码，要么这条依赖确实合理，
+//  那就加进下面的「已知例外」，并在对应 AGENTS.md 里写清为什么。
+//
+//  两套检查：
+//   ① 主进程 .ts —— 看 import 谁
+//   ② 界面 .js  —— 这几份是普通 script 共享全局作用域，没有 import，
+//                   所以按「函数住在哪个文件、谁调了它」来判（跟续枝面板一个思路）
+// =====================================================================
+
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "./node_modules/typescript/lib/typescript.js";
+
+const root = dirname(fileURLToPath(import.meta.url));
+const srcRoot = join(root, "src");
+
+// ---------- 规矩：每块准依赖谁 ----------
+// shared 是底座，谁都不许它反过来依赖任何功能块。
+// interaction 只认 shared；events 可以用 interaction（会话状态要生成面板呈现，单向）；
+// channel 和 pet 认 events；integrations 谁也不认。
+// testkit 和入口 app.ts 可以调所有人 —— 但反过来任何人都不许调 testkit。
+const allowed = {
+  shared: [],
+  interaction: ["shared"],
+  events: ["shared", "interaction"],
+  channel: ["shared", "events"],
+  pet: ["shared", "events"],
+  integrations: ["shared"],
+  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations"],
+  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "testkit"],
+};
+
+// ---------- 界面侧：哪个文件是底座、哪个是启动装配 ----------
+// shell.js 是调度层（renderSnapshot 得挨个通知各块），boot.js 是启动装配，
+// 这两份可以调所有人；其余界面文件之间不许互调。
+const rendererFreeCallers = ["pet/renderer/shell.js", "pet/renderer/boot.js"];
+const rendererBaseFile = "pet/renderer/shell.js";
+
+// ---------- 已知欠账（拆分时就发现的真耦合，还没治，先记在这别装看不见）----------
+// 这不是「允许」，是「欠着」。治的办法写在 pet\AGENTS.md 的「欠账」一节。
+// 治好一条就从这儿删一条。别往这儿加新的 —— 新的越界就是该改代码。
+const debt = [
+  { file: "events/renderer/drawer.js", fn: "renderInteraction", why: "closeDrawer 关抽屉后要把待处理面板放回来" },
+  { file: "events/renderer/drawer.js", fn: "updatePetPose", why: "抽屉开关会改幼苗姿态" },
+  { file: "events/renderer/drawer.js", fn: "closeSettings", why: "抽屉和设置面板互斥，开一个要关另一个" },
+  { file: "interaction/renderer/panel.js", fn: "closeDrawer", why: "点开某条待处理要先收起抽屉" },
+  { file: "interaction/renderer/panel.js", fn: "closeSettings", why: "同上，设置面板也要收起" },
+  { file: "pet/renderer/pet.js", fn: "closeDrawer", why: "打开设置面板要先关抽屉" },
+  { file: "pet/renderer/pet.js", fn: "renderInteraction", why: "关掉设置面板后要把待处理面板放回来" },
+];
+
+const tsFiles = [];
+const jsFiles = [];
+walk(srcRoot);
+
+const violations = [];
+const known = [];
+
+// ===== ① 主进程 .ts：看 import =====
+for (const file of tsFiles) {
+  const rel = relative(srcRoot, file).split(sep).join("/");
+  const from = blockOf(rel);
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  for (const statement of source.statements) {
+    const specifier = importSpecifier(statement);
+    if (!specifier || !specifier.startsWith(".")) continue;
+    const target = relative(srcRoot, resolve(dirname(file), specifier)).split(sep).join("/");
+    const to = blockOf(target);
+    if (to === from) continue;
+    if ((allowed[from] || []).includes(to)) continue;
+    violations.push(`${rel}  第 ${line(source, statement)} 行  import 了  ${target}（${to} 块）　—— ${from} 不许依赖 ${to}`);
+  }
+}
+
+// ===== ② 界面 .js：函数住哪、谁调了它 =====
+const fnHome = new Map();
+for (const file of jsFiles) {
+  const rel = relative(srcRoot, file).split(sep).join("/");
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) fnHome.set(statement.name.text, rel);
+  }
+}
+for (const file of jsFiles) {
+  const rel = relative(srcRoot, file).split(sep).join("/");
+  if (rendererFreeCallers.includes(rel)) continue;
+  const from = blockOf(rel);
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  visit(source);
+
+  function visit(node) {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      const home = fnHome.get(name);
+      if (home && home !== rel && home !== rendererBaseFile && blockOf(home) !== from) {
+        if (debt.some((item) => item.file === rel && item.fn === name)) {
+          known.push(`${rel}  第 ${line(source, node)} 行  调了  ${name}`);
+        } else {
+          violations.push(`${rel}  第 ${line(source, node)} 行  调了  ${name}（住在 ${home}）　—— 界面各块之间不许互调`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+}
+
+if (known.length) {
+  console.log(`⚠️ 已知欠账 ${known.length} 处（拆分时就在，还没治，不算失败）：`);
+  for (const item of known) console.log(`   ${item}`);
+  console.log("   治法见 pet\\AGENTS.md 的「欠账」一节\n");
+}
+
+if (violations.length) {
+  console.log(`🚨 新越界 ${violations.length} 处（这些是要改的）：`);
+  for (const item of violations) console.log(`   ${item}`);
+  process.exit(1);
+}
+console.log(`✅ 边界没问题，${tsFiles.length + jsFiles.length} 个文件全过（欠账不算）`);
+
+// ---------- 顺带 report：每块对外露出什么（写门牌时照这个抄）----------
+if (process.argv.includes("--接口")) {
+  console.log("\n---- 每块被别的块用到的东西 ----");
+  const used = new Map();
+  for (const file of tsFiles) {
+    const rel = relative(srcRoot, file).split(sep).join("/");
+    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    for (const statement of source.statements) {
+      const specifier = importSpecifier(statement);
+      if (!specifier || !specifier.startsWith(".")) continue;
+      const target = relative(srcRoot, resolve(dirname(file), specifier)).split(sep).join("/");
+      if (blockOf(target) === blockOf(rel)) continue;
+      const names = statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)
+        ? statement.importClause.namedBindings.elements.map((element) => element.name.text)
+        : [];
+      if (!used.has(target)) used.set(target, new Set());
+      for (const name of names) used.get(target).add(name);
+    }
+  }
+  for (const key of [...used.keys()].sort()) {
+    console.log(`\n  ${key}`);
+    for (const name of [...used.get(key)].sort()) console.log(`      ${name}`);
+  }
+}
+
+function walk(directory) {
+  for (const entry of readdirSync(directory)) {
+    const full = join(directory, entry);
+    if (statSync(full).isDirectory()) {
+      walk(full);
+      continue;
+    }
+    if (entry.endsWith(".d.ts")) continue;
+    if (entry.endsWith(".ts")) tsFiles.push(full);
+    else if (entry.endsWith(".js")) jsFiles.push(full);
+  }
+}
+
+function blockOf(relativePath) {
+  const head = relativePath.split("/")[0];
+  return head.endsWith(".ts") ? "app" : head;
+}
+
+function importSpecifier(statement) {
+  if (!ts.isImportDeclaration(statement)) return null;
+  return ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : null;
+}
+
+function line(source, node) {
+  return source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+}

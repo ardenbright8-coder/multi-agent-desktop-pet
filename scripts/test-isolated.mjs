@@ -19,7 +19,11 @@ run(process.execPath, ["scripts/copy-assets.mjs"]);
 for (const file of [
   "integrations/opencode/multi-agent-desktop-pet.mjs",
   "integrations/hooks/agent-pet-hook.mjs",
-  "src/pet/renderer/renderer.js",
+  "src/pet/renderer/shell.js",
+  "src/pet/renderer/pet.js",
+  "src/pet/renderer/boot.js",
+  "src/interaction/renderer/panel.js",
+  "src/events/renderer/drawer.js",
   "scripts/install-claude-code.mjs",
   "scripts/install-pi.mjs",
   "scripts/install-hermes.mjs",
