@@ -39,12 +39,19 @@ export async function runScreenshotTest(hub: AgentHub, host: TestHost): Promise<
   await assertRenderer("!document.querySelector('#settings-panel').hidden", "Settings panel did not open");
   const settingsImage = await mainWindow.webContents.capturePage();
   writeFileSync(join(screenshotDir, "preview-settings.png"), settingsImage.toPNG());
-  await mainWindow.webContents.executeJavaScript("document.querySelector('#settings-close').click(); document.querySelector('#interaction-top-close').click(); document.querySelector('#pet').click()");
+  await mainWindow.webContents.executeJavaScript("document.querySelector('#settings-close').click(); document.querySelector('#interaction-top-close').click()");
   await delay(250);
-  await assertRenderer("document.body.classList.contains('pet-picked-up')", "Pet pickup mode did not activate");
+  // 拖动态：按住幼苗不放的样子（松手就没了，所以这儿只发 mouseDown）
+  const petBox = await mainWindow.webContents.executeJavaScript("(() => { const r = document.querySelector('#pet').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()") as { x: number; y: number };
+  mainWindow.webContents.sendInputEvent({ type: "mouseMove", x: petBox.x, y: petBox.y, movementX: 0, movementY: 0 });
+  mainWindow.webContents.sendInputEvent({ type: "mouseDown", x: petBox.x, y: petBox.y, button: "left", clickCount: 1 });
+  await delay(250);
+  await assertRenderer("document.body.classList.contains('pet-picked-up')", "Pressing the pet did not start a drag");
   const moveImage = await mainWindow.webContents.capturePage();
   writeFileSync(join(screenshotDir, "preview-move.png"), moveImage.toPNG());
-  await mainWindow.webContents.executeJavaScript("document.querySelector('#pet').click()");
+  mainWindow.webContents.sendInputEvent({ type: "mouseUp", x: petBox.x, y: petBox.y, button: "left", clickCount: 1 });
+  await delay(150);
+  await assertRenderer("!document.body.classList.contains('pet-picked-up')", "Releasing the mouse did not end the drag");
   const poses = ["idle", "thinking", "waving", "jumping", "failed", "waiting", "running", "working-focus", "working-rope", "review"];
   for (const pose of poses) {
     await mainWindow.webContents.executeJavaScript(`document.body.dataset.petPose = ${JSON.stringify(pose)}`);

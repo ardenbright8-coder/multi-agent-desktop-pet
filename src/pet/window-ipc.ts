@@ -1,4 +1,4 @@
-// 渲染层对窗口本身的请求（拖动、拿起、面板展开、隐藏）在这儿落地。
+// 渲染层对窗口本身的请求（拖动、悬停命中、面板展开、隐藏）在这儿落地。
 // 跟事件中心那几个 hub:* 请求分开：那些是 channel 的活，这些只动窗口。
 
 import { ipcMain } from "electron";
@@ -6,8 +6,9 @@ import {
   hideMainWindow,
   keepWindowOnVisibleDisplay,
   moveWindowToPointer,
+  setDragging,
+  setHoveringInteractive,
   setPanelVisibility,
-  setPetPickedUp,
 } from "./window";
 
 export function registerWindowIpc(): void {
@@ -19,7 +20,8 @@ export function registerWindowIpc(): void {
     moveWindowToPointer(x, y);
   });
   ipcMain.on("window:finish-move", () => keepWindowOnVisibleDisplay());
-  ipcMain.on("window:pickup-state", (_event, pickedUp: boolean) => setPetPickedUp(Boolean(pickedUp)));
+  ipcMain.on("window:drag-state", (_event, dragging: boolean) => setDragging(Boolean(dragging)));
+  ipcMain.on("window:hover-interactive", (_event, hovering: boolean) => setHoveringInteractive(Boolean(hovering)));
   ipcMain.on("window:panel-visibility", (_event, visible: boolean) => setPanelVisibility(Boolean(visible)));
   ipcMain.on("window:hide", () => hideMainWindow());
 }

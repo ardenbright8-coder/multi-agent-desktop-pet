@@ -12,11 +12,12 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 
 export const WINDOW_SIZE = { width: 440, height: 680 };
 const PET_VISIBLE_BOUNDS = { x: 218, y: 392, width: 213, height: 247 };
-const PET_WINDOW_SHAPE = { x: 205, y: 360, width: 235, height: 320 };
 
 let mainWindow: BrowserWindow | null = null;
 let positionBeforePanel: { x: number; y: number } | null = null;
-let petPickedUp = false;
+let dragging = false;
+let hoveringInteractive = false;
+let ignoringMouse = true;
 let shuttingDown = false;
 
 export function getPetWindow(): BrowserWindow | null {
@@ -64,7 +65,11 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
   });
   win.setAlwaysOnTop(true, "floating");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setShape([PET_WINDOW_SHAPE]);
+  // 默认整窗穿透：透明区域绝不许挡住底下的程序。
+  // forward:true 让窗口在穿透状态下仍然收得到 mousemove，界面靠它判断鼠标有没有挪到幼苗上，
+  // 挪上去了才临时收回穿透（applyMouseMode）。详见本夹 AGENTS.md「为什么不用 setShape」。
+  win.setIgnoreMouseEvents(true, { forward: true });
+  ignoringMouse = true;
   win.loadFile(join(__dirname, "renderer", "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.once("ready-to-show", () => {
@@ -146,7 +151,7 @@ export function setPanelVisibility(visible: boolean): void {
     positionBeforePanel = mainWindow.getBounds();
     const next = clampWindowPosition(positionBeforePanel, workAreas, WINDOW_SIZE);
     mainWindow.setPosition(next.x, next.y, false);
-    updateWindowShape();
+    applyMouseMode();
     return;
   }
   if (!positionBeforePanel) return;
@@ -154,12 +159,26 @@ export function setPanelVisibility(visible: boolean): void {
   positionBeforePanel = null;
   mainWindow.setPosition(restore.x, restore.y, false);
   persistWindowPosition();
-  updateWindowShape();
+  applyMouseMode();
 }
 
-export function setPetPickedUp(pickedUp: boolean): void {
-  petPickedUp = pickedUp;
-  updateWindowShape();
+export function setDragging(value: boolean): void {
+  dragging = value;
+  applyMouseMode();
+}
+
+export function setHoveringInteractive(value: boolean): void {
+  hoveringInteractive = value;
+  applyMouseMode();
+}
+
+export function isDragging(): boolean {
+  return dragging;
+}
+
+// 给自测用：现在窗口是不是让开鼠标的（true = 底下的程序点得到）。
+export function isIgnoringMouse(): boolean {
+  return ignoringMouse;
 }
 
 export function moveWindowToPointer(x: number, y: number): void {
@@ -167,7 +186,13 @@ export function moveWindowToPointer(x: number, y: number): void {
   mainWindow.setPosition(x, y, false);
 }
 
-function updateWindowShape(): void {
+// 什么时候该收回穿透：面板开着、正在拖、或者鼠标正压在可点的东西上。
+// 其余时候一律穿透，透明区域不许挡住底下的程序。
+function applyMouseMode(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.setShape(positionBeforePanel || petPickedUp ? [{ x: 0, y: 0, ...WINDOW_SIZE }] : [PET_WINDOW_SHAPE]);
+  const shouldIgnore = !(positionBeforePanel || dragging || hoveringInteractive);
+  if (shouldIgnore === ignoringMouse) return;
+  ignoringMouse = shouldIgnore;
+  if (shouldIgnore) mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  else mainWindow.setIgnoreMouseEvents(false);
 }

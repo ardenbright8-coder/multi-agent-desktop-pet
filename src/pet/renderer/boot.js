@@ -1,19 +1,20 @@
 // 启动：绑事件、拉第一份快照、开定时器。
 // 必须最后一个加载——上面几份声明的东西这儿全要用到。
 
+// 鼠标一动就干两件事：拖动中就挪窗口，没拖就重新判断鼠标底下有没有能点的东西。
+// 窗口平时是穿透的，靠 setIgnoreMouseEvents 的 forward 把 mousemove 转发进来，所以这条一直收得到。
 document.addEventListener("mousemove", (event) => {
   if (petPickedUp && pickupAnchor) {
-    window.agentPet.moveWindowToPointer({
-      screenX: event.screenX,
-      screenY: event.screenY,
-      anchorX: pickupAnchor.x,
-      anchorY: pickupAnchor.y,
-    });
+    dragPetTo(event);
     return;
   }
+  syncHitTest(event);
 });
 
-document.querySelector("#pet").addEventListener("click", togglePetPickup);
+document.querySelector("#pet").addEventListener("pointerdown", beginPetDrag);
+document.addEventListener("pointerup", endPetDrag);
+document.addEventListener("pointercancel", endPetDrag);
+window.addEventListener("blur", () => endPetDrag());
 document.querySelector("#status-note").addEventListener("click", toggleDrawer);
 document.querySelector("#open-button").addEventListener("click", openDrawer);
 document.querySelector("#drawer-close").addEventListener("click", closeDrawer);

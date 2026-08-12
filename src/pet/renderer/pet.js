@@ -56,23 +56,60 @@ function runAmbientMotion() {
   ambientNextAt = Date.now() + (motionPreference === "lively" ? 5_500 : 10_000);
 }
 
-function togglePetPickup(event) {
-  if (petPickedUp) {
-    petPickedUp = false;
-    pickupAnchor = null;
-    document.body.classList.remove("pet-picked-up");
-    elements.pet.setAttribute("aria-pressed", "false");
-    elements.pet.setAttribute("aria-label", "点一下拿起幼苗，再点一下放下");
-    window.agentPet.setPetPickedUp(false);
-    window.agentPet.finishWindowMove();
-    return;
-  }
+// 拖动：按住幼苗直接拖，松手放下——跟别的桌面宠物一个手感。
+// （旧版是"点一下拿起、再点一下放下"，拖到别的屏幕就找不着幼苗、也就再也放不下，已废弃。）
+function beginPetDrag(event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
   petPickedUp = true;
   pickupAnchor = { x: event.clientX, y: event.clientY };
   document.body.classList.add("pet-picked-up");
   elements.pet.setAttribute("aria-pressed", "true");
-  elements.pet.setAttribute("aria-label", "再点一下放下幼苗");
-  window.agentPet.setPetPickedUp(true);
+  elements.pet.setAttribute("aria-label", "松手放下幼苗");
+  // 指针捕获：拖快了、拖出窗口范围，事件也照样送回来，不会拖一半丢了。
+  if (event.pointerId !== undefined && elements.pet.setPointerCapture) {
+    try { elements.pet.setPointerCapture(event.pointerId); } catch { /* 捕获失败不影响拖动 */ }
+  }
+  window.agentPet.setDragging(true);
+}
+
+function dragPetTo(event) {
+  if (!petPickedUp || !pickupAnchor) return;
+  window.agentPet.moveWindowToPointer({
+    screenX: event.screenX,
+    screenY: event.screenY,
+    anchorX: pickupAnchor.x,
+    anchorY: pickupAnchor.y,
+  });
+}
+
+function endPetDrag(event) {
+  if (!petPickedUp) return;
+  petPickedUp = false;
+  pickupAnchor = null;
+  document.body.classList.remove("pet-picked-up");
+  elements.pet.setAttribute("aria-pressed", "false");
+  elements.pet.setAttribute("aria-label", "按住幼苗拖动，松手放下");
+  if (event?.pointerId !== undefined && elements.pet.releasePointerCapture) {
+    try { elements.pet.releasePointerCapture(event.pointerId); } catch { /* 已经自动释放了 */ }
+  }
+  window.agentPet.setDragging(false);
+  window.agentPet.finishWindowMove();
+  syncHitTest(event);
+}
+
+// 鼠标压在"可点的东西"上时才收回穿透，其余时候整窗让开，别挡住底下的程序。
+// 靠 CSS 判断：透明区域是 pointer-events:none，只有 [data-interactive] 是 auto，
+// 所以 elementFromPoint 命中什么，就是真的能点到什么。
+function syncHitTest(event) {
+  if (petPickedUp) return;
+  const x = event?.clientX;
+  const y = event?.clientY;
+  const target = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
+  const interactive = Boolean(target && target.closest("[data-interactive]"));
+  if (interactive === hoveringInteractive) return;
+  hoveringInteractive = interactive;
+  window.agentPet.setHoveringInteractive(interactive);
 }
 
 function toggleSettings() { settingsOpen ? closeSettings() : openSettings(); }

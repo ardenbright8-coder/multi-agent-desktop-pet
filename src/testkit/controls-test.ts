@@ -5,6 +5,7 @@ import type { BrowserWindow, Tray } from "electron";
 import type { AgentEvent, InteractionPayload, InteractionResponseInput } from "../shared/protocol";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import type { AgentHub } from "../events/hub";
+import { isIgnoringMouse } from "../pet/window";
 
 import type { PetTrayActions } from "../pet/tray";
 
@@ -33,7 +34,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "finishWindowMove", "hideWindow", "moveWindowToPointer", "onSnapshot", "respondInteraction", "search", "setPanelVisibility", "setPetPickedUp", "simulate", "snapshot"]);
+    assert.deepEqual(exposed, ["diagnostics", "finishWindowMove", "hideWindow", "moveWindowToPointer", "onSnapshot", "respondInteraction", "search", "setDragging", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot"]);
 
     const marker = `controls-${Date.now()}`;
     hub.publish(makeEvent("state.working", "search-session", { summary: `${marker} searchable event`, target: "package.json" }));
@@ -145,17 +146,27 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     assert.equal(permissionResponse?.eventId, permission.eventId);
     assert.deepEqual(permissionResponse?.answers, [{ promptId: "permission", optionIds: ["once"], customText: undefined }]);
 
+    // 点击穿透：鼠标不在幼苗上时，窗口必须让开，否则透明区域会挡住底下的程序（踩过的 bug）。
+    await hidden(win, "#interaction-panel");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 12, y: 12, movementX: -60, movementY: -60 });
+    await waitFor(() => isIgnoringMouse(), 1_500, "Pointer left the pet but the window still swallowed mouse events");
+    const petCenter = await center(win, "#pet");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: petCenter.x, y: petCenter.y, movementX: 5, movementY: 5 });
+    await waitFor(() => !isIgnoringMouse(), 1_500, "Pointer entered the pet but the window stayed click-through");
+
+    // 拖动是「按住拖、松手放」：按下去要进拖动态，中途挪鼠标窗口跟着走，松手才结束。
     const beforeMove = win.getBounds();
-    await click(win, "#pet");
-    await rendererAssert(win, "document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'true'", "Pet pickup button did not activate");
     const petPoint = await center(win, "#pet");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: petPoint.x, y: petPoint.y, movementX: 0, movementY: 0 });
+    win.webContents.sendInputEvent({ type: "mouseDown", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
+    await waitForRenderer(win, "document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'true'", 2_000);
     win.webContents.sendInputEvent({ type: "mouseMove", x: petPoint.x - 35, y: petPoint.y - 25, movementX: -35, movementY: -25 });
     await waitFor(() => {
       const current = win.getBounds();
       return current.x !== beforeMove.x || current.y !== beforeMove.y;
-    }, 2_000, "Picked-up pet did not move the window");
-    await click(win, "#pet");
-    await rendererAssert(win, "!document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'false'", "Pet release button did not restore state");
+    }, 2_000, "Dragging the pet did not move the window");
+    win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x - 35, y: petPoint.y - 25, button: "left", clickCount: 1 });
+    await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'false'", 2_000);
 
     await click(win, "#hide-button");
     await waitFor(() => !win.isVisible(), 1_500, "Hide button did not hide the window");
@@ -175,7 +186,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       fixedButtonsClicked: 17,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
-      window: ["pet-pickup", "pet-move", "pet-release", "hide", "tray-restore", "close-to-tray"],
+      window: ["click-through", "pet-drag-start", "pet-drag-move", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "simulate", "quit"],
       interactionAnswersVerified: true,
     };

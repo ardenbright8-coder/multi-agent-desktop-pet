@@ -28,6 +28,12 @@ createTray  createTrayActions  PetTrayActions
 
 ## 改之前先知道
 
+- 🚨🚨 **别再用 `setShape()` 挡点击，它挡不住。** Electron 官方文档白纸黑字：**透明窗口的透明区域点不过去**，而 `setShape` 是实验性 API，在 Windows 上对 transparent＋layered 窗口不生效。页面里那句 `pointer-events: none` 只管网页内部，管不到系统层。
+  → 结果就是那个 440×680 的透明矩形一直吃鼠标，人在底下点视频、点别的窗口全点不着（2026-08-12 用户报的 bug，根因就是这个）。
+  **现在的正解**：窗口默认 `setIgnoreMouseEvents(true, { forward: true })` 整个让开，`forward` 保证穿透时仍收得到 mousemove；界面用 `document.elementFromPoint` 判断鼠标底下是不是 `[data-interactive]`，是才让主进程临时收回穿透。逻辑在 `window.ts` 的 `applyMouseMode()` 和 `renderer\pet.js` 的 `syncHitTest()`。
+  **三种情况必须收回穿透**：面板开着、正在拖、鼠标压在可点的东西上。别漏。
+- 🚨 **拖动是「按住拖、松手放」，不是「点一下拿起」。** 旧的点击式拿起有个死结：拖到别的屏幕后幼苗可能不在鼠标底下，就再也点不着、也就永远放不下，窗口卡在"拿起态"一直挡着鼠标。
+  按住拖必须配 **pointer capture**（`setPointerCapture`），否则拖快了鼠标甩出窗口，`mousemove` 和 `mouseup` 一起丢，又卡在拖动态。另外 `window.blur` 也接了兜底放手。
 - 🚨 **界面这几份 js 是普通 script，不是 ES module。** 页面走 `loadFile()`（file:// 协议），**ESM 的 `import` 在 file:// 下会被拦死**。所以它们靠 `index.html` 里的 `<script>` 顺序加载、共享同一个全局作用域。加新文件就在 html 里加一行，**顺序是 shell → pet → panel → drawer → boot，别调**。
 - **透明空白不许拦桌面点击**；幼苗被拿起或面板展开时窗口才变成整块矩形（`updateWindowShape`）。
 - 换屏幕、拔显示器之后要把幼苗拉回可见范围，测试在 `testkit\tests\window-position.test.ts`。

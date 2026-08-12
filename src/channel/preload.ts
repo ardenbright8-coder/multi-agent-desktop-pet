@@ -9,7 +9,8 @@ contextBridge.exposeInMainWorld("agentPet", {
   respondInteraction: (response: InteractionResponseInput): Promise<InteractionSubmitResult> => ipcRenderer.invoke("hub:interaction-respond", response),
   moveWindowToPointer: (position: { screenX: number; screenY: number; anchorX: number; anchorY: number }): void => ipcRenderer.send("window:move-to-pointer", position),
   finishWindowMove: (): void => ipcRenderer.send("window:finish-move"),
-  setPetPickedUp: (pickedUp: boolean): void => ipcRenderer.send("window:pickup-state", pickedUp),
+  setDragging: (dragging: boolean): void => ipcRenderer.send("window:drag-state", dragging),
+  setHoveringInteractive: (hovering: boolean): void => ipcRenderer.send("window:hover-interactive", hovering),
   setPanelVisibility: (visible: boolean): void => ipcRenderer.send("window:panel-visibility", visible),
   hideWindow: (): void => ipcRenderer.send("window:hide"),
   onSnapshot: (listener: (snapshot: HubSnapshot) => void): (() => void) => {
