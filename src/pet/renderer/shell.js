@@ -102,6 +102,29 @@ function closeCompletion() {
   syncPanelVisibility();
 }
 
+// ===== 面板互斥调度口（治欠账 8 处，2026-08-12）=====
+// 抽屉／设置／询问权限／完成弹窗四个面板互斥，开一个要关其他全部。
+// 以前各家开面板时互相点名（drawer 调 pet 的、panel 调 drawer 的…），
+// 现在统一来这里报「我要开了」，别的面板由底座收，谁也不再摸谁的家。
+
+function openPanel(which) {
+  if (which !== "drawer" && drawerOpen) closeDrawer();
+  if (which !== "settings" && settingsOpen) closeSettings(false);
+  if (which !== "completion" && completionOpen) closeCompletion();
+  if (which !== "interaction" && !elements.interaction.hidden) elements.interaction.hidden = true;
+  syncPanelVisibility();
+}
+
+// 关掉任意面板后，把还挂着的待处理询问面板放回来（以前各家各写一份）
+function restoreInteractionAfterPanelClose() {
+  renderInteraction(snapshot.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId));
+}
+
+// 面板开关会改幼苗姿态，统一走这里刷新（不让各面板直接摸 pet 内部）
+function refreshPetPose() {
+  updatePetPose();
+}
+
 function renderSnapshot(next) {
   snapshot = next;
   const lead = next.sessions[0];

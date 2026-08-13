@@ -10,8 +10,8 @@ function renderInteraction(session) {
     return;
   }
   activeInteractionEventId = pending.eventId;
+  openPanel("interaction");
   elements.interaction.hidden = false;
-  closeCompletion();
   document.querySelector("#interaction-agent").textContent = labels[session.agent] || session.agent;
   const type = document.querySelector("#interaction-type");
   type.textContent = pending.mode === "question" ? "询问" : "权限";
@@ -63,8 +63,7 @@ function dismissInteraction() {
 }
 
 function openInteraction(session) {
-  closeDrawer();
-  closeSettings(false);
+  openPanel("interaction");
   const eventId = session.pendingInteraction.eventId;
   dismissedInteractions.delete(eventId);
   activeInteractionEventId = eventId;

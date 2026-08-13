@@ -82,12 +82,11 @@ function diagnosticRow(label, value, cls) {
 function toggleDrawer() { drawerOpen ? closeDrawer() : openDrawer(); }
 
 function openDrawer() {
+  openPanel("drawer");
   drawerOpen = true;
-  closeSettings(false);
-  closeCompletion();
   elements.drawer.hidden = false;
   elements.interaction.hidden = true;
-  updatePetPose();
+  refreshPetPose();
   renderDiagnostics();
   syncPanelVisibility();
 }
@@ -95,6 +94,6 @@ function openDrawer() {
 function closeDrawer() {
   drawerOpen = false;
   elements.drawer.hidden = true;
-  renderInteraction(snapshot.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId));
-  updatePetPose();
+  restoreInteractionAfterPanelClose();
+  refreshPetPose();
 }

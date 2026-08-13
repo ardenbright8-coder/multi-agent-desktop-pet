@@ -50,15 +50,9 @@ const rendererBaseFile = "pet/renderer/shell.js";
 // ---------- 已知欠账（拆分时就发现的真耦合，还没治，先记在这别装看不见）----------
 // 这不是「允许」，是「欠着」。治的办法写在 pet\AGENTS.md 的「欠账」一节。
 // 治好一条就从这儿删一条。别往这儿加新的 —— 新的越界就是该改代码。
-const debt = [
-  { file: "events/renderer/drawer.js", fn: "renderInteraction", why: "closeDrawer 关抽屉后要把待处理面板放回来" },
-  { file: "events/renderer/drawer.js", fn: "updatePetPose", why: "抽屉开关会改幼苗姿态" },
-  { file: "events/renderer/drawer.js", fn: "closeSettings", why: "抽屉和设置面板互斥，开一个要关另一个" },
-  { file: "interaction/renderer/panel.js", fn: "closeDrawer", why: "点开某条待处理要先收起抽屉" },
-  { file: "interaction/renderer/panel.js", fn: "closeSettings", why: "同上，设置面板也要收起" },
-  { file: "pet/renderer/pet.js", fn: "closeDrawer", why: "打开设置面板要先关抽屉" },
-  { file: "pet/renderer/pet.js", fn: "renderInteraction", why: "关掉设置面板后要把待处理面板放回来" },
-];
+// ✅ 2026-08-12 已清零：面板互斥统一收进 shell.js 的 openPanel／restoreInteractionAfterPanelClose／refreshPetPose 调度口，
+//    drawer.js／panel.js／pet.js 不再互相点名（抽屉、设置、询问权限、完成弹窗四家只报「我要开了」）。
+const debt = [];
 
 const tsFiles = [];
 const jsFiles = [];

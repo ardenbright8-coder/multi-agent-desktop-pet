@@ -116,9 +116,8 @@ function syncHitTest(event) {
 function toggleSettings() { settingsOpen ? closeSettings() : openSettings(); }
 
 function openSettings() {
+  openPanel("settings");
   settingsOpen = true;
-  if (drawerOpen) closeDrawer();
-  closeCompletion();
   elements.settings.hidden = false;
   elements.interaction.hidden = true;
   syncPanelVisibility();
@@ -133,7 +132,7 @@ function closeSettings(restorePermission = true) {
     previewTimer = null;
   }
   updatePetPose();
-  if (restorePermission) renderInteraction(snapshot.sessions.find((session) => session.pendingInteraction?.eventId === activeInteractionEventId));
+  if (restorePermission) restoreInteractionAfterPanelClose();
   syncPanelVisibility();
 }
 
