@@ -73,6 +73,7 @@ export interface AgentEvent {
   requestId?: string;
   interaction?: InteractionPayload;
   metadata?: Record<string, unknown>;
+  originPid?: number;
 }
 
 export interface PermissionExplanation {
@@ -95,6 +96,7 @@ export interface SessionSnapshot {
   summary: string;
   updatedAt: number;
   lastSeenAt: number;
+  originPid?: number;
   pendingInteraction?: InteractionPresentation;
 }
 
@@ -297,6 +299,9 @@ export function normalizeAgentEvent(value: unknown): AgentEvent | null {
     requestId: limitedString(raw.requestId, 200),
     interaction,
     metadata,
+    originPid: Number.isSafeInteger(raw.originPid) && (raw.originPid as number) > 0
+      ? (raw.originPid as number)
+      : undefined,
   };
 }
 

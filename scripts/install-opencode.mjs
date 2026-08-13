@@ -21,4 +21,24 @@ mkdirSync(dirname(target), { recursive: true });
 const temp = `${target}.${process.pid}.tmp`;
 writeFileSync(temp, content, { encoding: "utf8", mode: 0o600 });
 renameSync(temp, target);
+registerPluginInConfig(target);
 process.stdout.write(`OPENCODE_PLUGIN_INSTALLED ${target}\n`);
+
+function registerPluginInConfig(pluginPath) {
+  const configPath = join(homedir(), ".config", "opencode", "opencode.json");
+  if (!existsSync(configPath)) return;
+  const raw = readFileSync(configPath, "utf8");
+  const config = JSON.parse(raw);
+  const wanted = pluginPath.replaceAll("\\", "/");
+  const current = Array.isArray(config.plugin) ? config.plugin.map(String) : [];
+  if (current.some((item) => item.replaceAll("\\", "/") === wanted || item.includes("multi-agent-desktop-pet"))) return;
+  const next = [...current, wanted];
+  const backupDir = join(dirname(configPath), "_old");
+  mkdirSync(backupDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  copyFileSync(configPath, join(backupDir, `opencode.json.backup-before-agent-pet-plugin-${stamp}`));
+  config.plugin = next;
+  const tempConfig = `${configPath}.${process.pid}.tmp`;
+  writeFileSync(tempConfig, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  renameSync(tempConfig, configPath);
+}

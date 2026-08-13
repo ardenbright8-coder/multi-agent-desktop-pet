@@ -32,6 +32,7 @@ const labels = {
   pi: "Pi",
   hermes: "Hermes",
   grok: "Grok",
+  codex: "Codex",
   simulator: "模拟 Agent",
 };
 
@@ -93,7 +94,7 @@ function showCompletion(session) {
   elements.completionAgent.textContent = agentName;
   elements.completionHeading.textContent = "任务完成了";
   elements.completionExplanation.textContent = session?.summary || "Agent 已经把活干完了，去原窗口看结果吧。";
-  completionTarget = session ? { agent: session.agent, project: session.project } : null;
+  completionTarget = session ? { agent: session.agent, project: session.project, originPid: session.originPid } : null;
   elements.completionPanel.hidden = false;
   completionOpen = true;
   syncPanelVisibility();

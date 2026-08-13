@@ -126,7 +126,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     hub.publish(fallback);
     await interactionVisible(win, fallback.eventId);
     // 没有回传通道的那种：按钮必须点得动（写着「回原窗口处理」却禁用 = 死按钮），点了要能收起面板
-    await rendererAssert(win, "!document.querySelector('#interaction-confirm').disabled && document.querySelector('#interaction-confirm').textContent.includes('回原窗口') && !document.querySelector('#interaction-fallback').hidden", "Fallback confirm button was dead or mislabelled");
+    await rendererAssert(win, "!document.querySelector('#interaction-confirm').disabled && document.querySelector('#interaction-confirm').textContent.includes('返回终端') && !document.querySelector('#interaction-fallback').hidden", "Fallback confirm button was dead or mislabelled");
     await click(win, "#interaction-confirm");
     await hidden(win, "#interaction-panel");
 

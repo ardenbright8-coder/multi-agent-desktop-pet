@@ -16,14 +16,32 @@ export function ensureOpenCodeIntegration(): { installed: boolean; changed: bool
     if (!current.includes(OPENCODE_MARKER)) {
       return { installed: false, changed: false, target, reason: "unmanaged-name-conflict" };
     }
-    if (current === content) return { installed: true, changed: false, target };
+    if (current === content) {
+      const listed = listOpenCodePlugin(target);
+      return { installed: true, changed: listed, target };
+    }
   }
 
   mkdirSync(dirname(target), { recursive: true });
   const temp = `${target}.${process.pid}.tmp`;
   writeFileSync(temp, content, { encoding: "utf8", mode: 0o600 });
   renameSync(temp, target);
+  listOpenCodePlugin(target);
   return { installed: true, changed: true, target };
+}
+
+function listOpenCodePlugin(pluginPath: string): boolean {
+  const configPath = join(homedir(), ".config", "opencode", "opencode.json");
+  if (!existsSync(configPath)) return false;
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as { plugin?: unknown };
+  const wanted = pluginPath.replaceAll("\\", "/");
+  const current = Array.isArray(config.plugin) ? config.plugin.map(String) : [];
+  if (current.some((item) => item.replaceAll("\\", "/") === wanted || item.includes("multi-agent-desktop-pet"))) return false;
+  config.plugin = [...current, wanted];
+  const temp = `${configPath}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  renameSync(temp, configPath);
+  return true;
 }
 
 export function ensureGrokHooks(): { installed: boolean; changed: boolean; target: string; reason?: string } {

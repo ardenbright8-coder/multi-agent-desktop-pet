@@ -64,6 +64,7 @@ function makeEvent(sessionId, kind, details = {}) {
     paths: details.paths,
     requestId: details.requestId,
     interaction: details.interaction,
+    originPid: process.pid,
     metadata: sanitizeMetadataForWire(details.metadata),
   };
 }

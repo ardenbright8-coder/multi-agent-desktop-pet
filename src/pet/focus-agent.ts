@@ -9,6 +9,7 @@ const log = createLogger("window");
 export interface FocusAgentHint {
   agent?: string;
   project?: string;
+  originPid?: number;
 }
 
 const AGENT_NEEDLES: Record<string, string[]> = {
@@ -17,6 +18,7 @@ const AGENT_NEEDLES: Record<string, string[]> = {
   hermes: ["hermes"],
   pi: ["pi coding", "pi-ai", "pi agent"],
   grok: ["grok", "grok build"],
+  codex: ["codex"],
   simulator: [],
 };
 
@@ -44,11 +46,12 @@ export function scoreAgentWindow(input: {
   return score;
 }
 
-/** 点了「回原窗口」才调。测试隔离环境里不真切窗口，避免抢自测焦点。 */
+/** 点了「返回终端」才调。测试隔离环境里不真切窗口，避免抢自测焦点。 */
 export function focusAgentWindow(hint: FocusAgentHint): void {
   if (process.env.AGENT_PET_HUB_HOME) return;
   const agent = String(hint.agent || "").trim();
   const project = String(hint.project || "").trim();
+  const originPid = Number(hint.originPid) > 0 ? Math.floor(Number(hint.originPid)) : 0;
   const script = [
     "$ErrorActionPreference = 'SilentlyContinue'",
     "Add-Type -TypeDefinition @'",
@@ -58,18 +61,41 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
     "  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);",
     "  [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);",
     "}",
     "'@ | Out-Null",
     `$agent = ${psString(agent)}`,
     `$project = ${psString(project)}`,
+    `$originPid = ${originPid}`,
     "$needles = @()",
     "if ($agent -eq 'opencode') { $needles += 'opencode','open code' }",
     "elseif ($agent -eq 'claude-code') { $needles += 'claude','claude code' }",
     "elseif ($agent -eq 'hermes') { $needles += 'hermes' }",
     "elseif ($agent -eq 'pi') { $needles += 'pi coding','pi-ai','pi agent' }",
     "elseif ($agent -eq 'grok') { $needles += 'grok','grok build' }",
+    "elseif ($agent -eq 'codex') { $needles += 'codex' }",
     "elseif ($agent) { $needles += $agent }",
     "if ($project -and $project.Length -ge 2) { $needles += $project }",
+    "function Activate-Handle([IntPtr]$hwnd, [string]$label) {",
+    "  if ($hwnd -eq [IntPtr]::Zero) { return }",
+    "  if ([AgentPetFocus]::IsIconic($hwnd)) { [void][AgentPetFocus]::ShowWindow($hwnd, 9) }",
+    "  [AgentPetFocus]::SwitchToThisWindow($hwnd, $true)",
+    "  [void][AgentPetFocus]::SetForegroundWindow($hwnd)",
+    "  Write-Output ('FOCUSED ' + $label)",
+    "}",
+    "if ($originPid -gt 0) {",
+    "  $walk = $originPid",
+    "  for ($i = 0; $i -lt 8 -and $walk -gt 0; $i++) {",
+    "    $proc = Get-Process -Id $walk -ErrorAction SilentlyContinue",
+    "    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero -and $proc.MainWindowTitle -and $proc.MainWindowTitle -notmatch '多Agent桌面宠物') {",
+    "      Activate-Handle $proc.MainWindowHandle ($proc.ProcessName + ' pid=' + $walk + ' | ' + $proc.MainWindowTitle)",
+    "      return",
+    "    }",
+    "    $parent = (Get-CimInstance Win32_Process -Filter (\"ProcessId=$walk\") -ErrorAction SilentlyContinue).ParentProcessId",
+    "    if (-not $parent -or $parent -eq $walk) { break }",
+    "    $walk = [int]$parent",
+    "  }",
+    "}",
     "$best = $null; $bestScore = 0",
     "Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.MainWindowTitle } | ForEach-Object {",
     "  $title = $_.MainWindowTitle.ToLowerInvariant()",
@@ -85,10 +111,7 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "  if ($score -gt $bestScore) { $bestScore = $score; $best = $_ }",
     "}",
     "if (-not $best -or $bestScore -lt 10) { Write-Output 'NO_MATCH'; return }",
-    "$hwnd = $best.MainWindowHandle",
-    "if ([AgentPetFocus]::IsIconic($hwnd)) { [void][AgentPetFocus]::ShowWindow($hwnd, 9) }",
-    "[void][AgentPetFocus]::SetForegroundWindow($hwnd)",
-    "Write-Output ('FOCUSED ' + $best.ProcessName + ' | ' + $best.MainWindowTitle)",
+    "Activate-Handle $best.MainWindowHandle ($best.ProcessName + ' | ' + $best.MainWindowTitle)",
   ].join("\n");
 
   const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
@@ -101,8 +124,8 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
   child.on("error", (error) => log.出事("回原窗口切过去失败", error, "focusAgent"));
   child.on("close", () => {
     const line = out.trim().split(/\r?\n/).filter(Boolean).at(-1) || "NO_OUTPUT";
-    if (line.startsWith("FOCUSED")) log.记(`回原窗口已切到 ${line.slice(8)}`, "focusAgent");
-    else log.记(`回原窗口没找到对应窗口 agent=${agent || "?"} project=${project || "?"} ${line}`, "focusAgent");
+    if (line.startsWith("FOCUSED")) log.记(`回终端已切到 ${line.slice(8)}`, "focusAgent");
+    else log.记(`回终端没找到窗口 agent=${agent || "?"} project=${project || "?"} pid=${originPid || "?"} ${line}`, "focusAgent");
   });
 }
 

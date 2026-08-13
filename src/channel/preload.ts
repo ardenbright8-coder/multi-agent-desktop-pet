@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("agentPet", {
   stopDragging: (): void => ipcRenderer.send("window:drag-stop"),
   setHoveringInteractive: (hovering: boolean): void => ipcRenderer.send("window:hover-interactive", hovering),
   setPanelVisibility: (visible: boolean): void => ipcRenderer.send("window:panel-visibility", visible),
-  focusAgent: (hint?: { agent?: string; project?: string }): void => ipcRenderer.send("window:focus-agent", hint || {}),
+  focusAgent: (hint?: { agent?: string; project?: string; originPid?: number }): void => ipcRenderer.send("window:focus-agent", hint || {}),
   hideWindow: (): void => ipcRenderer.send("window:hide"),
   reportError: (info: { message: string; where?: string; stack?: string }): void => ipcRenderer.send("window:renderer-error", info),
   onNoteSide: (listener: (side: "left" | "right") => void): void => {

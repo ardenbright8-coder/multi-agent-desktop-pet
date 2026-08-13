@@ -9,7 +9,7 @@
 3. **没有事件、只有启动命令**：只能用包装器报告“开始 / 退出”，看不到每个工具。
 4. **事件、日志、包装入口都没有**：不能可靠接；解析终端画面不采用，因为容易误报。
 
-当前实接：OpenCode 插件、Claude Code Hooks、Pi Extension、Hermes Plugin、Grok Build Hooks。
+当前实接：OpenCode 插件、Claude Code Hooks、Pi Extension、Hermes Plugin、Grok Build Hooks、Codex Hooks。
 
 ## 通用接入口
 
@@ -77,6 +77,7 @@ $payload | node "$env:APPDATA\AgentPetHub\integrations\agent-pet-hook.mjs" my-ag
 - **Pi**：全局 TypeScript Extension 除状态上报外，还注册 `desktop_pet_question` 和 `desktop_pet_permission` 两个顺序工具。Pi 需要询问或给具体操作加一道门时调用它们，桌宠有界等待后把结果交回 Pi。
 - **Hermes**：用户 Plugin 监听生命周期和工具 Hook；`clarify` 的结构化内容会进入询问面板，当前仍回 Hermes 原窗口回答。
 - **Grok Build**：全局 Hook 文件 `~\.grok\hooks\multi-agent-desktop-pet.json`，上报开始／工具／完成／失败／权限提醒。Grok 没有回传通道，权限和询问在桌宠点了会切回 Grok 窗口处理。
+- **Codex**：往 `~\.codex\hooks.json` **追加**桌宠 Hook（不删原来的 Clawd / Emdash 钩子）。权限仍回 Codex 原窗口处理。
 
 ## 新 Agent 接入判断顺序
 

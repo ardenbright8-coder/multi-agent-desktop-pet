@@ -89,6 +89,7 @@ function translate(agent, hook, input) {
     target: clean(target, 2_000),
     paths: pathList(toolInput, input),
     requestId: clean(requestId, 200),
+    originPid: Number(process.ppid) > 0 ? Number(process.ppid) : process.pid,
     interaction,
     metadata: safeMetadata(toolInput),
   };
@@ -243,7 +244,7 @@ function clean(value, max) {
 }
 
 function agentLabel(agent) {
-  return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes", grok: "Grok" })[agent] || agent;
+  return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes", grok: "Grok", codex: "Codex" })[agent] || agent;
 }
 
 async function publish(event) {

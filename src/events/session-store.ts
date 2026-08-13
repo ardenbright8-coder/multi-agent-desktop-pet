@@ -5,6 +5,7 @@ interface InternalSession extends SessionSnapshot {
   stateSince: number;
   lastSequenceBySource: Map<string, number>;
   pendingSourceInstance?: string;
+  originPid?: number;
 }
 
 interface SessionTombstone {
@@ -63,6 +64,7 @@ export class SessionStore {
     current.title = event.title || current.title;
     current.summary = event.summary || current.summary;
     current.updatedAt = Math.max(current.updatedAt, event.emittedAt);
+    if (event.originPid && event.originPid > 0) current.originPid = event.originPid;
 
     if (event.kind === "context.updated" || event.kind === "session.started") {
       this.sessions.set(key, current);
@@ -221,6 +223,7 @@ function createSession(event: AgentEvent, key: string, lastSequenceBySource = ne
     lastSeenAt: event.emittedAt,
     stateSince: event.emittedAt,
     lastSequenceBySource,
+    originPid: event.originPid,
   };
 }
 
@@ -247,6 +250,7 @@ function toPublicSession(session: InternalSession): SessionSnapshot {
     summary: session.summary,
     updatedAt: session.updatedAt,
     lastSeenAt: session.lastSeenAt,
+    originPid: session.originPid,
     pendingInteraction: session.pendingInteraction,
   };
 }

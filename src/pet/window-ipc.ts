@@ -23,8 +23,12 @@ export function registerWindowIpc(): void {
   ipcMain.on("window:drag-stop", () => stopDragging());
   ipcMain.on("window:hover-interactive", (_event, hovering: boolean) => setHoveringInteractive(Boolean(hovering)));
   ipcMain.on("window:panel-visibility", (_event, visible: boolean) => setPanelVisibility(Boolean(visible)));
-  ipcMain.on("window:focus-agent", (_event, hint: { agent?: unknown; project?: unknown }) => {
-    focusAgentWindow({ agent: String(hint?.agent || ""), project: String(hint?.project || "") });
+  ipcMain.on("window:focus-agent", (_event, hint: { agent?: unknown; project?: unknown; originPid?: unknown }) => {
+    focusAgentWindow({
+      agent: String(hint?.agent || ""),
+      project: String(hint?.project || ""),
+      originPid: Number(hint?.originPid) || undefined,
+    });
   });
   ipcMain.on("window:hide", () => hideMainWindow());
   // 界面里出的错以前谁也看不见，现在一律落到 window 那本日志里

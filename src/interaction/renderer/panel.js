@@ -26,7 +26,7 @@ function renderInteraction(session) {
   elements.interactionConfirm.disabled = pending.responseCapability
     ? (pending.prompts.length === 0 || pending.responseStatus === "submitting")
     : false;
-  elements.interactionConfirm.textContent = pending.responseCapability ? (pending.responseStatus === "submitting" ? "正在交回…" : "确认") : "知道了，回原窗口处理";
+  elements.interactionConfirm.textContent = pending.responseCapability ? (pending.responseStatus === "submitting" ? "正在交回…" : "确认") : "知道了，返回终端";
   elements.interactionError.hidden = !pending.responseError;
   elements.interactionError.textContent = pending.responseError || "";
   syncPanelVisibility();
@@ -76,7 +76,7 @@ async function submitInteraction() {
   if (!session || !pending || interactionSubmitting) return;
   // 这家 Agent 没有回传通道：按钮的意思就是「我知道了，去终端办」，收起面板即可。
   if (!pending.responseCapability) {
-    const target = { agent: session.agent, project: session.project };
+    const target = { agent: session.agent, project: session.project, originPid: session.originPid };
     dismissInteraction();
     window.agentPet.focusAgent(target);
     return;
@@ -127,7 +127,7 @@ async function submitInteraction() {
   activeInteractionEventId = null;
   elements.interaction.hidden = true;
   syncPanelVisibility();
-  window.agentPet.focusAgent({ agent: session.agent, project: session.project });
+  window.agentPet.focusAgent({ agent: session.agent, project: session.project, originPid: session.originPid });
 }
 
 function showInteractionError(message) {
