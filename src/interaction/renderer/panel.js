@@ -76,7 +76,9 @@ async function submitInteraction() {
   if (!session || !pending || interactionSubmitting) return;
   // 这家 Agent 没有回传通道：按钮的意思就是「我知道了，去终端办」，收起面板即可。
   if (!pending.responseCapability) {
+    const target = { agent: session.agent, project: session.project };
     dismissInteraction();
+    window.agentPet.focusAgent(target);
     return;
   }
   const answers = [];

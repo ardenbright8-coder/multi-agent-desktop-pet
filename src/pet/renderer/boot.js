@@ -38,7 +38,7 @@ document.addEventListener("mouseup", endPetDrag);
 document.addEventListener("pointercancel", endPetDrag);
 window.addEventListener("blur", () => endPetDrag());
 document.querySelector("#status-note").addEventListener("click", toggleDrawer);
-document.querySelector("#completion-return").addEventListener("click", closeCompletion);
+document.querySelector("#completion-return").addEventListener("click", returnToAgentFromCompletion);
 document.querySelector("#completion-close").addEventListener("click", closeCompletion);
 document.querySelector("#completion-top-close").addEventListener("click", closeCompletion);
 document.querySelector("#drawer-close").addEventListener("click", closeDrawer);

@@ -192,22 +192,21 @@ function translateEvent(event, directory, ctx) {
       break;
     case "session.status":
       if (properties.status?.type === "busy") {
-        cancelCompletion(sessionId);
+        beginTurn(sessionId);
         publishState(sessionId, "state.thinking", { summary: "正在理解任务和安排步骤" });
       }
       break;
     case "session.idle":
       cancelCompletion(sessionId);
-      lastStateBySession.delete(sessionId);
-      publish(makeEvent(sessionId, "task.completed", { summary: "OpenCode 已经完成这一轮任务" }));
+      publishCompleted(sessionId, { summary: "OpenCode 已经完成这一轮任务" });
       break;
     case "session.error":
       cancelCompletion(sessionId);
-      lastStateBySession.delete(sessionId);
-      publish(makeEvent(sessionId, "task.failed", { summary: "OpenCode 遇到错误，需要回来查看", reason: String(properties.error?.message || properties.error || "未提供错误详情") }));
+      publishFailed(sessionId, { summary: "OpenCode 遇到错误，需要回来查看", reason: String(properties.error?.message || properties.error || "未提供错误详情") });
       break;
     case "session.deleted":
       cancelCompletion(sessionId);
+      turnGate.reset(sessionId);
       publish(makeEvent(sessionId, "session.ended", { summary: "OpenCode 会话已经结束" }));
       contextBySession.delete(sessionId);
       lastStateBySession.delete(sessionId);
@@ -216,6 +215,7 @@ function translateEvent(event, directory, ctx) {
       const known = [...contextBySession.keys()];
       for (const knownSessionId of known.length ? known : [sessionId]) {
         cancelCompletion(knownSessionId);
+        turnGate.reset(knownSessionId);
         publish(makeEvent(knownSessionId, "session.ended", { summary: "OpenCode 实例已经关闭" }));
         contextBySession.delete(knownSessionId);
         lastStateBySession.delete(knownSessionId);
@@ -332,7 +332,7 @@ export default async function MultiAgentDesktopPetPlugin(ctx) {
     "tool.execute.before": async (input, output) => {
       try {
         const sessionId = input?.sessionID || input?.sessionId || "opencode-default";
-        cancelCompletion(sessionId);
+        beginTurn(sessionId);
         const tool = input?.tool || "tool";
         const args = output?.args && typeof output.args === "object" ? output.args : {};
         const target = targetFrom(args, []);
@@ -350,9 +350,7 @@ export default async function MultiAgentDesktopPetPlugin(ctx) {
       try {
         const sessionId = input?.sessionID || input?.sessionId || "opencode-default";
         publishState(sessionId, "state.working", { summary: `已完成 ${input?.tool || "工具"}，继续处理任务`, tool: input?.tool, cwd: directory });
-        // 工具跑完 8 秒没有新的工具/思考动作 → 认为这一轮干完了，发完成事件让桌宠弹窗。
-        // 死等 session.idle 不行：连续干活时 OpenCode 几乎不进 idle，完成事件一条都发不出去
-        // （2026-08-12 实机抓到：用户一直没收到完成通知）。
+        // 只当兜底：真完成信 session.idle。8 秒误报已经实机踩过——工具之间一停就弹「干完了」。
         scheduleCompletion(sessionId);
       } catch { /* fail open */ }
     },
@@ -367,20 +365,68 @@ function canReply(ctx) {
   return Boolean(ctx?.client?.v2?.session || ctx?.serverUrl);
 }
 
-// ===== 完成判定（2026-08-12 新增）=====
-// OpenCode 连续干活时几乎不发 session.idle，死等它 = 完成事件一条都发不出去。
-// 改成：工具跑完 8 秒没有新的工具/思考动作 → 认为这一轮干完了，发 task.completed。
-const COMPLETION_IDLE_MS = 8_000;
+// ===== 完成判定（2026-08-13 改）=====
+// 正主是 session.idle：一轮真停了才报完成。
+// 2026-08-12 用「工具后 8 秒」兜底，日志里同一会话一两分钟连弹十几次，还跟 idle 叠成双发。
+// 现在：一轮只报一次；失败后 idle 不许再改成完成；90 秒兜底只防 idle 彻底丢了。
+export const COMPLETION_FALLBACK_MS = 90_000;
+
+export function createTurnGate() {
+  const turns = new Map();
+  return {
+    start(sessionId) {
+      turns.set(sessionId, { completed: false, failed: false });
+    },
+    canComplete(sessionId) {
+      const turn = turns.get(sessionId);
+      if (!turn) return true;
+      return !turn.completed && !turn.failed;
+    },
+    markCompleted(sessionId) {
+      const turn = turns.get(sessionId) || { completed: false, failed: false };
+      turn.completed = true;
+      turns.set(sessionId, turn);
+    },
+    markFailed(sessionId) {
+      const turn = turns.get(sessionId) || { completed: false, failed: false };
+      turn.failed = true;
+      turn.completed = true;
+      turns.set(sessionId, turn);
+    },
+    reset(sessionId) {
+      turns.delete(sessionId);
+    },
+  };
+}
+
+const turnGate = createTurnGate();
 const completionTimerBySession = new Map();
+
+function beginTurn(sessionId) {
+  cancelCompletion(sessionId);
+  turnGate.start(sessionId);
+}
+
+function publishCompleted(sessionId, details) {
+  if (!turnGate.canComplete(sessionId)) return;
+  turnGate.markCompleted(sessionId);
+  lastStateBySession.delete(sessionId);
+  publish(makeEvent(sessionId, "task.completed", details));
+}
+
+function publishFailed(sessionId, details) {
+  turnGate.markFailed(sessionId);
+  lastStateBySession.delete(sessionId);
+  publish(makeEvent(sessionId, "task.failed", details));
+}
 
 function scheduleCompletion(sessionId) {
   const existing = completionTimerBySession.get(sessionId);
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     completionTimerBySession.delete(sessionId);
-    lastStateBySession.delete(sessionId);
-    publish(makeEvent(sessionId, "task.completed", { summary: "OpenCode 已经完成这一轮任务" }));
-  }, COMPLETION_IDLE_MS);
+    publishCompleted(sessionId, { summary: "OpenCode 已经完成这一轮任务" });
+  }, COMPLETION_FALLBACK_MS);
   if (typeof timer.unref === "function") timer.unref();
   completionTimerBySession.set(sessionId, timer);
 }

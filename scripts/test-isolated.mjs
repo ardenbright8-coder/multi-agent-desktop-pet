@@ -38,6 +38,7 @@ const tests = readdirSync(resolve("dist", "testkit", "tests"))
   .filter((name) => name.endsWith(".test.js"))
   .map((name) => join("dist", "testkit", "tests", name));
 run(process.execPath, ["--test", ...tests]);
+run(process.execPath, ["--test", "integrations/opencode/completion-gate.test.mjs"]);
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: process.cwd(), env, stdio: "inherit" });

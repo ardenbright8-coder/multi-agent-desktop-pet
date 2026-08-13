@@ -35,7 +35,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "hideWindow", "onNoteSide", "onPetCommand", "onSnapshot", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
+    assert.deepEqual(exposed, ["diagnostics", "focusAgent", "hideWindow", "onNoteSide", "onPetCommand", "onSnapshot", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
 
     const marker = `controls-${Date.now()}`;
     hub.publish(makeEvent("state.working", "search-session", { summary: `${marker} searchable event`, target: "package.json" }));
@@ -277,6 +277,36 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.setPosition(-500, -900, false);
     context.trayActions.recall();
     await waitFor(() => { const b = win.getBounds(); return b.x > 0 && b.y > 0; }, 1_500, "Tray recall did not bring the pet back on screen");
+
+    // 完成弹窗：只有会话新进入 done 才弹；已经是 done 的会话再当 lead / 再报一次完成都不许重弹。
+    // 先把测试残留的询问/权限清掉，否则 waiting 优先级更高，完成弹窗会被当场挤掉。
+    for (const session of hub.snapshot().sessions) {
+      const pending = session.pendingInteraction;
+      if (!pending) continue;
+      hub.publish(makeEvent(pending.mode === "permission" ? "permission.resolved" : "question.resolved", session.sessionId, {
+        requestId: pending.providerRequestId,
+      }));
+    }
+    await delay(150);
+    await hidden(win, "#interaction-panel");
+    hub.publish(makeEvent("state.working", "completion-a", { summary: "A 在干活" }));
+    await delay(80);
+    hub.publish(makeEvent("task.completed", "completion-a", { summary: "A 干完了" }));
+    await visible(win, "#completion-panel");
+    await rendererAssert(win, "document.querySelector('#completion-explanation').textContent.includes('A 干完了')", "完成弹窗没带上摘要");
+    await click(win, "#completion-return");
+    await hidden(win, "#completion-panel");
+    hub.publish(makeEvent("state.working", "completion-b", { summary: "B 在干活" }));
+    await delay(150);
+    await hidden(win, "#completion-panel");
+    hub.publish(makeEvent("task.completed", "completion-b", { summary: "B 干完了" }));
+    await visible(win, "#completion-panel");
+    await rendererAssert(win, "document.querySelector('#completion-explanation').textContent.includes('B 干完了')", "新完成没有重新弹出");
+    await click(win, "#completion-close");
+    await hidden(win, "#completion-panel");
+    hub.publish(makeEvent("task.completed", "completion-a", { summary: "A 又报了一次完成" }));
+    await delay(150);
+    await hidden(win, "#completion-panel");
 
     const report = {
       version: context.version,

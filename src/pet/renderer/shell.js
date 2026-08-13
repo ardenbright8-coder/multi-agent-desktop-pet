@@ -67,7 +67,6 @@ let settingsOpen = false;
 let searchTimer = null;
 let searchGeneration = 0;
 let activeTab = "sessions";
-let lastLeadIdentity = "";
 let celebrationTimer = null;
 let previewTimer = null;
 let ambientNextAt = Date.now() + 7_000;
@@ -79,17 +78,21 @@ let panelVisible = false;
 let hoveringInteractive = false;
 const dismissedInteractions = new Set();
 let completionOpen = false;
+let completionTarget = null;
+let completionHydrated = false;
+const lastSessionState = new Map();
 
-// 完成弹窗：任何 Agent 干完活（task.completed）就弹，跟权限/询问一个壳。
-// 任务接任务时跳跃会被盖，弹窗不会——干完必须看得见（用户 2026-08-12 明确要求）。
-// 两个按钮：回原窗口（收起弹窗去 Agent 那边看）／关闭。
-function showCompletion(summary, agentName) {
+// 完成弹窗：只有某个会话「新进入 done」才弹。
+// 以前用 lead 身份变化判断——已经点掉的完成会话一回到队首就再弹一次，看着像乱弹。
+function showCompletion(session) {
   if (drawerOpen) closeDrawer();
   if (settingsOpen) closeSettings(false);
   elements.interaction.hidden = true;
-  elements.completionAgent.textContent = agentName || "Agent";
+  const agentName = labels[session?.agent] || session?.agent || "Agent";
+  elements.completionAgent.textContent = agentName;
   elements.completionHeading.textContent = "任务完成了";
-  elements.completionExplanation.textContent = summary || "Agent 已经把活干完了，去原窗口看结果吧。";
+  elements.completionExplanation.textContent = session?.summary || "Agent 已经把活干完了，去原窗口看结果吧。";
+  completionTarget = session ? { agent: session.agent, project: session.project } : null;
   elements.completionPanel.hidden = false;
   completionOpen = true;
   syncPanelVisibility();
@@ -100,6 +103,33 @@ function closeCompletion() {
   completionOpen = false;
   elements.completionPanel.hidden = true;
   syncPanelVisibility();
+}
+
+function returnToAgentFromCompletion() {
+  const target = completionTarget;
+  closeCompletion();
+  if (target) window.agentPet.focusAgent(target);
+}
+
+function noteCompletionTransitions(sessions) {
+  if (!completionHydrated) {
+    for (const session of sessions) lastSessionState.set(session.key, session.state);
+    completionHydrated = true;
+    return;
+  }
+  const seen = new Set();
+  for (const session of sessions) {
+    seen.add(session.key);
+    const previous = lastSessionState.get(session.key);
+    lastSessionState.set(session.key, session.state);
+    if (session.state === "done" && previous !== "done") {
+      celebrateCompletion();
+      showCompletion(session);
+    }
+  }
+  for (const key of [...lastSessionState.keys()]) {
+    if (!seen.has(key)) lastSessionState.delete(key);
+  }
 }
 
 // ===== 面板互斥调度口（治欠账 8 处，2026-08-12）=====
@@ -133,8 +163,6 @@ function renderSnapshot(next) {
     : undefined;
   if (!pending) pending = next.sessions.find((session) => session.pendingInteraction && !dismissedInteractions.has(session.pendingInteraction.eventId));
   const state = lead?.state || "idle";
-  const identity = lead ? `${lead.key}:${lead.state}` : "idle";
-  const changed = identity !== lastLeadIdentity;
   document.body.dataset.state = state;
   elements.statusAgent.textContent = lead ? (labels[lead.agent] || lead.agent) : "事件中心";
   elements.statusCopy.textContent = lead?.summary || stateCopy[state];
@@ -143,13 +171,8 @@ function renderSnapshot(next) {
     clearTimeout(celebrationTimer);
     celebrationTimer = null;
   }
-  if (changed && state === "done") {
-    celebrateCompletion();
-    // 干完必须看得见：弹完成通知窗（跳跃会被下一个任务盖掉，弹窗不会）
-    showCompletion(lead?.summary, labels[lead?.agent] || lead?.agent || "Agent");
-  }
-  else if (!celebrationTimer) updatePetPose();
-  lastLeadIdentity = identity;
+  noteCompletionTransitions(next.sessions);
+  if (!celebrationTimer) updatePetPose();
   renderSessions(next.sessions);
   if (!interactionSubmitting) renderInteraction(pending);
   if (drawerOpen) renderDiagnostics();
