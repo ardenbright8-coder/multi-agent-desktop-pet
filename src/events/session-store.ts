@@ -186,6 +186,21 @@ export class SessionStore {
     pending.responseError = error;
   }
 
+  /** 答案等了超时没人接（Agent 那头已经死了/断了）时，把这个待处理事项清掉，
+   *  别留一个永远点不动的僵尸面板占着 waiting 状态（2026-08-12 实机踩到：
+   *  19:46 的权限请求超时后 pending 没清，用户 20:43 再点旧面板，又等 20 秒又超时）。 */
+  expireInteraction(input: Pick<InteractionResponseInput, "eventId" | "agent" | "sessionId" | "providerRequestId">): boolean {
+    const session = this.sessions.get(`${input.agent}:${input.sessionId}`);
+    const pending = session?.pendingInteraction;
+    if (!session || !pending || pending.eventId !== input.eventId || pending.providerRequestId !== input.providerRequestId) return false;
+    session.pendingInteraction = undefined;
+    session.pendingSourceInstance = undefined;
+    session.state = "idle";
+    session.stateSince = Date.now();
+    session.updatedAt = Date.now();
+    return true;
+  }
+
   private capSessions(): void {
     if (this.sessions.size <= 50) return;
     const oldest = [...this.sessions.values()].sort((left, right) => left.lastSeenAt - right.lastSeenAt)[0];

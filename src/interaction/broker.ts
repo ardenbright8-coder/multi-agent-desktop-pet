@@ -24,6 +24,7 @@ export class InteractionBroker {
     private readonly validate: (input: InteractionResponseInput) => boolean,
     private readonly updateStatus: (input: InteractionResponseInput, status: "submitting" | "failed" | "submitted", error?: string) => void,
     private readonly timeoutMs = 20_000,
+    private readonly onExpired?: (input: InteractionResponseInput) => void,
   ) {}
 
   submit(input: InteractionResponseInput): Promise<InteractionSubmitResult> {
@@ -47,6 +48,7 @@ export class InteractionBroker {
         const message = "Agent 没有在限定时间内接收回答，请回原窗口处理或稍后重试。";
         log.出事(`答案等了 ${this.timeoutMs}ms 没人接，退回原窗口 agent=${input.agent} 会话=${input.sessionId}`, undefined, "submit");
         this.updateStatus(input, "failed", message);
+        this.onExpired?.(queued);
         finish({ ok: false, status: "failed", message });
       }, this.timeoutMs);
       timer.unref();

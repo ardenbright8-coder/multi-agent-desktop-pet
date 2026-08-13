@@ -101,12 +101,34 @@
         <p class="settings-note">Windows 关闭动画时，“安静”保持静态；选“自然”或“活泼”会只为幼苗重新开启动作。</p>
       </section>
 
+      <!-- 完成弹窗：任何 Agent 干完活就弹，跟权限/询问一个壳。
+           「干完必须看得见」——跳跃会被下一个任务盖掉，弹窗不会。
+           两个按钮：回原窗口（去 Agent 那边看结果）／关闭。 -->
+      <section id="completion-panel" class="interaction-panel completion-panel" data-interactive role="alert" aria-live="assertive" aria-labelledby="completion-heading" hidden>
+        <header class="interaction-header">
+          <div class="interaction-identity">
+            <span id="completion-agent">OpenCode</span>
+            <span class="type-badge completion-badge">完成</span>
+          </div>
+          <button id="completion-top-close" class="icon-button" type="button" aria-label="关闭完成通知">×</button>
+        </header>
+        <div class="interaction-scroll">
+          <h1 id="completion-heading">任务完成了</h1>
+          <p id="completion-explanation" class="interaction-explanation"></p>
+        </div>
+        <footer class="interaction-actions completion-actions">
+          <button id="completion-close" class="secondary-button" type="button">关闭</button>
+          <button id="completion-return" class="primary-button" type="button">知道了，回原窗口</button>
+        </footer>
+      </section>
+
       <section id="pet-zone" class="pet-zone" aria-label="桌面宠物">
         <button id="status-note" class="status-note" data-interactive type="button">
           <span class="note-topline"><span id="status-agent">事件中心</span><i id="status-dot" class="note-dot"></i></span>
           <strong id="status-copy">连接正常，正在等消息</strong>
           <small id="status-state">空闲</small>
         </button>
+
 
         <button id="pet" class="pet" data-interactive type="button" aria-label="按住幼苗拖动，松手放下">
           <span class="pet-motion">

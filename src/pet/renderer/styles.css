@@ -431,6 +431,11 @@ body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px
 .interaction-identity { display: flex; align-items: center; gap: 8px; color: var(--success); font-size: 11px; font-weight: 720; }
 .type-badge { padding: 3px 7px; border: 1px solid rgba(143,219,120,0.34); border-radius: 999px; color: var(--success); font-size: 10px; font-weight: 600; }
 .type-badge.permission { border-color: rgba(242,200,75,0.42); color: var(--accent); }
+/* 完成弹窗：跟权限/询问一个壳，绿色强调「干完了」。 */
+.completion-badge { border-color: rgba(143,219,120,0.5); background: rgba(143,219,120,0.12); }
+.completion-panel h1 { color: var(--sprout-light); }
+.completion-panel .interaction-explanation { font-size: 15px; line-height: 1.7; }
+.completion-actions { grid-template-columns: 0.72fr 1.28fr; }
 .icon-button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--paper-muted); font-size: 21px; line-height: 1; cursor: pointer; }
 .icon-button:hover { color: var(--paper); background: rgba(255,255,255,0.05); }
 .interaction-scroll { min-height: 0; flex: 1 1 auto; padding: 0 18px 14px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--ink-soft) transparent; }

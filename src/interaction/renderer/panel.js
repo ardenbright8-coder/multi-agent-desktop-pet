@@ -11,6 +11,7 @@ function renderInteraction(session) {
   }
   activeInteractionEventId = pending.eventId;
   elements.interaction.hidden = false;
+  closeCompletion();
   document.querySelector("#interaction-agent").textContent = labels[session.agent] || session.agent;
   const type = document.querySelector("#interaction-type");
   type.textContent = pending.mode === "question" ? "询问" : "权限";

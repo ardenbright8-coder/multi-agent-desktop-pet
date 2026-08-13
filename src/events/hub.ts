@@ -48,6 +48,11 @@ export class AgentHub extends EventEmitter {
         this.sessions.updateInteractionStatus(input, status, error);
         this.emit("snapshot", this.snapshot());
       },
+      20_000,
+      (input) => {
+        // 答案超时没人接：把僵尸待处理事项清掉，面板收起，别再让人点一个永远没反应的旧按钮
+        if (this.sessions.expireInteraction(input)) this.emit("snapshot", this.snapshot());
+      },
     );
     const events = this.journal.load();
     this.index.addAll(events);

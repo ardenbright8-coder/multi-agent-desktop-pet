@@ -42,6 +42,24 @@ test("broker reports provider failure without marking the response submitted", a
   assert.deepEqual(statuses, ["submitting", "failed"]);
 });
 
+test("broker timeout notifies expiry so the zombie pending interaction gets cleared", async () => {
+  const statuses: string[] = [];
+  const expired: string[] = [];
+  const broker = new InteractionBroker(
+    () => true,
+    (_input, status) => statuses.push(status),
+    60,
+    (input) => expired.push(input.eventId),
+  );
+  const submission = broker.submit({ ...response, eventId: "event-3" });
+  const result = await submission;
+  assert.equal(result.ok, false);
+  assert.match(result.message, /限定时间内/);
+  assert.deepEqual(expired, ["event-3"], "超时后必须通知会话层清掉待处理事项");
+  assert.deepEqual(statuses, ["submitting", "failed"]);
+  assert.equal(broker.claim({ ...response, eventId: "event-3" }), null);
+});
+
 test("hub enforces source binding and never writes response text to the journal", async () => {
   const root = mkdtempSync(join(tmpdir(), "agent-pet-response-test-"));
   const journal = join(root, "events.ndjson");

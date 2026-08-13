@@ -118,6 +118,7 @@ function toggleSettings() { settingsOpen ? closeSettings() : openSettings(); }
 function openSettings() {
   settingsOpen = true;
   if (drawerOpen) closeDrawer();
+  closeCompletion();
   elements.settings.hidden = false;
   elements.interaction.hidden = true;
   syncPanelVisibility();

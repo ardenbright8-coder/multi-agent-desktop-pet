@@ -84,6 +84,7 @@ function toggleDrawer() { drawerOpen ? closeDrawer() : openDrawer(); }
 function openDrawer() {
   drawerOpen = true;
   closeSettings(false);
+  closeCompletion();
   elements.drawer.hidden = false;
   elements.interaction.hidden = true;
   updatePetPose();

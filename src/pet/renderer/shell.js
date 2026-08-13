@@ -13,6 +13,10 @@ const elements = {
   statusAgent: document.querySelector("#status-agent"),
   statusCopy: document.querySelector("#status-copy"),
   statusState: document.querySelector("#status-state"),
+  completionPanel: document.querySelector("#completion-panel"),
+  completionAgent: document.querySelector("#completion-agent"),
+  completionHeading: document.querySelector("#completion-heading"),
+  completionExplanation: document.querySelector("#completion-explanation"),
   sessionList: document.querySelector("#session-list"),
   searchInput: document.querySelector("#search-input"),
   searchState: document.querySelector("#search-state"),
@@ -74,6 +78,29 @@ let petPickedUp = false;
 let panelVisible = false;
 let hoveringInteractive = false;
 const dismissedInteractions = new Set();
+let completionOpen = false;
+
+// 完成弹窗：任何 Agent 干完活（task.completed）就弹，跟权限/询问一个壳。
+// 任务接任务时跳跃会被盖，弹窗不会——干完必须看得见（用户 2026-08-12 明确要求）。
+// 两个按钮：回原窗口（收起弹窗去 Agent 那边看）／关闭。
+function showCompletion(summary, agentName) {
+  if (drawerOpen) closeDrawer();
+  if (settingsOpen) closeSettings(false);
+  elements.interaction.hidden = true;
+  elements.completionAgent.textContent = agentName || "Agent";
+  elements.completionHeading.textContent = "任务完成了";
+  elements.completionExplanation.textContent = summary || "Agent 已经把活干完了，去原窗口看结果吧。";
+  elements.completionPanel.hidden = false;
+  completionOpen = true;
+  syncPanelVisibility();
+}
+
+function closeCompletion() {
+  if (!completionOpen) return;
+  completionOpen = false;
+  elements.completionPanel.hidden = true;
+  syncPanelVisibility();
+}
 
 function renderSnapshot(next) {
   snapshot = next;
@@ -93,7 +120,11 @@ function renderSnapshot(next) {
     clearTimeout(celebrationTimer);
     celebrationTimer = null;
   }
-  if (changed && state === "done") celebrateCompletion();
+  if (changed && state === "done") {
+    celebrateCompletion();
+    // 干完必须看得见：弹完成通知窗（跳跃会被下一个任务盖掉，弹窗不会）
+    showCompletion(lead?.summary, labels[lead?.agent] || lead?.agent || "Agent");
+  }
   else if (!celebrationTimer) updatePetPose();
   lastLeadIdentity = identity;
   renderSessions(next.sessions);
@@ -102,7 +133,7 @@ function renderSnapshot(next) {
 }
 
 function syncPanelVisibility() {
-  const visible = drawerOpen || settingsOpen || !elements.interaction.hidden;
+  const visible = drawerOpen || settingsOpen || completionOpen || !elements.interaction.hidden;
   if (panelVisible === visible) return;
   panelVisible = visible;
   window.agentPet.setPanelVisibility(visible);
