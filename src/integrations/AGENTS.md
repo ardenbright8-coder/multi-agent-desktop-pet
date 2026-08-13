@@ -29,4 +29,4 @@ ensureGrokHooks()
 - 接法总纲在项目根 `AGENT_INTEGRATION.md`（新 Agent 怎么判断、可上报哪些事件、字段怎么填），改协议前先读那份。
 - 装完要用 `npm run integration:smoke` 验四条线，别只看有没有报错。
 
-👨‍💻 **这一节里还有你踩过、但我没记全的坑 —— 补在这儿。**
+- 2026-08-13：Grok 这台机会跑 `~\.claude\settings.json` 里的钩子（名单显示 `global/settings`）。那条桌宠 PreToolUse 必须写 `timeout: 180`，默认 5 秒会被掐，钩子一崩就退出码 1，终端自己弹出英文三选项，幼苗收不到。崩了必须写 `{"decision":"allow"}` 再退出 0，别让终端接手。

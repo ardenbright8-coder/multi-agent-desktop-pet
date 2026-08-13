@@ -36,7 +36,11 @@ export class InteractionBroker {
       return Promise.resolve({ ok: false, status: "unavailable", message: "这条待处理事项已经变化，请回会话列表重新打开。" });
     }
 
-    log.记(`用户在桌宠上交了答案 agent=${input.agent} 会话=${input.sessionId} 共${input.answers?.length ?? 0}题`, "submit");
+    const picked = (input.answers || []).map((answer) => {
+      const ids = (answer.optionIds || []).join(",") || answer.customText || "空";
+      return `${answer.promptId}=${ids}`;
+    }).join("；");
+    log.记(`用户在桌宠上交了答案 agent=${input.agent} 会话=${input.sessionId} 选了 ${picked}`, "submit");
     this.updateStatus(input, "submitting");
     return new Promise((resolve) => {
       const responseId = randomUUID();

@@ -56,7 +56,7 @@ export function ensureGrokHooks(): { installed: boolean; changed: boolean; targe
   const quoted = `"${bridge.replaceAll("\\", "/")}"`;
   const hooks: Record<string, unknown[]> = {};
   for (const event of events) {
-    hooks[event] = [{ matcher: "", hooks: [{ type: "command", command: `node ${quoted} grok ${event}`, timeout: 8 }] }];
+    hooks[event] = [{ matcher: "", hooks: [{ type: "command", command: `node ${quoted} grok ${event}`, timeout: event === "PreToolUse" ? 180 : 8 }] }];
   }
   const body = `${JSON.stringify({ hooks }, null, 2)}\n`;
   if (existsSync(target)) {

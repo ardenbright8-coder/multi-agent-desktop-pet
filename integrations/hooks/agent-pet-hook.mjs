@@ -1,26 +1,53 @@
 // multi-agent-desktop-pet managed generic hook bridge v1
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
 
 const APP_ID = "multi-agent-desktop-pet";
 const PROTOCOL_VERSION = 1;
+// 对照 Clawd permission.js：回传只有 once / always / reject。
+// 自己填对照 bubble-renderer.js 的 Other 文本框；写 yes/允许/同意 就当放行。
+const ALLOW_WORDS = new Set(["yes", "y", "ok", "okay", "是", "好", "行", "可以", "允许", "同意", "确认", "准", "放行"]);
+const ALWAYS_WORDS = new Set(["always", "一直允许", "以后都允许", "不再问", "都允许"]);
+const REJECT_WORDS = new Set(["no", "n", "deny", "reject", "不", "拒绝", "不准", "不行"]);
 const EVENT_KINDS = new Set([
   "session.started", "context.updated", "state.thinking", "state.working",
   "permission.requested", "permission.resolved", "question.asked", "question.resolved",
   "task.completed", "task.failed", "session.ended", "heartbeat",
 ]);
 
-const [agentArg = "generic", hookArg = "context.updated"] = process.argv.slice(2);
+process.on("uncaughtException", (error) => {
+  failOpen(error);
+});
+process.on("unhandledRejection", (error) => {
+  failOpen(error);
+});
+
+const argv = process.argv.slice(2);
+if (argv[0] === "--self-test") {
+  process.exit(runSelfTest() ? 0 : 1);
+}
+
+const [agentArg = "generic", hookArg = "context.updated"] = argv;
 
 try {
-  const input = await readInput();
-  const event = translate(detectAgent(agentArg, input), hookArg, input);
-  if (event) await publish(event);
-} catch {
-  // Agent reporting must always fail open.
+  if (argv[0] === "--live-gate") {
+    await runLiveGate(argv.slice(1).join(" ").trim());
+  } else {
+    const input = await readInput();
+    const agent = detectAgent(agentArg, input);
+    if (shouldGateThroughPet(hookArg, input)) {
+      writeHookDecision(agent, await gateThroughPet(agent, hookArg, input));
+    } else {
+      const event = translate(agent, hookArg, input);
+      if (event) await publish(event);
+    }
+  }
+} catch (error) {
+  failOpen(error);
 }
 
 function detectAgent(requested, _input) {
@@ -71,7 +98,7 @@ function translate(agent, hook, input) {
   const interaction = interactionFrom(kind, input, toolInput, requestId, tool);
   const emittedAt = Date.now();
 
-  return {
+  const event = {
     version: 1,
     eventId: randomUUID(),
     sourceInstance: `${normalizedAgent}-hook:${process.pid}:${randomBytes(5).toString("hex")}`,
@@ -93,6 +120,26 @@ function translate(agent, hook, input) {
     interaction,
     metadata: safeMetadata(toolInput),
   };
+  if (normalizedHook.includes("notification") && isPlanNotification(input)) {
+    event.title = `${agentLabel(normalizedAgent)} 在等你批计划`;
+    event.summary = "这是终端里的计划批准，幼苗点不了 a。回终端按 a 批准，或按 s 要改。";
+    event.reason = "Grok 自己的计划窗没有回传通道，幼苗只能提醒你。";
+    event.interaction = {
+      mode: "permission",
+      title: "回终端批计划",
+      providerRequestId: event.requestId || randomUUID(),
+      prompts: [{
+        id: "plan",
+        question: "幼苗批不了这扇窗。回终端按 a 批准。",
+        multiple: false,
+        allowCustomInput: false,
+        options: [{ id: "goto", label: "知道了，回终端", value: "goto" }],
+      }],
+      responseCapability: false,
+      responseStatus: "pending",
+    };
+  }
+  return event;
 }
 
 function interactionFrom(kind, input, toolInput, requestId, tool) {
@@ -163,13 +210,24 @@ function kindFromHook(hook, input) {
   if (hook.includes("pretool") || hook.includes("posttool") || hook.includes("tool.") || hook.includes("subagent")) return "state.working";
   if (hook.includes("prompt") || hook.includes("thinking")) return "state.thinking";
   if (hook.includes("notification")) {
-    const notification = String(input.notification_type || input.notificationType || input.type || input.message || "").toLowerCase();
-    if (notification.includes("permission") || notification.includes("input")) return "permission.requested";
+    const notification = notificationText(input);
+    if (notification.includes("plan") || notification.includes("approval") || notification.includes("permission") || notification.includes("input")) {
+      return "permission.requested";
+    }
     if (notification.includes("idle") || notification.includes("complete") || notification.includes("task")) return "task.completed";
     return "context.updated";
   }
   if (hook.includes("heartbeat")) return "heartbeat";
   return "context.updated";
+}
+
+function notificationText(input) {
+  return String(input.notification_type || input.notificationType || input.type || input.message || input.title || "").toLowerCase();
+}
+
+function isPlanNotification(input) {
+  const text = notificationText(input);
+  return text.includes("plan") || text.includes("approval");
 }
 
 function summaryFromHook(agent, hook, tool) {
@@ -247,9 +305,361 @@ function agentLabel(agent) {
   return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes", grok: "Grok", codex: "Codex" })[agent] || agent;
 }
 
-async function publish(event) {
+function hubDataDir() {
+  const root = process.env.AGENT_PET_HUB_HOME
+    || join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
+  return join(root, "data");
+}
+
+function alwaysAllowPath() {
+  return join(hubDataDir(), "always-allow.json");
+}
+
+function readAlwaysMap() {
+  try {
+    const data = JSON.parse(readFileSync(alwaysAllowPath(), "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function isAlwaysRemembered(agent) {
+  return readAlwaysMap()[agent] === true;
+}
+
+function rememberAlways(agent) {
+  const dir = hubDataDir();
+  mkdirSync(dir, { recursive: true });
+  const next = { ...readAlwaysMap(), [agent]: true };
+  writeFileSync(alwaysAllowPath(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+}
+
+function normalizeDecisionText(value) {
+  return String(value || "").trim().toLowerCase().replace(/[!！。.?？,，\s]/g, "");
+}
+
+function decideFromClaim(claim) {
+  const answer = claim?.answers?.[0] || {};
+  const option = String(answer.optionIds?.[0] || "").trim().toLowerCase();
+  const text = normalizeDecisionText(answer.customText);
+  if (option === "once") return "allow";
+  if (option === "always") return "always";
+  if (option === "reject") return "reject";
+  if (ALWAYS_WORDS.has(text)) return "always";
+  if (ALLOW_WORDS.has(text)) return "allow";
+  if (REJECT_WORDS.has(text) || text) return "reject";
+  return "reject";
+}
+
+function permissionPrompt() {
+  return {
+    id: "permission",
+    question: "选一项，或在下面自己填。写 yes / 允许 / 同意 就是放行。",
+    multiple: false,
+    allowCustomInput: true,
+    options: [
+      { id: "once", label: "允许一次", value: "once", description: "只准这一次", recommended: true },
+      { id: "always", label: "以后都允许", value: "always", description: "这家 Agent 先记住，先不问了" },
+      { id: "reject", label: "拒绝", value: "reject", description: "这次不执行" },
+    ],
+  };
+}
+
+function writeHookDecision(agent, decision) {
+  if (decision === "always") rememberAlways(agent);
+  if (decision === "reject") {
+    process.stdout.write(`${JSON.stringify({ decision: "deny", reason: "用户在桌宠上拒绝了这次操作" })}\n`);
+    return;
+  }
+  process.stdout.write(`${JSON.stringify({ decision: "allow" })}\n`);
+}
+
+function failOpen(error) {
+  try {
+    const dir = hubDataDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "hook-error.log"), `${new Date().toISOString()} ${error?.stack || error}\n`, "utf8");
+  } catch { /* 记不住也不能挡 */ }
+  try {
+    process.stdout.write(`${JSON.stringify({ decision: "allow" })}\n`);
+  } catch { /* ignore */ }
+  process.exit(0);
+}
+
+function shouldGateThroughPet(hook, input) {
+  const name = String(hook || "").toLowerCase();
+  if (name.includes("notification")) {
+    const text = notificationText(input);
+    return text.includes("permission") || text.includes("plan") || text.includes("approval") || text.includes("input");
+  }
+  if (name !== "pretooluse" && !name.includes("permissionrequest")) return false;
+  const tool = String(input.tool_name || input.toolName || input.tool || "").toLowerCase();
+  return !tool || /bash|shell|terminal|command|edit|write|search_replace/.test(tool);
+}
+
+function replyGrokTerminal(decision) {
+  // 终端如果还停在英文三选项，替用户按键。对照 Clawd 回传，不抄它的 FFI。
+  const keys = decision === "reject" ? "{ESC}" : decision === "always" ? "1{ENTER}" : "2{ENTER}";
+  const script = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -TypeDefinition @'",
+    "using System; using System.Runtime.InteropServices;",
+    "public static class AgentPetTui {",
+    "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);",
+    "}",
+    "'@",
+    "$p = Get-Process -Name grok,Grok -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1",
+    "if (-not $p) { exit 0 }",
+    "[AgentPetTui]::ShowWindow($p.MainWindowHandle, 9) | Out-Null",
+    "[AgentPetTui]::SetForegroundWindow($p.MainWindowHandle) | Out-Null",
+    "Start-Sleep -Milliseconds 180",
+    `[System.Windows.Forms.SendKeys]::SendWait('${keys}')`,
+  ].join("; ");
+  spawn("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", script], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  }).unref();
+}
+
+function choiceLabel(decision, customText) {
+  if (customText) return `你写了「${customText}」`;
+  if (decision === "always") return "你选了「以后都允许」";
+  if (decision === "allow") return "你选了「允许一次」";
+  if (decision === "reject") return "你选了「拒绝」";
+  return `结果是 ${decision}`;
+}
+
+function persistLastChoice(record) {
+  const dir = hubDataDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "last-choice.json"), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+}
+
+async function announceChoice(agent, decision, extra = {}) {
+  const customText = typeof extra.customText === "string" ? extra.customText.trim() : "";
+  const picked = extra.alwaysRemembered
+    ? `按你上次选的「以后都允许」，这次「${extra.tool || "操作"}」自动放行了`
+    : choiceLabel(decision, extra.usedCustom ? customText : "");
+  const summary = extra.alwaysRemembered
+    ? `${picked}。要取消记住，把 always-allow 里的 grok 删掉，或下次在幼苗上改口。`
+    : decision === "always"
+      ? `${picked}，已经记住。下次会自动放行，并再弹一张回执给你看。`
+      : decision === "allow"
+        ? `${picked}，只这一次。`
+        : `${picked}，这次没做。`;
+  persistLastChoice({
+    at: new Date().toISOString(),
+    agent,
+    decision,
+    picked,
+    customText: customText || undefined,
+    tool: extra.tool,
+    alwaysRemembered: extra.alwaysRemembered === true,
+  });
+  try {
+    await publish({
+      version: 1,
+      eventId: randomUUID(),
+      sourceInstance: `${agent}-hook:${process.pid}:choice`,
+      sequence: 1,
+      emittedAt: Date.now(),
+      agent,
+      sessionId: `choice-${randomUUID()}`,
+      kind: "task.completed",
+      project: extra.project || agent,
+      title: picked,
+      summary,
+      reason: picked,
+      tool: extra.tool,
+      originPid: Number(process.ppid) > 0 ? Number(process.ppid) : process.pid,
+    });
+  } catch { /* 回执弹不出来也不能挡决定 */ }
+}
+
+async function gateThroughPet(agent, hook, input) {
+  const tool = firstString(input.tool_name, input.toolName, input.tool) || "命令";
+  if (isAlwaysRemembered(agent)) {
+    await announceChoice(agent, "always", { alwaysRemembered: true, tool });
+    return "always";
+  }
+  const target = targetFrom(objectValue(input.tool_input, input.toolInput, input.input), input) || "未提供目标";
+  const requestId = firstString(input.request_id, input.requestId, input.tool_use_id, input.toolUseId, randomUUID());
+  const sessionId = firstString(input.session_id, input.sessionId, process.env.GROK_SESSION_ID, `${agent}-default`);
+  const event = {
+    version: 1,
+    eventId: randomUUID(),
+    sourceInstance: `${agent}-hook:${process.pid}:${randomBytes(5).toString("hex")}`,
+    sequence: 1,
+    emittedAt: Date.now(),
+    agent,
+    sessionId: clean(sessionId, 200) || `${agent}-default`,
+    kind: "permission.requested",
+    project: basename(firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()) || agent),
+    cwd: firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()),
+    title: `${agentLabel(agent)} 需要你点一下`,
+    summary: `是否允许使用 ${tool}？`,
+    reason: `点允许或写下 yes 才会真的执行；点拒绝就不做。`,
+    tool,
+    target,
+    requestId,
+    originPid: Number(process.ppid) > 0 ? Number(process.ppid) : process.pid,
+    interaction: {
+      mode: "permission",
+      title: `允许 ${agentLabel(agent)} 使用 ${tool} 吗？`,
+      providerRequestId: requestId,
+      prompts: [permissionPrompt()],
+      action: tool,
+      resources: [target],
+      impact: "允许就会真的做这件事，拒绝就跳过。",
+      rollback: "拒绝则什么都不改。",
+      unknowns: "无",
+      responseCapability: true,
+      responseStatus: "pending",
+    },
+  };
+  await publish(event);
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    let claim;
+    try {
+      claim = await sendRequest("interaction.response.claim", {
+        eventId: event.eventId,
+        agent: event.agent,
+        sessionId: event.sessionId,
+        providerRequestId: requestId,
+        sourceInstance: event.sourceInstance,
+      });
+    } catch {
+      await delay(400);
+      continue;
+    }
+    if (!claim) {
+      await delay(400);
+      continue;
+    }
+    const decision = decideFromClaim(claim);
+    try {
+      await sendRequest("interaction.response.complete", {
+        responseId: claim.responseId,
+        claimToken: claim.claimToken,
+        success: true,
+      });
+    } catch { /* 交回结果以桌宠点的为准 */ }
+    await announceChoice(agent, decision, {
+      customText: claim.answers?.[0]?.customText,
+      usedCustom: !(claim.answers?.[0]?.optionIds?.[0]),
+      tool,
+    });
+    if (String(hook || "").toLowerCase().includes("notification")) replyGrokTerminal(decision);
+    return decision;
+  }
+  return "allow";
+}
+
+async function runLiveGate(reason) {
+  const why = reason || "证明幼苗上点了或写了 yes 就算数";
+  const decision = await gateThroughPet("grok", "pretooluse", {
+    tool_name: "run_terminal_command",
+    tool_input: { command: "notepad 桌宠已确认.txt" },
+    session_id: process.env.GROK_SESSION_ID || "live-gate",
+    cwd: process.cwd(),
+    reason: why,
+  });
+  const dir = hubDataDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "live-gate-result.json"), `${JSON.stringify({
+    decision,
+    at: new Date().toISOString(),
+    reason: why,
+  }, null, 2)}\n`, "utf8");
+  if (decision === "always") rememberAlways("grok");
+  if (decision === "reject") {
+    process.stdout.write("REJECT\n");
+    return;
+  }
+  const txt = join(process.env.TEMP || dir, "桌宠已确认-可以继续.txt");
+  writeFileSync(txt, `幼苗上已经放行（${decision}）。这次不是摆设。\n${why}\n`, "utf8");
+  spawn("notepad.exe", [txt], { detached: true, stdio: "ignore" }).unref();
+  process.stdout.write("ALLOW\n");
+}
+
+function runSelfTest() {
+  const cases = [
+    [{ answers: [{ optionIds: ["once"] }] }, "allow"],
+    [{ answers: [{ optionIds: ["always"] }] }, "always"],
+    [{ answers: [{ optionIds: ["reject"] }] }, "reject"],
+    [{ answers: [{ optionIds: [], customText: "yes" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "YES!" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "允许" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "同意" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "always" }] }, "always"],
+    [{ answers: [{ optionIds: [], customText: "no" }] }, "reject"],
+    [{ answers: [{ optionIds: [], customText: "随便写点" }] }, "reject"],
+    [{ answers: [{ optionIds: [], customText: "" }] }, "reject"],
+  ];
+  let ok = true;
+  for (const [claim, expected] of cases) {
+    const got = decideFromClaim(claim);
+    if (got !== expected) {
+      process.stderr.write(`self-test fail: ${JSON.stringify(claim.answers[0])} => ${got} (want ${expected})\n`);
+      ok = false;
+    }
+  }
+  if (ok) process.stdout.write("SELF-TEST OK\n");
+  return ok;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendRequest(method, params) {
   const discovery = JSON.parse(readFileSync(discoveryPath(), "utf8"));
-  if (discovery.app !== APP_ID || discovery.version !== PROTOCOL_VERSION || !discovery.endpoint || !discovery.token) return;
+  if (discovery.app !== APP_ID || discovery.version !== PROTOCOL_VERSION || !discovery.endpoint || !discovery.token) {
+    throw new Error("invalid discovery");
+  }
+  const id = randomUUID();
+  const request = { id, version: PROTOCOL_VERSION, token: discovery.token, method, params };
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(discovery.endpoint);
+    let body = "";
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.setEncoding("utf8");
+    socket.setTimeout(1_200);
+    socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.on("timeout", () => fail(new Error("timeout")));
+    socket.on("error", fail);
+    socket.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 65_536) return fail(new Error("response too large"));
+      const newline = body.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const response = JSON.parse(body.slice(0, newline));
+        if (response.id !== id || response.app !== APP_ID || !response.ok) return fail(new Error("bad response"));
+        settled = true;
+        socket.end();
+        resolve(response.result);
+      } catch (error) { fail(error); }
+    });
+  });
+}
+
+async function publishOnce(event) {
+  const discovery = JSON.parse(readFileSync(discoveryPath(), "utf8"));
+  if (discovery.app !== APP_ID || discovery.version !== PROTOCOL_VERSION || !discovery.endpoint || !discovery.token) {
+    throw new Error("invalid discovery");
+  }
   const id = randomUUID();
   const request = { id, version: PROTOCOL_VERSION, token: discovery.token, method: "event.publish", params: event };
   await new Promise((resolve, reject) => {
@@ -281,4 +691,19 @@ async function publish(event) {
       } catch (error) { fail(error); }
     });
   });
+}
+
+async function publish(event) {
+  const deadline = Date.now() + 10_000;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      await publishOnce(event);
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+  throw lastError || new Error("publish failed");
 }

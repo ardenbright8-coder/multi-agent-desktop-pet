@@ -22,6 +22,19 @@ const AGENT_NEEDLES: Record<string, string[]> = {
   simulator: [],
 };
 
+const REJECT_TITLE = ["多agent桌面宠物", "续枝", "续知"];
+const REJECT_PROCESS = ["multi-agent-desktop-pet", "tabbit", "chrome", "msedge", "firefox", "brave", "opera", "iexplore"];
+const CLI_HOST_PROCESS = ["grok", "windowsterminal", "windows terminal", "wt", "cmd", "powershell", "pwsh", "conhost"];
+
+export function isRejectedFocusWindow(input: { title: string; processName: string }): boolean {
+  const title = String(input.title || "").toLowerCase();
+  const proc = String(input.processName || "").toLowerCase().replace(/\.exe$/i, "");
+  if (!title) return true;
+  if (REJECT_TITLE.some((item) => title.includes(item))) return true;
+  if (REJECT_PROCESS.some((item) => proc.includes(item))) return true;
+  return false;
+}
+
 export function scoreAgentWindow(input: {
   title: string;
   processName: string;
@@ -30,7 +43,14 @@ export function scoreAgentWindow(input: {
 }): number {
   const title = String(input.title || "").toLowerCase();
   const proc = String(input.processName || "").toLowerCase().replace(/\.exe$/i, "");
-  if (!title || title.includes("多agent桌面宠物") || proc.includes("multi-agent-desktop-pet")) return -1;
+  if (isRejectedFocusWindow({ title, processName: proc })) return -1;
+
+  // Grok 只回命令行：认 grok.exe。标题里有 Grok 的续枝面板、浏览器页都不是。
+  if (input.agent === "grok") {
+    if (proc === "grok") return 40;
+    if (CLI_HOST_PROCESS.some((item) => proc.includes(item.replace(/\s+/g, ""))) && /grok/.test(title)) return 12;
+    return 0;
+  }
 
   let score = 0;
   const needles = [...(AGENT_NEEDLES[input.agent || ""] || [])];
@@ -83,13 +103,26 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "  [void][AgentPetFocus]::SetForegroundWindow($hwnd)",
     "  Write-Output ('FOCUSED ' + $label)",
     "}",
+    "function Rejected-Window([string]$title, [string]$proc) {",
+    "  $t = $title.ToLowerInvariant(); $p = $proc.ToLowerInvariant()",
+    "  if (-not $t) { return $true }",
+    "  foreach ($x in @('多agent桌面宠物','续枝','续知')) { if ($t.Contains($x)) { return $true } }",
+    "  foreach ($x in @('multi-agent-desktop-pet','tabbit','chrome','msedge','firefox','brave','opera','iexplore')) { if ($p.Contains($x)) { return $true } }",
+    "  return $false",
+    "}",
+    "if ($agent -eq 'grok') {",
+    "  $cli = Get-Process -Name grok -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.MainWindowTitle -and -not (Rejected-Window $_.MainWindowTitle $_.ProcessName) } | Select-Object -First 1",
+    "  if ($cli) { Activate-Handle $cli.MainWindowHandle ('grok pid=' + $cli.Id + ' | ' + $cli.MainWindowTitle); return }",
+    "}",
     "if ($originPid -gt 0) {",
     "  $walk = $originPid",
     "  for ($i = 0; $i -lt 8 -and $walk -gt 0; $i++) {",
     "    $proc = Get-Process -Id $walk -ErrorAction SilentlyContinue",
-    "    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero -and $proc.MainWindowTitle -and $proc.MainWindowTitle -notmatch '多Agent桌面宠物') {",
-    "      Activate-Handle $proc.MainWindowHandle ($proc.ProcessName + ' pid=' + $walk + ' | ' + $proc.MainWindowTitle)",
-    "      return",
+    "    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero -and $proc.MainWindowTitle -and -not (Rejected-Window $proc.MainWindowTitle $proc.ProcessName)) {",
+    "      if ($agent -ne 'grok' -or $proc.ProcessName -eq 'grok') {",
+    "        Activate-Handle $proc.MainWindowHandle ($proc.ProcessName + ' pid=' + $walk + ' | ' + $proc.MainWindowTitle)",
+    "        return",
+    "      }",
     "    }",
     "    $parent = (Get-CimInstance Win32_Process -Filter (\"ProcessId=$walk\") -ErrorAction SilentlyContinue).ParentProcessId",
     "    if (-not $parent -or $parent -eq $walk) { break }",
@@ -100,13 +133,18 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.MainWindowTitle } | ForEach-Object {",
     "  $title = $_.MainWindowTitle.ToLowerInvariant()",
     "  $proc = $_.ProcessName.ToLowerInvariant()",
-    "  if ($title.Contains('多agent桌面宠物') -or $proc.Contains('multi-agent-desktop-pet')) { return }",
+    "  if (Rejected-Window $_.MainWindowTitle $_.ProcessName) { return }",
     "  $score = 0",
-    "  foreach ($needle in $needles) {",
-    "    $n = [string]$needle; if (-not $n) { continue }",
-    "    $nl = $n.ToLowerInvariant()",
-    "    if ($title.Contains($nl)) { $score += 12 }",
-    "    if ($proc.Contains(($nl -replace '\\s',''))) { $score += 14 }",
+    "  if ($agent -eq 'grok') {",
+    "    if ($proc -eq 'grok') { $score = 40 }",
+    "    elseif ((@('windowsterminal','wt','cmd','powershell','pwsh','conhost') -contains $proc) -and $title.Contains('grok')) { $score = 12 }",
+    "  } else {",
+    "    foreach ($needle in $needles) {",
+    "      $n = [string]$needle; if (-not $n) { continue }",
+    "      $nl = $n.ToLowerInvariant()",
+    "      if ($title.Contains($nl)) { $score += 12 }",
+    "      if ($proc.Contains(($nl -replace '\\s',''))) { $score += 14 }",
+    "    }",
     "  }",
     "  if ($score -gt $bestScore) { $bestScore = $score; $best = $_ }",
     "}",

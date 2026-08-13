@@ -18,6 +18,7 @@ const events = [
   "Stop",
   "StopFailure",
   "SessionEnd",
+  "Notification",
 ];
 
 installBridge();
@@ -54,10 +55,16 @@ function installHooks() {
           hook.command = command;
           changed = true;
         }
+        const timeout = event === "PreToolUse" || event === "PermissionRequest" || event === "Notification" ? 180 : 8;
+        if (hook.timeout !== timeout) {
+          hook.timeout = timeout;
+          changed = true;
+        }
       }
     }
     if (alreadyInstalled) continue;
-    settings.hooks[event].push({ matcher: "", hooks: [{ type: "command", command }] });
+    const timeout = event === "PreToolUse" || event === "PermissionRequest" || event === "Notification" ? 180 : 8;
+    settings.hooks[event].push({ matcher: "", hooks: [{ type: "command", command, timeout }] });
     changed = true;
   }
 

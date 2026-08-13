@@ -85,10 +85,10 @@ async function submitInteraction() {
   for (const prompt of pending.prompts) {
     const fieldset = elements.interactionPrompts.querySelector(`[data-prompt-id="${cssEscape(prompt.id)}"]`);
     const selected = [...fieldset.querySelectorAll("input:checked")].map((input) => input.value);
-    const customSelected = selected.includes("__custom__");
-    const customText = customSelected ? fieldset.querySelector("textarea")?.value.trim() : "";
+    const customText = fieldset.querySelector("textarea")?.value.trim() || "";
     const optionIds = selected.filter((value) => value !== "__custom__");
-    if ((!optionIds.length && !customText) || (customSelected && !customText)) {
+    // 写了字就算自己填，不必先点「自己输入」那个圈。对照 Clawd Other 文本框：有字就能提交。
+    if (!optionIds.length && !customText) {
       showInteractionError("请先为每个问题选择一项，或写下自己的回答。");
       // 把没选的那题滚到眼前——面板矮的时候选项可能在视野外，
       // 不滚过去用户只会觉得「点了没反应」（2026-08-12 实机踩到）。

@@ -29,4 +29,5 @@ InteractionBroker                  register  claim  complete  cleanup
 - **答案交回是一次性的**：`claim` 拿到 token 才算领走，重复交回要挡住。测试在 `testkit\tests\interaction-broker.test.ts`。
 - 四家里只有 Claude Code 和 Hermes 有真正的提问通道，OpenCode／Pi 的最终点击回传还没在真实会话里验收过（项目门牌里记着）。
 
-👨‍💻 **这一节里还有你踩过、但我没记全的坑 —— 补在这儿。**
+- 2026-08-13：Grok 自己的终端权限窗和幼苗是两套。终端点确定幼苗收不到；幼苗点了终端也不走。要对上，得让 Grok 别自己问（`permission_mode = always-approve`），由钩子等幼苗回执。钩子对照 Clawd `permission.js` 的 once/always/reject，自己填对照 `bubble-renderer.js` 的 Other 文本框；写 yes/允许/同意 就是放行。
+- 提交时文本框有字就算自己填，不必先点「自己输入」那个圈。旧逻辑只在勾了圈才读文本，人写了 yes 点确认会当成没选。

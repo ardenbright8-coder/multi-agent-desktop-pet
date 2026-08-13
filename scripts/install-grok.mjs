@@ -47,7 +47,7 @@ function writeHookFile() {
       hooks: [{
         type: "command",
         command: `node ${quoted} grok ${event}`,
-        timeout: event === "Stop" ? 8 : 8,
+        timeout: event === "PreToolUse" ? 180 : 8,
       }],
     }];
   }

@@ -180,6 +180,26 @@ test("session priority follows needs-input, blocked, ready, running", () => {
   assert.equal(snapshot.topState, "waiting");
 });
 
+test("startup drops restored pending so confirm is not stuck on a dead waiter", () => {
+  const store = new SessionStore();
+  const base = Date.now();
+  store.apply({
+    ...event(1, base, "permission.requested"),
+    requestId: "old-permission",
+    interaction: {
+      mode: "permission",
+      providerRequestId: "old-permission",
+      prompts: [{ id: "permission", question: "允许吗？", options: [{ id: "once", label: "允许一次" }], multiple: false, allowCustomInput: false }],
+      responseCapability: true,
+      responseStatus: "pending",
+    },
+  });
+  assert.equal(store.snapshot(1).sessions[0].pendingInteraction?.providerRequestId, "old-permission");
+  assert.equal(store.dropRestoredPending(), 1);
+  assert.equal(store.snapshot(1).sessions[0].pendingInteraction, undefined);
+  assert.equal(store.snapshot(1).sessions[0].state, "idle");
+});
+
 function event(sequence: number, emittedAt: number, kind: EventKind): AgentEvent {
   return {
     version: 1,

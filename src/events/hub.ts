@@ -48,7 +48,7 @@ export class AgentHub extends EventEmitter {
         this.sessions.updateInteractionStatus(input, status, error);
         this.emit("snapshot", this.snapshot());
       },
-      8_000,
+      30_000,
       (input) => {
         // 答案超时没人接：把僵尸待处理事项清掉，面板收起，别再让人点一个永远没反应的旧按钮
         if (this.sessions.expireInteraction(input)) this.emit("snapshot", this.snapshot());
@@ -62,6 +62,8 @@ export class AgentHub extends EventEmitter {
       this.integrationSeenAt.set(event.agent, Math.max(this.integrationSeenAt.get(event.agent) || 0, event.emittedAt));
     }
     this.sessions.cleanup();
+    const dropped = this.sessions.dropRestoredPending();
+    if (dropped) log.记(`启动时清掉 ${dropped} 个没人等的旧权限窗`, "hydrate");
   }
 
   updateServerInfo(info: Partial<HubServerInfo>): void {

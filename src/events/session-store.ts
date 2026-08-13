@@ -203,6 +203,21 @@ export class SessionStore {
     return true;
   }
 
+  /** 进程刚起来时，日记会把旧权限窗重放出来，但钩子已经不在等了。
+   *  这种窗一点确认就卡在「正在交回」。启动时一律清掉。 */
+  dropRestoredPending(): number {
+    let dropped = 0;
+    for (const session of this.sessions.values()) {
+      if (!session.pendingInteraction) continue;
+      session.pendingInteraction = undefined;
+      session.pendingSourceInstance = undefined;
+      if (session.state === "waiting") session.state = "idle";
+      session.updatedAt = Date.now();
+      dropped += 1;
+    }
+    return dropped;
+  }
+
   private capSessions(): void {
     if (this.sessions.size <= 50) return;
     const oldest = [...this.sessions.values()].sort((left, right) => left.lastSeenAt - right.lastSeenAt)[0];
