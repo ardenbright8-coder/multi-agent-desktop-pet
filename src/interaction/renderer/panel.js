@@ -9,6 +9,7 @@ function renderInteraction(session) {
     syncPanelVisibility();
     return;
   }
+  const samePending = pending.eventId === activeInteractionEventId;
   activeInteractionEventId = pending.eventId;
   openPanel("interaction");
   elements.interaction.hidden = false;
@@ -18,7 +19,12 @@ function renderInteraction(session) {
   type.className = `type-badge ${pending.mode}`;
   document.querySelector("#interaction-heading").textContent = pending.title;
   document.querySelector("#interaction-explanation").textContent = pending.explanation;
-  elements.interactionPrompts.innerHTML = pending.prompts.map(renderPrompt).join("");
+  // 同一个弹窗（eventId 没变）时不重建选项/输入区——每次快照都重建的话，
+  // 用户在“自己输入”里打的字会被清掉（2026-08-13 实机：输 1234 过一会就没了，
+  // 其实是别的窗口状态事件一进来就把整个面板重画了）。
+  if (!samePending) {
+    elements.interactionPrompts.innerHTML = pending.prompts.map(renderPrompt).join("");
+  }
   const fallback = document.querySelector("#interaction-fallback");
   fallback.hidden = pending.responseCapability;
   // 不支持回传时按钮写着「回原窗口处理」，那它就得点得动——点了把面板收起来，人回终端去办。
@@ -58,8 +64,7 @@ function dismissInteraction() {
   if (interactionSubmitting) return;
   if (activeInteractionEventId) dismissedInteractions.add(activeInteractionEventId);
   activeInteractionEventId = null;
-  elements.interaction.hidden = true;
-  syncPanelVisibility();
+  advanceToNextPending();
 }
 
 function openInteraction(session) {
@@ -68,6 +73,14 @@ function openInteraction(session) {
   dismissedInteractions.delete(eventId);
   activeInteractionEventId = eventId;
   renderInteraction(session);
+}
+
+/** 处理完/关掉当前待处理项后，自动把下一个未处理、没被关掉的弹出来（2026-08-13 排队逐个处理）。
+ *  以前收掉当前面板就等下一次快照，没新事件就一直不弹下一个——多个窗口同时等你时，
+ *  你只看到第一个，其余像“没弹窗”。现在处理完一个立刻找下一个，像批文件一样逐个过。 */
+function advanceToNextPending() {
+  const next = snapshot.sessions.find((session) => session.pendingInteraction && !dismissedInteractions.has(session.pendingInteraction.eventId));
+  renderInteraction(next);
 }
 
 async function submitInteraction() {
@@ -117,16 +130,14 @@ async function submitInteraction() {
   if (result.ok) {
     dismissedInteractions.add(pending.eventId);
     activeInteractionEventId = null;
-    elements.interaction.hidden = true;
-    syncPanelVisibility();
+    advanceToNextPending();
     return;
   }
   // 交不回去就别卡在面板上让人再点——收起并切回原窗口。
   // 以前会留下「请回原窗口处理」这种看不懂的红字，人以为按钮坏了（2026-08-13）。
   dismissedInteractions.add(pending.eventId);
   activeInteractionEventId = null;
-  elements.interaction.hidden = true;
-  syncPanelVisibility();
+  advanceToNextPending();
   window.agentPet.focusAgent({ agent: session.agent, project: session.project, originPid: session.originPid });
 }
 
