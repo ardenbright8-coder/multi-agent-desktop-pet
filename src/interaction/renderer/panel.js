@@ -121,9 +121,13 @@ async function submitInteraction() {
     syncPanelVisibility();
     return;
   }
-  elements.interactionConfirm.disabled = false;
-  elements.interactionConfirm.textContent = "确认";
-  showInteractionError(result.message);
+  // 交不回去就别卡在面板上让人再点——收起并切回原窗口。
+  // 以前会留下「请回原窗口处理」这种看不懂的红字，人以为按钮坏了（2026-08-13）。
+  dismissedInteractions.add(pending.eventId);
+  activeInteractionEventId = null;
+  elements.interaction.hidden = true;
+  syncPanelVisibility();
+  window.agentPet.focusAgent({ agent: session.agent, project: session.project });
 }
 
 function showInteractionError(message) {

@@ -15,6 +15,7 @@
 ```
 ensureOpenCodeIntegration()
 ensureGenericHookBridge()
+ensureGrokHooks()
 ```
 
 ## 依赖谁

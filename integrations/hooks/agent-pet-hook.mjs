@@ -17,10 +17,16 @@ const [agentArg = "generic", hookArg = "context.updated"] = process.argv.slice(2
 
 try {
   const input = await readInput();
-  const event = translate(agentArg, hookArg, input);
+  const event = translate(detectAgent(agentArg, input), hookArg, input);
   if (event) await publish(event);
 } catch {
   // Agent reporting must always fail open.
+}
+
+function detectAgent(requested, _input) {
+  // Grok 会顺手跑 Claude 的 hook 文件；GROK_* 环境变量是 Grok 注入的，用来把来源标对。
+  if (process.env.GROK_SESSION_ID || process.env.GROK_HOOK_EVENT || process.env.GROK_WORKSPACE_ROOT) return "grok";
+  return requested;
 }
 
 function discoveryPath() {
@@ -48,8 +54,8 @@ function translate(agent, hook, input) {
   const kind = directKind || kindFromHook(normalizedHook, input);
   if (!kind) return null;
 
-  const cwd = firstString(input.cwd, input.working_directory, input.project_dir, process.env.CLAUDE_PROJECT_DIR, process.cwd());
-  const sessionId = firstString(input.session_id, input.sessionId, input.conversation_id, input.task_id, `${normalizedAgent}-default`);
+  const cwd = firstString(input.cwd, input.workspaceRoot, input.working_directory, input.project_dir, process.env.GROK_WORKSPACE_ROOT, process.env.CLAUDE_PROJECT_DIR, process.cwd());
+  const sessionId = firstString(input.session_id, input.sessionId, input.conversation_id, input.task_id, process.env.GROK_SESSION_ID, `${normalizedAgent}-default`);
   const tool = firstString(input.tool_name, input.toolName, input.tool, input.name);
   const toolInput = objectValue(input.tool_input, input.toolInput, input.input, input.arguments);
   const target = targetFrom(toolInput, input);
@@ -148,12 +154,18 @@ function kindFromHook(hook, input) {
   if (hook.includes("sessionend") || hook.includes("session.end") || hook === "end") return "session.ended";
   if (hook.includes("sessionstart") || hook.includes("session.start") || hook === "start") return "session.started";
   if (hook.includes("stopfailure") || hook.includes("toolusefailure") || hook.includes("tool.error") || hook.includes("failed")) return "task.failed";
-  if (hook === "stop" || hook.includes("task.completed") || hook.includes("complete")) return "task.completed";
+  if (hook === "stop" || hook.includes("task.completed") || hook.includes("complete")) {
+    const reason = String(input.reason || input.stopReason || "").toLowerCase();
+    if (reason && reason !== "end_turn") return "session.ended";
+    return "task.completed";
+  }
   if (hook.includes("pretool") || hook.includes("posttool") || hook.includes("tool.") || hook.includes("subagent")) return "state.working";
   if (hook.includes("prompt") || hook.includes("thinking")) return "state.thinking";
   if (hook.includes("notification")) {
-    const notification = String(input.notification_type || input.type || input.message || "").toLowerCase();
-    return notification.includes("permission") || notification.includes("input") ? "permission.requested" : "context.updated";
+    const notification = String(input.notification_type || input.notificationType || input.type || input.message || "").toLowerCase();
+    if (notification.includes("permission") || notification.includes("input")) return "permission.requested";
+    if (notification.includes("idle") || notification.includes("complete") || notification.includes("task")) return "task.completed";
+    return "context.updated";
   }
   if (hook.includes("heartbeat")) return "heartbeat";
   return "context.updated";
@@ -231,7 +243,7 @@ function clean(value, max) {
 }
 
 function agentLabel(agent) {
-  return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes" })[agent] || agent;
+  return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes", grok: "Grok" })[agent] || agent;
 }
 
 async function publish(event) {

@@ -26,6 +26,34 @@ export function ensureOpenCodeIntegration(): { installed: boolean; changed: bool
   return { installed: true, changed: true, target };
 }
 
+export function ensureGrokHooks(): { installed: boolean; changed: boolean; target: string; reason?: string } {
+  const source = join(__dirname, "..", "integrations", "hooks", "agent-pet-hook.mjs");
+  const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+  const bridge = join(appData, "AgentPetHub", "integrations", "agent-pet-hook.mjs");
+  const target = join(homedir(), ".grok", "hooks", "multi-agent-desktop-pet.json");
+  const events = [
+    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+    "Notification", "Stop", "StopFailure", "SessionEnd",
+  ];
+  const quoted = `"${bridge.replaceAll("\\", "/")}"`;
+  const hooks: Record<string, unknown[]> = {};
+  for (const event of events) {
+    hooks[event] = [{ matcher: "", hooks: [{ type: "command", command: `node ${quoted} grok ${event}`, timeout: 8 }] }];
+  }
+  const body = `${JSON.stringify({ hooks }, null, 2)}\n`;
+  if (existsSync(target)) {
+    const current = readFileSync(target, "utf8");
+    if (!current.includes("agent-pet-hook.mjs")) return { installed: false, changed: false, target, reason: "unmanaged-name-conflict" };
+    if (current === body) return { installed: true, changed: false, target };
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.tmp`;
+  writeFileSync(temp, body, "utf8");
+  renameSync(temp, target);
+  if (!existsSync(source)) return { installed: true, changed: true, target, reason: "bridge-source-missing" };
+  return { installed: true, changed: true, target };
+}
+
 export function ensureGenericHookBridge(): { installed: boolean; changed: boolean; target: string; reason?: string } {
   const source = join(__dirname, "..", "integrations", "hooks", "agent-pet-hook.mjs");
   const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");

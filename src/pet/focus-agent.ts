@@ -16,6 +16,7 @@ const AGENT_NEEDLES: Record<string, string[]> = {
   "claude-code": ["claude", "claude code"],
   hermes: ["hermes"],
   pi: ["pi coding", "pi-ai", "pi agent"],
+  grok: ["grok", "grok build"],
   simulator: [],
 };
 
@@ -66,6 +67,7 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "elseif ($agent -eq 'claude-code') { $needles += 'claude','claude code' }",
     "elseif ($agent -eq 'hermes') { $needles += 'hermes' }",
     "elseif ($agent -eq 'pi') { $needles += 'pi coding','pi-ai','pi agent' }",
+    "elseif ($agent -eq 'grok') { $needles += 'grok','grok build' }",
     "elseif ($agent) { $needles += $agent }",
     "if ($project -and $project.Length -ge 2) { $needles += $project }",
     "$best = $null; $bestScore = 0",

@@ -54,7 +54,7 @@ test("broker timeout notifies expiry so the zombie pending interaction gets clea
   const submission = broker.submit({ ...response, eventId: "event-3" });
   const result = await submission;
   assert.equal(result.ok, false);
-  assert.match(result.message, /限定时间内/);
+  assert.match(result.message, /没交回去/);
   assert.deepEqual(expired, ["event-3"], "超时后必须通知会话层清掉待处理事项");
   assert.deepEqual(statuses, ["submitting", "failed"]);
   assert.equal(broker.claim({ ...response, eventId: "event-3" }), null);

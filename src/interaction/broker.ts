@@ -45,7 +45,7 @@ export class InteractionBroker {
         const queued = this.queued.get(input.eventId);
         if (!queued || queued.responseId !== responseId) return;
         this.queued.delete(input.eventId);
-        const message = "Agent 没有在限定时间内接收回答，请回原窗口处理或稍后重试。";
+        const message = "没交回去。去原窗口再确认一次就行。";
         log.出事(`答案等了 ${this.timeoutMs}ms 没人接，退回原窗口 agent=${input.agent} 会话=${input.sessionId}`, undefined, "submit");
         this.updateStatus(input, "failed", message);
         this.onExpired?.(queued);

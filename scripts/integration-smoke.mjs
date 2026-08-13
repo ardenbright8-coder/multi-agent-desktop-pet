@@ -42,6 +42,7 @@ try {
   });
   await runBridge("pi", "state.working", { session_id: "pi-isolated", cwd: process.cwd(), tool_name: "read", summary: "Pi 正在读文件" });
   await runBridge("hermes", "state.working", { session_id: "hermes-isolated", cwd: process.cwd(), tool_name: "read", summary: "Hermes 正在读文件" });
+  await runBridge("grok", "Stop", { sessionId: "grok-isolated", cwd: process.cwd(), reason: "end_turn", summary: "Grok 已经完成这一轮" });
 
   const pluginUrl = `${pathToFileURL(resolve("integrations", "opencode", "multi-agent-desktop-pet.mjs")).href}?test=${Date.now()}`;
   const { default: createOpenCodePlugin } = await import(pluginUrl);
@@ -54,7 +55,7 @@ try {
   const hello = await client.request("hello");
   assert.equal(hello.healthy, true);
   const agents = new Set(hub.snapshot().sessions.map((session) => session.agent));
-  for (const agent of ["opencode", "claude-code", "pi", "hermes"]) assert.equal(agents.has(agent), true, `${agent} did not reach the hub`);
+  for (const agent of ["opencode", "claude-code", "pi", "hermes", "grok"]) assert.equal(agents.has(agent), true, `${agent} did not reach the hub`);
   const permission = hub.snapshot().sessions.find((session) => session.agent === "claude-code");
   assert.equal(permission?.state, "waiting");
   assert.equal(permission?.pendingInteraction?.providerRequestId, "claude-permission");

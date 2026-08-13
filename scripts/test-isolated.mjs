@@ -27,6 +27,7 @@ for (const file of [
   "scripts/install-claude-code.mjs",
   "scripts/install-pi.mjs",
   "scripts/install-hermes.mjs",
+  "scripts/install-grok.mjs",
   "scripts/run-electron-isolated.mjs",
   "scripts/single-instance-smoke.mjs",
   "scripts/integration-smoke.mjs",

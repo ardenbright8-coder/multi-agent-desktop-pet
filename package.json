@@ -1,6 +1,6 @@
 {
   "name": "multi-agent-desktop-pet",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "description": "Windows local desktop pet for unified coding-agent notifications and searchable permission context.",
   "main": "dist/app.js",
@@ -21,6 +21,7 @@
     "install:claude": "node scripts/install-claude-code.mjs",
     "install:pi": "node scripts/install-pi.mjs",
     "install:hermes": "node scripts/install-hermes.mjs",
+    "install:grok": "node scripts/install-grok.mjs",
     "pack": "npm run build && electron-builder --dir",
     "pack:local": "npm run build && node scripts/pack-local.mjs",
     "verify:package": "node scripts/verify-package.mjs",

@@ -31,6 +31,7 @@ const labels = {
   "claude-code": "Claude Code",
   pi: "Pi",
   hermes: "Hermes",
+  grok: "Grok",
   simulator: "模拟 Agent",
 };
 
