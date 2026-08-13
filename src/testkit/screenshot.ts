@@ -55,7 +55,7 @@ export async function runScreenshotTest(hub: AgentHub, host: TestHost): Promise<
   const petRect = await mainWindow.webContents.executeJavaScript(
     "(() => { const r = document.querySelector('#pet').getBoundingClientRect(); return { x: Math.max(0, Math.round(r.x) - 8), y: Math.max(0, Math.round(r.y) - 8), width: Math.round(r.width) + 16, height: Math.round(r.height) + 16 }; })()",
   ) as { x: number; y: number; width: number; height: number };
-  const poses = ["idle", "thinking", "waving", "jumping", "failed", "waiting", "running", "working-focus", "working-rope", "review"];
+  const poses = ["idle", "thinking", "waving", "jumping", "failed", "waiting", "running", "working-focus", "working-rope", "working-typing", "review"];
   for (const pose of poses) {
     await mainWindow.webContents.executeJavaScript(`document.body.dataset.petPose = ${JSON.stringify(pose)}`);
     await delay(pose === "jumping" ? 390 : 210);

@@ -42,7 +42,7 @@ function runAmbientMotion() {
     return;
   }
   if (state === "working") {
-    const workingPoses = motionPreference === "lively" ? ["running", "working-rope", "working-focus"] : ["running", "working-focus"];
+    const workingPoses = motionPreference === "lively" ? ["running", "working-rope", "working-focus", "working-typing"] : ["running", "working-focus", "working-typing"];
     previewPose(workingPoses[Math.floor(Math.random() * workingPoses.length)], 2_300);
     ambientNextAt = Date.now() + (motionPreference === "lively" ? 3_600 : 6_000);
     return;

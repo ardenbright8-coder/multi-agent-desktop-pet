@@ -51,7 +51,7 @@ const stateLabel = {
 const poseByState = {
   idle: "idle",
   thinking: "thinking",
-  working: "running",
+  working: "working-typing",
   waiting: "waiting",
   done: "waving",
   error: "failed",

@@ -156,7 +156,19 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   transform: translateX(-50%);
 }
 body[data-pet-pose="thinking"] .pet::before { content: "…"; opacity: 1; animation: thought-pop 1.25s steps(3, end) infinite; }
-body[data-pet-pose="waiting"] .pet::before { content: "?"; opacity: 1; animation: question-pop 0.9s steps(2, end) infinite; }
+/* 问号 = 疑问状态：Agent 发来询问/权限请求（waiting）时出现，平时不显示。
+   学 GooglePiggy 的 question 动效：黄底大问号，弹跳不止，提醒「有东西等你处理」。 */
+body[data-pet-pose="waiting"] .pet::before {
+  content: "?";
+  opacity: 1;
+  min-width: 36px;
+  padding: 5px 9px 7px;
+  border-color: var(--accent-deep);
+  background: var(--accent);
+  color: var(--forest);
+  font-size: 26px;
+  animation: question-bounce 1.0s steps(4, end) infinite;
+}
 body.pet-picked-up .pet { cursor: grabbing; }
 body.pet-picked-up .pet::after { opacity: 1; }
 body.pet-picked-up .pet-motion { filter: brightness(1.08) drop-shadow(0 0 8px rgba(242,200,75,0.22)); }
@@ -244,6 +256,26 @@ body.pet-picked-up .pet-motion { filter: brightness(1.08) drop-shadow(0 0 8px rg
 .ground-pixels i:nth-child(1) { left: 9px; }
 .ground-pixels i:nth-child(2) { left: 38px; width: 18px; }
 .ground-pixels i:nth-child(3) { right: 6px; }
+
+/* 完成庆祝的星光粒子：跳跃时从幼苗身上迸出彩色像素，学 GooglePiggy 的 success 特效。
+   平时 opacity:0 完全隐身，不占鼠标（父级在穿透区内）。 */
+.sparkles { position: absolute; z-index: 9; left: 0; top: 0; width: 152px; height: 176px; opacity: 0; pointer-events: none; }
+.sparkles i { position: absolute; width: 6px; height: 6px; background: var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,0.35); }
+.sparkles i:nth-child(1) { --dx: -16px; --dy: -34px; left: 24px; top: 26px; }
+.sparkles i:nth-child(2) { --dx: 14px; --dy: -40px; left: 118px; top: 22px; }
+.sparkles i:nth-child(3) { --dx: -6px; --dy: -46px; left: 72px; top: 6px; }
+.sparkles i:nth-child(4) { --dx: 24px; --dy: -22px; left: 130px; top: 58px; }
+.sparkles i:nth-child(5) { --dx: -26px; --dy: -18px; left: 10px; top: 64px; }
+.sparkles i:nth-child(6) { --dx: 8px; --dy: -30px; left: 96px; top: 40px; }
+.sparkles i:nth-child(2n) { background: var(--sprout-light); }
+.sparkles i:nth-child(3n) { background: #fff0b8; }
+body[data-pet-pose="jumping"] .sparkles { opacity: 1; }
+body[data-pet-pose="jumping"] .sparkles i { animation: sparkle-burst 0.72s steps(5, end) 2; }
+.sparkles i:nth-child(2) { animation-delay: 90ms; }
+.sparkles i:nth-child(3) { animation-delay: 180ms; }
+.sparkles i:nth-child(4) { animation-delay: 270ms; }
+.sparkles i:nth-child(5) { animation-delay: 120ms; }
+.sparkles i:nth-child(6) { animation-delay: 210ms; }
 .pet:hover .pet-motion { transform: translateY(-3px); filter: brightness(1.04); }
 .pet:active .pet-motion { transform: translateY(1px) scale(0.98); }
 
@@ -277,6 +309,13 @@ body[data-pet-pose="working-rope"] .arm-right { animation: rope-arm-right 0.72s 
 body[data-pet-pose="working-rope"] .foot-left { transform: translateX(-7px); }
 body[data-pet-pose="working-rope"] .foot-right { transform: translateX(6px); }
 body[data-pet-pose="working-rope"] .work-pixels { opacity: 1; animation: work-pixels 0.72s steps(3, end) infinite; }
+
+/* 敲电脑：双臂快速上下敲（键盘），面前像素飞快闪烁（屏幕输出）。干活的主姿态。 */
+body[data-pet-pose="working-typing"] .pet-motion { animation: typing-bob 0.8s steps(3, end) infinite; }
+body[data-pet-pose="working-typing"] .arm-left { animation: typing-arm-left 0.8s steps(2, end) infinite; }
+body[data-pet-pose="working-typing"] .arm-right { animation: typing-arm-right 0.8s steps(2, end) infinite; }
+body[data-pet-pose="working-typing"] .eye { height: 6px; transform: translateY(7px); }
+body[data-pet-pose="working-typing"] .work-pixels { left: 100px; top: 96px; opacity: 1; animation: work-pixels 0.5s steps(3, end) infinite; }
 
 body[data-pet-pose="waving"] .arm-right { animation: wave 0.65s steps(3, end) infinite; transform-origin: left center; }
 body[data-pet-pose="waving"] .mouth { width: 12px; height: 8px; background: transparent; border-bottom: 4px solid var(--forest); box-shadow: none; }
@@ -511,12 +550,13 @@ body[data-motion="lively"][data-pet-pose="running"] .foot { animation-duration: 
 button:focus-visible, input:focus-visible { outline: 2px solid var(--success); outline-offset: 2px; }
 ::selection { color: var(--forest); background: var(--sprout-light); }
 
-@keyframes sprout-idle { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes sprout-idle { 0%,100% { transform: translateY(0) scale(1, 1); } 25% { transform: translateY(1px) scale(1.02, 0.97); } 50% { transform: translateY(0) scale(1, 1); } 75% { transform: translateY(-1px) scale(0.99, 1.02); } }
 @keyframes leaf-idle-left { 0%,100% { transform: rotate(7deg); } 50% { transform: rotate(13deg) translateY(-2px); } }
 @keyframes leaf-idle-right { 0%,100% { transform: rotate(-7deg); } 50% { transform: rotate(-13deg) translateY(-2px); } }
 @keyframes pixel-blink { 0%,92%,100% { height: 12px; transform: translateY(0); } 94%,97% { height: 3px; transform: translateY(5px); } }
 @keyframes thought-pop { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.05); } }
-@keyframes question-pop { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-5px) rotate(3deg); } }
+/* 疑问状态的问号：弹起来→落回→再小弹，循环不停，比原来的小幅摇摆醒目得多 */
+@keyframes question-bounce { 0%,100% { transform: translateY(0) rotate(0deg) scale(1); } 18% { transform: translateY(-7px) rotate(-10deg) scale(1.18); } 38% { transform: translateY(0) rotate(4deg) scale(1); } 58% { transform: translateY(-4px) rotate(-5deg) scale(1.1); } 78% { transform: translateY(0) rotate(2deg) scale(1); } }
 @keyframes thinking-bob { 0%,100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-2px) rotate(-2deg); } }
 @keyframes thinking-look { 0%,100% { transform: translateX(-3px); } 50% { transform: translateX(3px); } }
 @keyframes work-bob { 0%,100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-4px) rotate(1deg); } }
@@ -530,6 +570,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--success); o
 @keyframes rope-arm-left { 0%,100% { transform: rotate(48deg) translate(6px,2px); } 50% { transform: rotate(22deg) translate(2px,-4px); } }
 @keyframes rope-arm-right { 0%,100% { transform: rotate(-48deg) translate(-6px,2px); } 50% { transform: rotate(-22deg) translate(-2px,-4px); } }
 @keyframes wave { 0%,100% { transform: rotate(-18deg); } 35% { transform: translate(4px,-11px) rotate(-82deg); } 70% { transform: translate(2px,-8px) rotate(-48deg); } }
+@keyframes typing-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes typing-arm-left { 0%,100% { transform: rotate(24deg) translate(4px, 2px); } 50% { transform: rotate(-6deg) translate(0px, 6px); } }
+@keyframes typing-arm-right { 0%,100% { transform: rotate(-24deg) translate(-4px, 2px); } 50% { transform: rotate(6deg) translate(0px, 6px); } }
+@keyframes sparkle-burst { 0% { transform: translate(0, 0) scale(1); opacity: 0; } 18% { opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) scale(0.3); opacity: 0; } }
 @keyframes happy-jump { 0%,100% { transform: translateY(0) scaleY(1); } 20% { transform: translateY(3px) scaleY(0.96); } 45%,62% { transform: translateY(-22px) rotate(-3deg); } 82% { transform: translateY(2px) scaleY(0.96); } }
 @keyframes ground-jump { 0%,100% { transform: scaleX(1); opacity: 1; } 45%,62% { transform: scaleX(0.48); opacity: 0.42; } }
 @keyframes waiting-lean { 0%,100% { transform: rotate(0); } 50% { transform: rotate(4deg) translateY(2px); } }
