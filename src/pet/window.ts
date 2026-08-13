@@ -20,9 +20,11 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 // 幼苗和状态框左右并排，尺寸按**幼苗放到最大（140%）**算，否则放大后会长出窗口，
 // 溢出的那块会把本该穿透的角落也占掉（2026-08-12 实测踩到）。
 //   宽 = 14 + 152×1.4 + 8 + 188 + 8 ≈ 435
-//   高 = 8 + 176×1.4 + 8 ≈ 265
+//   高 = 8 + 176×1.4 + 8 ≈ 265  ← 但 2026-08-13 加了「各Agent状态气泡条」：
+//   气泡排在状态框下面往下延伸（9 个封顶），所以窗口要够长装下整条：
+//   8（顶距）+ 状态框 ~105 + 8（间距）+ 9×26 + 8×5（气泡+间隔）≈ 395，取 410 留余量。
 // 幼苗顶部对齐窗口顶，所以 100% 时它离屏幕上沿只有 8px，能真正顶上去。
-export const PET_WINDOW_SIZE = { width: 435, height: 265 };
+export const PET_WINDOW_SIZE = { width: 435, height: 410 };
 // 高度尽量吃满工作区（这台机 778），面板让出幼苗顶带之后正文才不至于被压扁。
 export const PANEL_WINDOW_SIZE = { width: 440, height: 740 };
 export const WINDOW_SIZE = PET_WINDOW_SIZE;

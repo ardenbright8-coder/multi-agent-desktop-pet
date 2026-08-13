@@ -13,10 +13,12 @@ const elements = {
   statusAgent: document.querySelector("#status-agent"),
   statusCopy: document.querySelector("#status-copy"),
   statusState: document.querySelector("#status-state"),
+  statusNote: document.querySelector("#status-note"),
   completionPanel: document.querySelector("#completion-panel"),
   completionAgent: document.querySelector("#completion-agent"),
   completionHeading: document.querySelector("#completion-heading"),
   completionExplanation: document.querySelector("#completion-explanation"),
+  agentBubbles: document.querySelector("#agent-bubbles"),
   sessionList: document.querySelector("#session-list"),
   searchInput: document.querySelector("#search-input"),
   searchState: document.querySelector("#search-state"),
@@ -157,6 +159,59 @@ function refreshPetPose() {
   updatePetPose();
 }
 
+// ===== 各 Agent 状态气泡（v0.1.22 新增）=====
+// 每个开着的 Agent 终端 = 一个气泡，竖着往下排，最多 9 个；点气泡切回那个终端窗口。
+// 灯色（跟用户 2026-08-13 拍的板一致）：
+//   绿 = 工作中（working / thinking / waiting 都在干活）
+//   黄 = 休息中（idle / done，闲着或刚干完）
+//   红 = 卡顿 / 故障（error 算故障；工作状态但 5 分钟没收到任何动静 → 卡住了，
+//        大概率是卡在某个工具/请求上，该去看看）
+const BUBBLE_LIMIT = 9;
+const BUBBLE_STUCK_MS = 5 * 60 * 1000;
+let bubbleSignature = null;
+
+function bubbleStatus(session, now) {
+  const lastSeen = session.lastSeenAt || session.updatedAt || now;
+  const silent = now - lastSeen > BUBBLE_STUCK_MS;
+  if (session.state === "error") return "stuck";
+  if (session.state === "working" || session.state === "thinking" || session.state === "waiting") {
+    return silent ? "stuck" : "working";
+  }
+  return "resting";
+}
+
+// 每次快照都调，但只在「哪几个会话 + 各自灯色」变了才重画 DOM——
+// 干活时快照来得很快，每次都重建会让气泡闪烁（用户视力不好，不许闪）。
+function renderBubbles(sessions) {
+  const now = Date.now();
+  const bubbles = (sessions || []).slice(0, BUBBLE_LIMIT);
+  const signature = bubbles.map((session) => `${session.key}:${bubbleStatus(session, now)}`).join("|");
+  if (signature !== bubbleSignature) {
+    bubbleSignature = signature;
+    if (!bubbles.length) {
+      elements.agentBubbles.hidden = true;
+    } else {
+      elements.agentBubbles.hidden = false;
+      elements.agentBubbles.innerHTML = bubbles.map((session) => {
+        const status = bubbleStatus(session, now);
+        const agentName = labels[session.agent] || session.agent;
+        const project = session.project && session.project !== "未命名项目" ? session.project : "";
+        const stateText = status === "stuck" ? "卡顿，5分钟没动静" : status === "working" ? "工作中" : "休息中";
+        const tip = `${agentName} · ${stateText}${project ? ` · ${project}` : ""}`;
+        return `<button class="agent-bubble" type="button" data-interactive
+          data-agent="${escapeHtml(session.agent)}" data-project="${escapeHtml(project)}" data-origin-pid="${session.originPid || 0}"
+          aria-label="${escapeHtml(tip)}" title="${escapeHtml(tip)}">
+          <i class="agent-dot ${status}"></i><span class="agent-name">${escapeHtml(agentName)}</span>
+          ${project ? `<small class="agent-project">${escapeHtml(project)}</small>` : ""}
+        </button>`;
+      }).join("");
+    }
+  }
+  // 顶位置跟着状态框走：状态框高度会随文案变，气泡永远排在它下面。
+  const note = elements.statusNote;
+  elements.agentBubbles.style.top = `${note.offsetTop + note.offsetHeight + 8}px`;
+}
+
 function renderSnapshot(next) {
   snapshot = next;
   const lead = next.sessions[0];
@@ -176,6 +231,7 @@ function renderSnapshot(next) {
   noteCompletionTransitions(next.sessions);
   if (!celebrationTimer) updatePetPose();
   renderSessions(next.sessions);
+  renderBubbles(next.sessions);
   if (!interactionSubmitting) renderInteraction(pending);
   if (drawerOpen) renderDiagnostics();
 }

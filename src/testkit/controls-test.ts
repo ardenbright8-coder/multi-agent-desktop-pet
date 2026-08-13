@@ -83,9 +83,11 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await rendererAssert(win, "document.body.dataset.motion === 'lively'", "Lively motion button did not apply");
     await click(win, "#pet-size");
     await press(win, "Home");
-    await rendererAssert(win, "document.querySelector('#pet-size').value === '70' && document.querySelector('#pet-size-value').textContent === '70%'", "Pet size Home key did not reach 70%");
+    // 单次快照断言会误伤键盘事件送达的延迟（实机 flake：End 键偶尔不生效），
+    // 滑杆要响应 Home/End 是意图，改成轮询等它生效。
+    await waitForRenderer(win, "document.querySelector('#pet-size').value === '70' && document.querySelector('#pet-size-value').textContent === '70%'", 2_000);
     await press(win, "End");
-    await rendererAssert(win, "document.querySelector('#pet-size').value === '140' && document.querySelector('#pet-size-value').textContent === '140%'", "Pet size End key did not reach 140%");
+    await waitForRenderer(win, "document.querySelector('#pet-size').value === '140' && document.querySelector('#pet-size-value').textContent === '140%'", 2_000);
     await click(win, "#settings-close");
     await hidden(win, "#settings-panel");
     context.trayActions.openSettings();
@@ -192,10 +194,11 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await waitForRenderer(win, "document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'true'", 2_000);
 
     const area = screen.getPrimaryDisplay().workArea;
-    // 平时窗口必须是幼苗那么小，否则上下没地方挪（用户实机：只能左右平移）
+    // 平时窗口必须留够上下挪的空间（用户实机：只能左右平移）；
+    // v0.1.22 加了气泡条，幼苗窗口长高到 410（状态框下面挂 9 个气泡），断言跟着放宽。
     const idleBounds = win.getBounds();
     assert.ok(
-      idleBounds.height <= 340 && area.height - idleBounds.height >= 200,
+      idleBounds.height <= 440 && area.height - idleBounds.height >= 200,
       `Idle window is too tall to move vertically: ${idleBounds.height} in a ${area.height}-tall work area`,
     );
     dragTick({ x: area.x + 260, y: area.y + 180 });
@@ -242,6 +245,18 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     const beforeTraySimulation = hub.snapshot().eventCount;
     context.trayActions.simulate();
     await waitFor(() => hub.snapshot().eventCount > beforeTraySimulation, 1_500, "Tray test-notification callback did not publish an event");
+    // 托盘「发一条测试通知」固定发 permission.requested（demo-session）——它会变成残留 pending，
+    // 后面的面板测试一关当前窗，advanceToNextPending 就会把它顶出来，面板永远收不回去
+    // （2026-08-13 实机抓到的 flake：panel-band 段点 × 后 hidden 超时）。当场清掉，跟完成弹窗段一个套路。
+    for (const session of hub.snapshot().sessions) {
+      const pending = session.pendingInteraction;
+      if (!pending) continue;
+      hub.publish(makeEvent(pending.mode === "permission" ? "permission.resolved" : "question.resolved", session.sessionId, {
+        requestId: pending.providerRequestId,
+      }));
+    }
+    await delay(120);
+    await hidden(win, "#interaction-panel");
 
     win.close();
     await waitFor(() => !win.isVisible() && !win.isDestroyed(), 1_500, "Window close did not keep the tray process alive");

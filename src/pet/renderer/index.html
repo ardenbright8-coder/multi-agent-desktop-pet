@@ -129,6 +129,11 @@
           <small id="status-state">空闲</small>
         </button>
 
+        <!-- 各 Agent 状态气泡（v0.1.22 新增）：每个开着的 Agent 终端一个气泡，竖排往下延伸，
+             最多 9 个；灯色 绿=工作中 / 黄=休息中 / 红=卡顿（工作状态 5 分钟没动静）。
+             点气泡直接切到那个终端窗口（走 focusAgent）。
+             顶位置由 shell.js 按状态框底边动态算，面板弹出时整条让位（:has 规则）。 -->
+        <div id="agent-bubbles" class="agent-bubbles" aria-label="各Agent状态气泡" hidden></div>
 
         <button id="pet" class="pet" data-interactive type="button" aria-label="按住幼苗拖动，松手放下">
           <span class="pet-motion">

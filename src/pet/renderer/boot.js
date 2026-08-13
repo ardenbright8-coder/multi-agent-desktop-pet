@@ -38,6 +38,16 @@ document.addEventListener("mouseup", endPetDrag);
 document.addEventListener("pointercancel", endPetDrag);
 window.addEventListener("blur", () => endPetDrag());
 document.querySelector("#status-note").addEventListener("click", toggleDrawer);
+// 点气泡直接切到那个 Agent 终端窗口（每个气泡 = 一个开着的终端会话，v0.1.22）
+document.querySelector("#agent-bubbles").addEventListener("click", (event) => {
+  const pill = event.target instanceof Element ? event.target.closest(".agent-bubble") : null;
+  if (!pill) return;
+  window.agentPet.focusAgent({
+    agent: pill.dataset.agent,
+    project: pill.dataset.project || undefined,
+    originPid: Number(pill.dataset.originPid) || undefined,
+  });
+});
 document.querySelector("#completion-return").addEventListener("click", returnToAgentFromCompletion);
 document.querySelector("#completion-close").addEventListener("click", closeCompletion);
 document.querySelector("#completion-top-close").addEventListener("click", closeCompletion);
@@ -97,3 +107,6 @@ setInterval(() => {
   if (activeTab === "diagnostics") renderDiagnostics();
 }, 2_500);
 setInterval(runAmbientMotion, 1_000);
+// 卡顿检测：Agent 卡了 5 分钟没动静要亮红灯，但这事不一定有新事件推过来，
+// 所以定时自己刷一遍气泡灯色（灯色按当前时间重算，灯没变就不重画）。
+setInterval(() => { renderBubbles(snapshot.sessions); }, 10_000);

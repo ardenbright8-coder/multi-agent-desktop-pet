@@ -98,6 +98,52 @@ body[data-state="waiting"] .note-dot { background: var(--accent); box-shadow: 0 
 body[data-state="error"] .note-dot { background: var(--danger); box-shadow: 0 0 0 2px rgba(237,128,101,0.14); }
 body[data-state="done"] .note-dot { background: var(--sprout-light); }
 
+/* ===== 各 Agent 状态气泡条（v0.1.22 新增）=====
+   每个开着的 Agent 终端一个气泡，竖排往下延伸，最多 9 个（多的按优先级挤掉）。
+   灯色语义跟用户拍的板一致：绿=工作中 / 黄=休息中 / 红=卡顿·故障（工作状态 5 分钟没动静）。
+   顶位置由 shell.js 按状态框底边动态算，跟状态框同在幼苗那一侧（框换边气泡跟着换）。 */
+.agent-bubbles {
+  position: absolute;
+  z-index: 4;
+  width: 188px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+body[data-note-side="right"] .agent-bubbles { right: 6px; }
+body[data-note-side="left"] .agent-bubbles { left: 6px; }
+
+.agent-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(220, 238, 212, 0.14);
+  border-radius: 999px;
+  background: rgba(15, 28, 21, 0.9);
+  color: var(--paper);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 140ms ease-out, border-color 140ms ease-out, background 140ms ease-out;
+}
+.agent-bubble:hover { transform: translateX(2px); border-color: rgba(143,219,120,0.5); background: rgba(15,28,21,0.97); }
+.agent-bubble:active { transform: scale(0.97); }
+.agent-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.agent-dot.working { background: var(--success); box-shadow: 0 0 0 2px rgba(143,219,120,0.14); }
+.agent-dot.resting { background: var(--accent); box-shadow: 0 0 0 2px rgba(242,200,75,0.14); }
+.agent-dot.stuck { background: var(--danger); box-shadow: 0 0 0 2px rgba(237,128,101,0.16); }
+.agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.agent-project { margin-left: auto; min-width: 0; max-width: 86px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #91a18e; font-size: 10px; }
+
+/* 面板弹出来时整条气泡让位：面板从 --pet-band 以下展开会把下面那截气泡盖住，
+   与其露半截，不如整条收起（跟面板互斥一个道理）。 */
+body:has(.interaction-panel:not([hidden])) .agent-bubbles,
+body:has(.drawer:not([hidden])) .agent-bubbles,
+body:has(.settings-panel:not([hidden])) .agent-bubbles { display: none; }
+
 /* 幼苗顶部对齐窗口顶（不是底部对齐）：
    ① 100% 时幼苗离窗口顶只有 8px，能真正贴到屏幕最上边；
    ② 放大到 140% 时向下长，不会溢出窗口顶部去占本该穿透的角落
