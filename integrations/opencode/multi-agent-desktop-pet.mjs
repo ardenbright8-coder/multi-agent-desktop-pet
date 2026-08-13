@@ -191,17 +191,23 @@ function translateEvent(event, directory, ctx) {
       publish(makeEvent(sessionId, "context.updated", { summary: contextBySession.get(sessionId)?.title || "会话信息已更新" }));
       break;
     case "session.status":
-      if (properties.status?.type === "busy") publishState(sessionId, "state.thinking", { summary: "正在理解任务和安排步骤" });
+      if (properties.status?.type === "busy") {
+        cancelCompletion(sessionId);
+        publishState(sessionId, "state.thinking", { summary: "正在理解任务和安排步骤" });
+      }
       break;
     case "session.idle":
+      cancelCompletion(sessionId);
       lastStateBySession.delete(sessionId);
       publish(makeEvent(sessionId, "task.completed", { summary: "OpenCode 已经完成这一轮任务" }));
       break;
     case "session.error":
+      cancelCompletion(sessionId);
       lastStateBySession.delete(sessionId);
       publish(makeEvent(sessionId, "task.failed", { summary: "OpenCode 遇到错误，需要回来查看", reason: String(properties.error?.message || properties.error || "未提供错误详情") }));
       break;
     case "session.deleted":
+      cancelCompletion(sessionId);
       publish(makeEvent(sessionId, "session.ended", { summary: "OpenCode 会话已经结束" }));
       contextBySession.delete(sessionId);
       lastStateBySession.delete(sessionId);
@@ -209,6 +215,7 @@ function translateEvent(event, directory, ctx) {
     case "server.instance.disposed": {
       const known = [...contextBySession.keys()];
       for (const knownSessionId of known.length ? known : [sessionId]) {
+        cancelCompletion(knownSessionId);
         publish(makeEvent(knownSessionId, "session.ended", { summary: "OpenCode 实例已经关闭" }));
         contextBySession.delete(knownSessionId);
         lastStateBySession.delete(knownSessionId);
@@ -325,6 +332,7 @@ export default async function MultiAgentDesktopPetPlugin(ctx) {
     "tool.execute.before": async (input, output) => {
       try {
         const sessionId = input?.sessionID || input?.sessionId || "opencode-default";
+        cancelCompletion(sessionId);
         const tool = input?.tool || "tool";
         const args = output?.args && typeof output.args === "object" ? output.args : {};
         const target = targetFrom(args, []);
@@ -342,6 +350,10 @@ export default async function MultiAgentDesktopPetPlugin(ctx) {
       try {
         const sessionId = input?.sessionID || input?.sessionId || "opencode-default";
         publishState(sessionId, "state.working", { summary: `已完成 ${input?.tool || "工具"}，继续处理任务`, tool: input?.tool, cwd: directory });
+        // 工具跑完 8 秒没有新的工具/思考动作 → 认为这一轮干完了，发完成事件让桌宠弹窗。
+        // 死等 session.idle 不行：连续干活时 OpenCode 几乎不进 idle，完成事件一条都发不出去
+        // （2026-08-12 实机抓到：用户一直没收到完成通知）。
+        scheduleCompletion(sessionId);
       } catch { /* fail open */ }
     },
   };
@@ -353,6 +365,31 @@ function stringValue(...values) {
 
 function canReply(ctx) {
   return Boolean(ctx?.client?.v2?.session || ctx?.serverUrl);
+}
+
+// ===== 完成判定（2026-08-12 新增）=====
+// OpenCode 连续干活时几乎不发 session.idle，死等它 = 完成事件一条都发不出去。
+// 改成：工具跑完 8 秒没有新的工具/思考动作 → 认为这一轮干完了，发 task.completed。
+const COMPLETION_IDLE_MS = 8_000;
+const completionTimerBySession = new Map();
+
+function scheduleCompletion(sessionId) {
+  const existing = completionTimerBySession.get(sessionId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    completionTimerBySession.delete(sessionId);
+    lastStateBySession.delete(sessionId);
+    publish(makeEvent(sessionId, "task.completed", { summary: "OpenCode 已经完成这一轮任务" }));
+  }, COMPLETION_IDLE_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  completionTimerBySession.set(sessionId, timer);
+}
+
+function cancelCompletion(sessionId) {
+  const timer = completionTimerBySession.get(sessionId);
+  if (!timer) return;
+  clearTimeout(timer);
+  completionTimerBySession.delete(sessionId);
 }
 
 function publishInteraction(event, interaction, ctx) {
