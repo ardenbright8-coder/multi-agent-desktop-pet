@@ -1,14 +1,16 @@
 export interface Point { x: number; y: number }
 export interface Rectangle extends Point { width: number; height: number }
 
-// 默认落脚点：靠右，竖直方向让幼苗停在屏幕高度约 2/3 处（用户 2026-08-12 指定，
-// 原来是贴着底边，太靠下）。算完还是会被 clampWindowPosition 收进工作区。
-export function defaultWindowPosition(workArea: Rectangle, windowSize: { width: number; height: number }): Point {
-  const wanted = workArea.y + Math.round(workArea.height * 2 / 3 - windowSize.height / 2);
-  const lowest = workArea.y + workArea.height - windowSize.height - 22;
+// 默认落脚点：右上角小浮窗（用户 2026-08-14 定规格：距工作区顶部/右侧 16 物理像素，
+// 已由调用方按 scaleFactor 换算成逻辑 margin）。算完还是会被 clampWindowPosition 收进工作区。
+export function defaultWindowPosition(
+  workArea: Rectangle,
+  windowSize: { width: number; height: number },
+  margin = 28,
+): Point {
   return {
-    x: workArea.x + workArea.width - windowSize.width - 28,
-    y: Math.max(workArea.y, Math.min(wanted, lowest)),
+    x: workArea.x + workArea.width - windowSize.width - margin,
+    y: workArea.y + margin,
   };
 }
 

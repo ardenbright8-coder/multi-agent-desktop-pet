@@ -6,9 +6,9 @@ const size = { width: 440, height: 680 };
 
 const petSize = { width: 220, height: 304 };
 
-test("default position keeps the pet on the right at about two thirds of the screen height", () => {
-  // 1040 高的工作区：2/3 处是 693，减掉半个窗高 152 → 541。幼苗停在屏幕 2/3，不是贴着底边
-  assert.deepEqual(defaultWindowPosition({ x: 0, y: 0, width: 1920, height: 1040 }, petSize), { x: 1672, y: 541 });
+test("default position keeps the pet at the top-right corner (small floating bubble)", () => {
+  // 右上角小浮窗（2026-08-14 用户定规格）：距顶/右默认 margin 28 逻辑像素
+  assert.deepEqual(defaultWindowPosition({ x: 0, y: 0, width: 1920, height: 1040 }, petSize), { x: 1672, y: 28 });
 });
 
 test("default position never sinks past the bottom margin on a short screen", () => {

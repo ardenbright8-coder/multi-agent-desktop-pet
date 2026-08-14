@@ -20,14 +20,28 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 // 幼苗和状态框左右并排，尺寸按**幼苗放到最大（140%）**算，否则放大后会长出窗口，
 // 溢出的那块会把本该穿透的角落也占掉（2026-08-12 实测踩到）。
 //   宽 = 14 + 152×1.4 + 8 + 188 + 8 ≈ 435
-//   高 = 8 + 176×1.4 + 8 ≈ 265  ← 但 2026-08-13 加了「各Agent状态气泡条」：
-//   气泡排在状态框下面往下延伸（9 个封顶），所以窗口要够长装下整条：
-//   8（顶距）+ 状态框 ~105 + 8（间距）+ 9×26 + 8×5（气泡+间隔）≈ 395，取 410 留余量。
-// 幼苗顶部对齐窗口顶，所以 100% 时它离屏幕上沿只有 8px，能真正顶上去。
-export const PET_WINDOW_SIZE = { width: 435, height: 410 };
+//   高 = 8 + 176×1.4 + 8 ≈ 265  ← 2026-08-13 加「各Agent状态气泡条」后长到 410。
+//   v0.1.23 气泡条改成「座位环境」，第二版：窗口背景 = 用户原型图（像素教室 1672×941 ≈ 1.78:1），
+//   9 个座位对齐图里 9 套工位。窗口 760 宽 = 左侧 640 教室图（≈1.78:1 几乎无变形）+ 右侧 120 透明区放幼苗。
+//   v0.1.23 第三版（2026-08-14 用户定规格）：窗口是右上角小浮窗，**物理尺寸固定 480×290**，
+//   按 display.scaleFactor 换算 Electron 逻辑像素（Windows 100%/125%/150%/自定义缩放看到的窗口面积基本一致）。
+//   场景原图 1672×941 不压缩，界面里 object-fit: contain 缩小显示。
+//   ⚠️ screen 在 app ready 前访问会挂（Electron 限制），所以这里只给默认值（100% 缩放），
+//   真实值在 createPetWindow 里按 scaleFactor 重算（见 ensurePetWindowSize）。
+let PET_SCALE = 1;
+export let PET_WINDOW_SIZE = { width: 480, height: 290 };
+export const PET_PHYSICAL_MARGIN = 16; // 距工作区顶部/右侧的物理像素
+
+/** 按当前主屏 scaleFactor 重算窗口逻辑尺寸（物理 480×290）。 */
+function ensurePetWindowSize(): void {
+  PET_SCALE = Math.max(1, screen.getPrimaryDisplay().scaleFactor || 1);
+  PET_WINDOW_SIZE = {
+    width: Math.max(100, Math.round(480 / PET_SCALE)),
+    height: Math.max(60, Math.round(290 / PET_SCALE)),
+  };
+}
 // 高度尽量吃满工作区（这台机 778），面板让出幼苗顶带之后正文才不至于被压扁。
 export const PANEL_WINDOW_SIZE = { width: 440, height: 740 };
-export const WINDOW_SIZE = PET_WINDOW_SIZE;
 
 // 面板往**下**长：窗口左上角不动，幼苗贴在窗口顶部，所以它纹丝不动。
 // （早先是往左上长，那时幼苗贴窗口底部；改成顶部对齐后必须跟着反过来，
@@ -70,9 +84,11 @@ export function destroyPetWindow(): void {
 }
 
 export function createPetWindow(hub: AgentHub): BrowserWindow {
+  ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 480×290 → 逻辑）
   const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
-  const fallback = defaultWindowPosition(workArea, PET_WINDOW_SIZE);
+  const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);
+  const fallback = defaultWindowPosition(workArea, PET_WINDOW_SIZE, margin);
   const bounds = saved
     ? clampWindowPosition(saved, screen.getAllDisplays().map((display) => display.workArea), PET_WINDOW_SIZE)
     : fallback;
@@ -313,7 +329,8 @@ export function recallPetWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   log.记("用户从托盘把幼苗叫回来了", "recallPetWindow");
   const workArea = screen.getPrimaryDisplay().workArea;
-  const home = defaultWindowPosition(workArea, designSize());
+  const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);
+  const home = defaultWindowPosition(workArea, designSize(), margin);
   moveTo(home.x, home.y);
   mainWindow.showInactive();
   persistWindowPosition();
@@ -354,8 +371,8 @@ export function startDragging(offset: { x: number; y: number }, diagnostics?: Re
     "startDragging",
   );
   dragOffset = {
-    x: Number.isFinite(offset?.x) ? offset.x : WINDOW_SIZE.width / 2,
-    y: Number.isFinite(offset?.y) ? offset.y : WINDOW_SIZE.height / 2,
+    x: Number.isFinite(offset?.x) ? offset.x : PET_WINDOW_SIZE.width / 2,
+    y: Number.isFinite(offset?.y) ? offset.y : PET_WINDOW_SIZE.height / 2,
   };
   dragging = true;
   applyMouseMode();

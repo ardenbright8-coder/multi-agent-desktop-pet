@@ -41,30 +41,24 @@ export async function runScreenshotTest(hub: AgentHub, host: TestHost): Promise<
   writeFileSync(join(screenshotDir, "preview-settings.png"), settingsImage.toPNG());
   await mainWindow.webContents.executeJavaScript("document.querySelector('#settings-close').click(); document.querySelector('#interaction-top-close').click()");
   await delay(250);
-  // 拖动态：按住幼苗不放的样子（松手就没了，所以这儿只发 mouseDown）
-  const petBox = await mainWindow.webContents.executeJavaScript("(() => { const r = document.querySelector('#pet').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()") as { x: number; y: number };
+  // 拖动态：按住画框（窗口主体）拖动（2026-08-14：桌面幼苗移除，改拖窗口）
+  const petBox = await mainWindow.webContents.executeJavaScript("(() => { const r = document.querySelector('.scene-frame').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; })()") as { x: number; y: number };
   mainWindow.webContents.sendInputEvent({ type: "mouseMove", x: petBox.x, y: petBox.y, movementX: 0, movementY: 0 });
   mainWindow.webContents.sendInputEvent({ type: "mouseDown", x: petBox.x, y: petBox.y, button: "left", clickCount: 1 });
   await delay(250);
-  await assertRenderer("document.body.classList.contains('pet-picked-up')", "Pressing the pet did not start a drag");
+  await assertRenderer("document.body.classList.contains('pet-picked-up')", "Pressing the frame did not start a drag");
   const moveImage = await mainWindow.webContents.capturePage();
   writeFileSync(join(screenshotDir, "preview-move.png"), moveImage.toPNG());
   mainWindow.webContents.sendInputEvent({ type: "mouseUp", x: petBox.x, y: petBox.y, button: "left", clickCount: 1 });
   await delay(150);
   await assertRenderer("!document.body.classList.contains('pet-picked-up')", "Releasing the mouse did not end the drag");
-  const petRect = await mainWindow.webContents.executeJavaScript(
-    "(() => { const r = document.querySelector('#pet').getBoundingClientRect(); return { x: Math.max(0, Math.round(r.x) - 8), y: Math.max(0, Math.round(r.y) - 8), width: Math.round(r.width) + 16, height: Math.round(r.height) + 16 }; })()",
+  // 场景画框截图（教室 + 座位小人；桌面幼苗已移除，不再拍姿态）
+  const frameRect = await mainWindow.webContents.executeJavaScript(
+    "(() => { const r = document.querySelector('.scene-frame').getBoundingClientRect(); return { x: Math.max(0, Math.round(r.x) - 8), y: Math.max(0, Math.round(r.y) - 8), width: Math.round(r.width) + 16, height: Math.round(r.height) + 16 }; })()",
   ) as { x: number; y: number; width: number; height: number };
-  const poses = ["idle", "thinking", "waving", "jumping", "failed", "waiting", "running", "working-focus", "working-rope", "working-typing", "review"];
-  for (const pose of poses) {
-    await mainWindow.webContents.executeJavaScript(`document.body.dataset.petPose = ${JSON.stringify(pose)}`);
-    await delay(pose === "jumping" ? 390 : 210);
-    // 裁剪框按幼苗在**当前窗口**里的实际位置算，别写死——窗口平时是幼苗大小，
-    // 面板弹出来才长大，写死坐标会截到窗口外面去（capturePage 直接抛 UnknownVizError）。
-    const poseImage = await mainWindow.webContents.capturePage(petRect);
-    writeFileSync(join(screenshotDir, `pose-${pose}.png`), poseImage.toPNG());
-  }
-  writeJsonAtomic(join(appDataRoot(), "screenshot-ok.json"), { version: app.getVersion(), panels: 4, poses: poses.length });
+  const sceneImage = await mainWindow.webContents.capturePage(frameRect);
+  writeFileSync(join(screenshotDir, "scene-frame.png"), sceneImage.toPNG());
+  writeJsonAtomic(join(appDataRoot(), "screenshot-ok.json"), { version: app.getVersion(), panels: 4, scene: 1 });
   process.stdout.write(`SCREENSHOT_OK ${screenshotDir}\n`);
   setShuttingDown(true);
   if (getPetWindow()) destroyPetWindow();

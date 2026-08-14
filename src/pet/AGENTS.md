@@ -1,6 +1,6 @@
-# pet —— 幼苗和它那个窗口
+# pet —— 窗口、画框和它里面的一切
 
-**这块管什么**：桌面上那株绿色幼苗。窗口怎么建、放哪、什么形状、托盘菜单，以及幼苗的姿态和外观设置。
+**这块管什么**：右上角那个木框小浮窗（物理 480×290）。窗口怎么建、放哪、什么形状、托盘菜单，以及画框里的座位/小人/状态框/右键菜单。**2026-08-14 起：桌面幼苗已移除**（`.pet { display:none }`，元素保留避免报错），功能全部集成到画框窗口（按住画框拖窗口、右键菜单）。
 
 | 文件 | 管什么 |
 |---|---|
@@ -29,6 +29,12 @@ createTray  createTrayActions  PetTrayActions
 
 ## 改之前先知道
 
+- 🚨 **桌面幼苗已移除（2026-08-14）**：`.pet { display: none !important }`，元素保留（pet.js/boot.js 还有引用，删了会报错）。动画/姿态全部不可见，pet.js 的 `beginPetDrag`/`endPetDrag` 已通用化成 `(event, targetEl)` 供画框拖动用。**不许把 .pet 恢复显示**（用户拍板不要幼苗）。
+- 🚨 **拖动 = 按住画框（`.scene-frame`）移动整个窗口**：boot.js 绑 scene-frame 的 pointerdown（排除 `.seat-filled`/`#status-note`/`#pet-menu`），窗口全屏可拖、锁工作区内、位置保存。
+- 🚨 **右键画框任意处 = 功能菜单**（`#pet-menu`）：详情/设置/藏起来/测试通知/打开日志/退出。新增 ipc `window:show` / `window:open-logs` / `window:quit`（window-ipc.ts）+ preload `showWindow/openLogs/quitApp`。托盘保留同样功能。
+- 🚨 **窗口物理尺寸固定 480×290**（`PET_WINDOW_SIZE`），按 `screen.getPrimaryDisplay().scaleFactor` 换算逻辑像素——**必须在 createPetWindow 里算（ensurePetWindowSize），模块顶层访问 screen 在 app ready 前会挂**。默认右上角（`PET_PHYSICAL_MARGIN`=16 物理像素）。
+- 🚨 **座位定位用百分比**（`.seat-pos-0~8`，相对 `.agent-seats` 的 aspect-ratio 容器），跨缩放自适应；`--pet-band` 固定 8px（面板弹出时画框+幼苗一起隐藏，:has 规则）。
+- 🚨 **背景 = 用户图 v2**（`assets/classroom.png`，1672×941，圆角木框，四角已透明化），`object-fit: contain` 完整显示；画框（`.scene-frame`）自带交互层+16px 圆角裁切，图自带的木框不再重复画 padding/边框。
 - 🚨🚨 **别再用 `setShape()` 挡点击，它挡不住。** Electron 官方文档白纸黑字：**透明窗口的透明区域点不过去**，而 `setShape` 是实验性 API，在 Windows 上对 transparent＋layered 窗口不生效。页面里那句 `pointer-events: none` 只管网页内部，管不到系统层。
   → 结果就是那个 440×680 的透明矩形一直吃鼠标，人在底下点视频、点别的窗口全点不着（2026-08-12 用户报的 bug，根因就是这个）。
   **现在的正解**：窗口默认 `setIgnoreMouseEvents(true, { forward: true })` 整个让开，`forward` 保证穿透时仍收得到 mousemove；界面用 `document.elementFromPoint` 判断鼠标底下是不是 `[data-interactive]`，是才让主进程临时收回穿透。逻辑在 `window.ts` 的 `applyMouseMode()` 和 `renderer\pet.js` 的 `syncHitTest()`。
@@ -58,7 +64,13 @@ createTray  createTrayActions  PetTrayActions
 - Windows 这台机关了系统动画，桌宠的"自然／活泼"是**用户明确要求的覆盖**，只重开幼苗动作，**不许去改 Windows 设置**；选"安静"就保持静态。
 - 姿态只跟着 Agent 状态自动变，**不提供手动动作试演**。
 - 🚨 **完成弹窗只在某个会话「新进入 done」时弹。** 不许用 lead 身份变化当触发——已经点掉的完成会话一回到队首会再弹一次，看着像乱弹（2026-08-13 实机）。
-- 🚨 **气泡条 = 一个会话一个气泡**（v0.1.22）：竖排挂在状态框下面，最多 9 个，灯色绿=工作中/黄=休息中/红=卡顿·故障（working/thinking/waiting 超 5 分钟没动静算卡顿，10 秒定时重算）。点气泡走 `focusAgent`（带 originPid 切回那个终端）。**面板弹出来时气泡条整条隐藏**（styles.css 的 `:has()` 规则），不跟面板抢位置。窗口因此长高到 410——controls 里「平时窗口高度 ≤340」的断言已跟着改到 ≤440。
+- 🚨 **座位环境 = 9 个固定座位格**（v0.1.23 从气泡条改版）：状态框下面 3×3 网格，常驻——没会话时显示淡空位。
+  每个座位三层：椅子（底）→ 工位台（中）→ 小人（前景，`assets/avatars/<agent>.png`），右上角状态灯。
+  开一个 CLI 会话 → 那个座位「抱出」小人；会话关了 → 小人消失留空位。
+  灯色绿=工作中/黄=休息中/红=卡顿·故障（working/thinking/waiting 超 5 分钟没动静算卡顿，10 秒定时重算）。
+  点有人的座位走 `focusAgent`（带 originPid 切回那个终端）。**面板弹出来时座位区整区隐藏**（styles.css 的 `:has()` 规则）。
+  小人素材：`renderer\assets\avatars\`（构建自动拷进 dist），没放图时 img 加载失败被 boot.js 的 capture error 委托隐藏，露出 CSS 像素小人占位；
+  文件命名 = agent 标识 + .png（pi.png / opencode.png / claude-code.png / hermes.png / grok.png / codex.png），约定写在目录里的 `读我·小人素材放这.txt`。
 - 「知道了，返回终端」要按事件带来的进程号切回那个终端，不能只按名字瞎猜（分屏会切错）。
 - 2026-08-13：Grok 只回 `grok.exe` 命令行。标题里有 Grok 的续枝面板、浏览器页都不是当前 Agent。日志里切错过 `pwsh | 续枝 · Grok CLI` 和 `Tabbit Browser | …Grok…`。
 

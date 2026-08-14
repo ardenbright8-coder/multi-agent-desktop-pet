@@ -1,16 +1,19 @@
 // 渲染层对窗口本身的请求（拖动、悬停命中、面板展开、隐藏）在这儿落地。
 // 跟事件中心那几个 hub:* 请求分开：那些是 channel 的活，这些只动窗口。
 
-import { ipcMain } from "electron";
+import { ipcMain, shell, app } from "electron";
 import { createLogger } from "../shared/log";
 import {
   hideMainWindow,
   setHoveringInteractive,
   setPanelVisibility,
+  showMainWindow,
   startDragging,
   stopDragging,
+  setShuttingDown,
 } from "./window";
 import { focusAgentWindow } from "./focus-agent";
+import { logRoot } from "../shared/log";
 
 const log = createLogger("window");
 
@@ -31,6 +34,10 @@ export function registerWindowIpc(): void {
     });
   });
   ipcMain.on("window:hide", () => hideMainWindow());
+  // 2026-08-14：托盘功能集成到窗口右键菜单，新增 show / open-logs / quit
+  ipcMain.on("window:show", () => showMainWindow());
+  ipcMain.on("window:open-logs", () => { void shell.openPath(logRoot()); });
+  ipcMain.on("window:quit", () => { setShuttingDown(true); app.quit(); });
   // 界面里出的错以前谁也看不见，现在一律落到 window 那本日志里
   ipcMain.on("window:renderer-error", (_event, info: { message?: unknown; where?: unknown; stack?: unknown }) => {
     log.出事(`界面出错：${String(info?.message ?? "未知")}`, info?.stack ? String(info.stack) : undefined, String(info?.where ?? "renderer"));

@@ -1,0 +1,36 @@
+这里放每个 Agent 的「小人」表情图，放进来自动生效，不用改代码。
+
+## 四种状态的表情（用户 2026-08-14 定的）
+
+| 状态 | 文件名（Agent 标识 + 状态后缀） | 什么时候显示 |
+|---|---|---|
+| 干活 | `<agent>-working.png` | 工作中 / 思考中（含卡顿 5 分钟没动静） |
+| 报错 | `<agent>-error.png` | 报错 / 失败 |
+| 开心完成 | `<agent>-done.png` | 任务完成 |
+| 疑问 | `<agent>-waiting.png` | 需要你处理（询问/权限弹窗） |
+| （默认） | `<agent>.png` | 回落：没找到对应状态图时 |
+
+Agent 标识对应文件名的例子：
+- `pi-working.png` / `pi-error.png` / `pi-done.png` / `pi-waiting.png` → Pi
+- `opencode-working.png` ... → OpenCode
+- `claude-code-working.png` ... → Claude Code
+- `hermes-*.png` → Hermes
+- `grok-*.png` → Grok
+- `codex-*.png` → Codex
+- `simulator-*.png` → 模拟 Agent
+
+## 怎么加
+
+1. 准备一张像素小人表情图（推荐 40×46 或正方形 48×48，PNG 带透明底，坐着/半身）
+2. 按上面的命名放进本目录
+3. 重启桌宠（或它下次重画座位时）就会显示对应表情
+
+## 没放图会怎样
+
+不会崩：那个座位只显示椅子 + 状态灯，小人区域留空。
+等你的表情图放进来就自动出现。
+
+## 关于椅子
+
+椅子和工位台现在用「椅子贴片」（`assets/seats/chair-0~8.png`，从背景图原位抠出）。
+想换干净透明椅子素材，把图给我或按 `assets/seats/` 里的命名替换即可。

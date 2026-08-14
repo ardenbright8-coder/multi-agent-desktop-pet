@@ -58,21 +58,21 @@ function runAmbientMotion() {
 
 // 拖动：按住幼苗直接拖，松手放下——跟别的桌面宠物一个手感。
 // （旧版是"点一下拿起、再点一下放下"，拖到别的屏幕就找不着幼苗、也就再也放不下，已废弃。）
-function beginPetDrag(event) {
+// 2026-08-14：桌面幼苗移除，拖动改为「按住窗口主体（画框）移动整个窗口」。
+let dragTarget = null;
+function beginPetDrag(event, targetEl) {
   if (event.button !== 0) return;
   // 🚨 这里千万别调 event.preventDefault()。
   // 在 pointerdown 上 preventDefault 会把浏览器后续合成的 mousemove／mouseup 一起掐掉，
   // 结果就是"按得下去、拖不动"（2026-08-12 实机踩的）。挡拖影是在 dragstart 上挡的。
+  dragTarget = targetEl || elements.pet;
   petPickedUp = true;
   document.body.classList.add("pet-picked-up");
-  elements.pet.setAttribute("aria-pressed", "true");
-  elements.pet.setAttribute("aria-label", "松手放下幼苗");
-  if (event.pointerId !== undefined && elements.pet.setPointerCapture) {
-    try { elements.pet.setPointerCapture(event.pointerId); } catch { /* 捕获失败不影响拖动 */ }
+  if (event.pointerId !== undefined && dragTarget.setPointerCapture) {
+    try { dragTarget.setPointerCapture(event.pointerId); } catch { /* 捕获失败不影响拖动 */ }
   }
   // 只告诉主进程「鼠标按在窗口里的哪个点」，剩下的它自己读系统光标去算，别在这儿传屏幕坐标。
-  // 把当时的视口和幼苗位置一并报上去，出问题时日志里能直接对账（2026-08-12 排「越拖越往下」用）。
-  const rect = elements.pet.getBoundingClientRect();
+  const rect = dragTarget.getBoundingClientRect();
   window.agentPet.startDragging({
     x: event.clientX,
     y: event.clientY,
@@ -90,11 +90,10 @@ function endPetDrag(event) {
   if (!petPickedUp) return;
   petPickedUp = false;
   document.body.classList.remove("pet-picked-up");
-  elements.pet.setAttribute("aria-pressed", "false");
-  elements.pet.setAttribute("aria-label", "按住幼苗拖动，松手放下");
-  if (event?.pointerId !== undefined && elements.pet.releasePointerCapture) {
-    try { elements.pet.releasePointerCapture(event.pointerId); } catch { /* 已经自动释放了 */ }
+  if (event?.pointerId !== undefined && dragTarget?.releasePointerCapture) {
+    try { dragTarget.releasePointerCapture(event.pointerId); } catch { /* 已经自动释放了 */ }
   }
+  dragTarget = null;
   window.agentPet.stopDragging();
   syncHitTest(event);
 }
@@ -148,10 +147,8 @@ function applyPetSize(value, persist) {
   elements.pet.style.setProperty("--user-pet-scale", String(size / 100));
   elements.petSize.value = String(size);
   elements.petSizeValue.textContent = `${size}%`;
-  // 幼苗那条顶带按**当前实际大小**算，别死按最大 140% 占着——
-  // 占多了面板就被压得太扁，选项挤出视野（2026-08-12 实机踩到）。
-  const band = Math.round(8 + 176 * (size / 100) + 12);
-  document.documentElement.style.setProperty("--pet-band", `${band}px`);
+  // 幼苗那条顶带：面板弹出时幼苗隐藏（styles.css :has 规则），所以顶带固定小顶距 8px。
+  document.documentElement.style.setProperty("--pet-band", "8px");
   if (persist) savePetPreferences();
 }
 

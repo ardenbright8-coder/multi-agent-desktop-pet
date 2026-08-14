@@ -15,8 +15,8 @@
   --sprout-deep: #3f8d47;
   --sprout-shadow: #285d38;
   --pixel: 4px;
-  /* 幼苗独占的那条顶带，面板都从这条线以下开始 */
-  --pet-band: 262px;
+  /* 面板弹出时幼苗隐藏（:has 规则），顶带固定为小顶距，面板正文吃满窗口 */
+  --pet-band: 8px;
   --radius: 16px;
   font-family: "Segoe UI Variable", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
 }
@@ -55,94 +55,188 @@ button { color: inherit; }
 .status-note {
   position: absolute;
   z-index: 5;
-  top: 8px;
-  width: 188px;
-  min-height: 80px;
-  padding: 12px 14px 11px;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 92px;
+  min-height: 26px;
+  padding: 3px 8px;
   border: 1px solid rgba(220, 238, 212, 0.15);
-  border-radius: 12px 12px 4px 12px;
-  background: rgba(15, 28, 21, 0.94);
-  box-shadow: 0 14px 32px rgba(4, 13, 8, 0.30), inset 0 1px 0 rgba(255,255,255,0.06);
+  border-radius: 999px;
+  background: rgba(15, 28, 21, 0.92);
+  box-shadow: 0 8px 18px rgba(4, 13, 8, 0.25);
   text-align: left;
   cursor: pointer;
-  backdrop-filter: blur(16px);
   transition: transform 180ms ease-out, border-color 180ms ease-out;
 }
 
-/* 小尖角指向幼苗那一边，框换边时跟着换 */
+/* 小胶囊状态框（小浮窗适配）：顶行 agent 名+点，正文一行截断 */
 .status-note::after {
   content: "";
   position: absolute;
-  bottom: 22px;
-  width: 10px;
-  height: 10px;
+  bottom: -4px;
+  left: 50%;
+  margin-left: -4px;
+  width: 8px;
+  height: 8px;
   background: var(--forest);
+  transform: rotate(45deg);
 }
-body[data-note-side="right"] .status-note::after { left: -5px; }
-body[data-note-side="left"] .status-note::after { right: -5px; }
+.status-note { left: 50%; }
 
-/* 框在右 → 幼苗靠左；框在左 → 幼苗靠右 */
-body[data-note-side="right"] .status-note { right: 6px; }
-body[data-note-side="left"] .status-note { left: 6px; }
-body[data-note-side="right"] .pet { left: 4px; }
-body[data-note-side="left"] .pet { right: 4px; }
-
-.status-note:hover { transform: translateY(-2px); border-color: rgba(143,219,120,0.48); }
-.status-note:active { transform: translateY(0) scale(0.98); }
-.note-topline { display: flex !important; align-items: center; justify-content: space-between; margin-bottom: 5px; }
-.status-note #status-agent { display: block; color: var(--success); font-size: 13px; font-weight: 760; letter-spacing: 0.04em; }
-.status-note strong { display: block; color: var(--paper); font-size: 15px; line-height: 1.45; font-weight: 620; }
-.status-note small { display: block; margin-top: 4px; color: #91a18e; font-size: 12px; }
+.status-note:hover { transform: translateX(-50%) translateY(-1px); border-color: rgba(143,219,120,0.48); }
+.status-note:active { transform: translateX(-50%) translateY(0) scale(0.97); }
+.note-topline { display: flex !important; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 0; }
+.status-note #status-agent { display: block; color: var(--success); font-size: 10px; font-weight: 720; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-note strong { display: block; color: var(--paper); font-size: 9px; line-height: 1.3; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-note small { display: none; }
 .note-dot { width: 7px; height: 7px; background: var(--success); box-shadow: 0 0 0 2px rgba(143,219,120,0.12); }
 body[data-state="waiting"] .note-dot { background: var(--accent); box-shadow: 0 0 0 2px rgba(242,200,75,0.14); }
 body[data-state="error"] .note-dot { background: var(--danger); box-shadow: 0 0 0 2px rgba(237,128,101,0.14); }
 body[data-state="done"] .note-dot { background: var(--sprout-light); }
 
-/* ===== 各 Agent 状态气泡条（v0.1.22 新增）=====
-   每个开着的 Agent 终端一个气泡，竖排往下延伸，最多 9 个（多的按优先级挤掉）。
-   灯色语义跟用户拍的板一致：绿=工作中 / 黄=休息中 / 红=卡顿·故障（工作状态 5 分钟没动静）。
-   顶位置由 shell.js 按状态框底边动态算，跟状态框同在幼苗那一侧（框换边气泡跟着换）。 */
-.agent-bubbles {
+/* ===== 画框容器（2026-08-14：背景换用户新图 v2，图自带圆角木框）=====
+   背景图本身带完整木框+大圆角（四角外已处理成透明），窗口只负责：
+   ① 裁切窗口圆角（border-radius 略大于图圆角缩放后的大小，保证四角不露尖）；
+   ② 悬浮阴影；③ 交互层（data-interactive：拖窗口/右键菜单），画框外透明区仍穿透。 */
+.scene-frame {
   position: absolute;
-  z-index: 4;
-  width: 188px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  inset: 0;
+  z-index: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
-body[data-note-side="right"] .agent-bubbles { right: 6px; }
-body[data-note-side="left"] .agent-bubbles { left: 6px; }
 
-.agent-bubble {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 场景图：contain 完整显示（不裁切、不变形），画框内居中 */
+.scene-bg {
+  display: block;
   width: 100%;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid rgba(220, 238, 212, 0.14);
-  border-radius: 999px;
-  background: rgba(15, 28, 21, 0.9);
-  color: var(--paper);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  transition: transform 140ms ease-out, border-color 140ms ease-out, background 140ms ease-out;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 9px;
+  image-rendering: pixelated;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
 }
-.agent-bubble:hover { transform: translateX(2px); border-color: rgba(143,219,120,0.5); background: rgba(15,28,21,0.97); }
-.agent-bubble:active { transform: scale(0.97); }
-.agent-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-.agent-dot.working { background: var(--success); box-shadow: 0 0 0 2px rgba(143,219,120,0.14); }
-.agent-dot.resting { background: var(--accent); box-shadow: 0 0 0 2px rgba(242,200,75,0.14); }
-.agent-dot.stuck { background: var(--danger); box-shadow: 0 0 0 2px rgba(237,128,101,0.16); }
-.agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
-.agent-project { margin-left: auto; min-width: 0; max-width: 86px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #91a18e; font-size: 10px; }
 
-/* 面板弹出来时整条气泡让位：面板从 --pet-band 以下展开会把下面那截气泡盖住，
-   与其露半截，不如整条收起（跟面板互斥一个道理）。 */
-body:has(.interaction-panel:not([hidden])) .agent-bubbles,
-body:has(.drawer:not([hidden])) .agent-bubbles,
-body:has(.settings-panel:not([hidden])) .agent-bubbles { display: none; }
+/* ===== 各 Agent 座位环境（v0.1.23 第三版）=====
+   座位对齐背景图 9 套工位中心（百分比坐标，图 contain 在画框内）。
+   尺寸用百分比：窗口/画框跨缩放自适应（100%~179%）。 */
+.agent-seats {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  aspect-ratio: 1672 / 941;
+  max-height: 100%;
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* 一个座位 = 一把椅子（贴片）+ 坐在椅子上的小人。尺寸百分比（跨缩放自适应） */
+.seat {
+  position: absolute;
+  width: 16%;
+  height: 24%;
+  transform: translate(-50%, -50%);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+}
+
+/* 9 把椅子的中心坐标（图内百分比；椅子在工位中心右上侧，PIL 裁剪时标定） */
+.seat-pos-0 { left: 26.5%; top: 29%; }
+.seat-pos-1 { left: 51%;  top: 29%; }
+.seat-pos-2 { left: 76.5%; top: 29%; }
+.seat-pos-3 { left: 26.5%; top: 51%; }
+.seat-pos-4 { left: 51%;  top: 51%; }
+.seat-pos-5 { left: 76.5%; top: 51%; }
+.seat-pos-6 { left: 24.5%; top: 76%; }
+.seat-pos-7 { left: 50.5%; top: 76%; }
+.seat-pos-8 { left: 76%;  top: 76%; }
+
+/* 椅子贴片：铺满座位，从背景图原位抠出（贴回无缝），作为小人的“座位” */
+.seat-chair-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  z-index: 0;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+/* 有人的座位：可点，hover 亮一下（跟气泡一样的交互语言） */
+.seat-filled {
+  cursor: pointer;
+  color: var(--paper);
+  font: inherit;
+  transition: border-color 140ms ease-out, background 140ms ease-out;
+}
+.seat-filled:hover { border-color: rgba(143,219,120,0.55); background: rgba(15, 28, 21, 0.45); }
+.seat-filled:active { border-color: rgba(143,219,120,0.8); background: rgba(15, 28, 21, 0.6); }
+.seat-filled:focus-visible { outline: 2px solid var(--success); outline-offset: 1px; }
+
+/* 小人（前景）：坐在椅子上，坐满椅子区域。尺寸百分比（跨缩放自适应） */
+.seat-person {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 82%;
+  height: 128%;
+  display: grid;
+  place-items: center;
+  z-index: 1;
+  pointer-events: none;
+}
+.seat-person img.seat-avatar {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+/* 表情图缺省（用户还没放）时整个小人区隐掉，不显示任何占位 */
+.seat-person:not(:has(img:not([hidden]))) { display: none; }
+
+/* 状态灯：座位右上角，颜色规矩沿用气泡那套 */
+.seat-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  z-index: 2;
+}
+.seat-dot.working { background: var(--success); box-shadow: 0 0 0 2px rgba(143,219,120,0.14); }
+.seat-dot.resting { background: var(--accent); box-shadow: 0 0 0 2px rgba(242,200,75,0.14); }
+.seat-dot.stuck { background: var(--danger); box-shadow: 0 0 0 2px rgba(237,128,101,0.16); }
+
+/* 面板弹出来时环境（背景图+座位）让位：窗口长大成面板，教室环境暂时退场，
+   面板关闭后恢复。跟面板互斥一个道理（与其背景被面板盖住半截，不如整幅退场）。 */
+body:has(.interaction-panel:not([hidden])) .scene-frame,
+body:has(.interaction-panel:not([hidden])) .agent-seats,
+body:has(.drawer:not([hidden])) .scene-frame,
+body:has(.drawer:not([hidden])) .agent-seats,
+body:has(.settings-panel:not([hidden])) .scene-frame,
+body:has(.settings-panel:not([hidden])) .agent-seats,
+body:has(.completion-panel:not([hidden])) .scene-frame,
+body:has(.completion-panel:not([hidden])) .agent-seats,
+/* 面板弹出时幼苗一起让位（画框退场，幼苗也不挡面板正文） */
+body:has(.interaction-panel:not([hidden])) .pet,
+body:has(.drawer:not([hidden])) .pet,
+body:has(.settings-panel:not([hidden])) .pet,
+body:has(.completion-panel:not([hidden])) .pet { display: none; }
 
 /* 幼苗顶部对齐窗口顶（不是底部对齐）：
    ① 100% 时幼苗离窗口顶只有 8px，能真正贴到屏幕最上边；
@@ -152,7 +246,10 @@ body:has(.settings-panel:not([hidden])) .agent-bubbles { display: none; }
   --user-pet-scale: 1;
   position: absolute;
   z-index: 3;
-  top: 8px;
+  right: 2px;
+  bottom: 2px;
+  transform: scale(var(--user-pet-scale));
+  scale: 0.3;   /* 基础缩小适配小浮窗（右下角，尽量不挡右列工位） */
   width: 152px;
   height: 176px;
   padding: 0;
@@ -160,10 +257,45 @@ body:has(.settings-panel:not([hidden])) .agent-bubbles { display: none; }
   background: transparent;
   cursor: pointer;
   -webkit-app-region: no-drag;
-  transform: scale(var(--user-pet-scale));
-  transform-origin: center top;
+  transform-origin: center center;
   transition: transform 180ms cubic-bezier(0.16,1,0.3,1);
 }
+/* 幼苗固定放窗口右下角（缩小 0.4，可拖动） */
+
+/* 桌面幼苗已移除（2026-08-14 用户拍板：小宠物不要了，功能集成到画框窗口右键菜单）。
+   元素保留（pet.js/boot.js 还有引用），CSS 直接隐藏，动画/姿态全部不可见。 */
+.pet { display: none !important; }
+
+/* ===== 右键功能菜单（2026-08-14：托盘功能集成到窗口右键）===== */
+.pet-menu {
+  position: absolute;
+  z-index: 60;
+  min-width: 150px;
+  padding: 5px;
+  border: 1px solid rgba(220, 238, 212, 0.18);
+  border-radius: 10px;
+  background: rgba(15, 28, 21, 0.97);
+  box-shadow: 0 12px 28px rgba(4, 13, 8, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 2px;
+}
+.pet-menu[hidden] { display: none; }
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--paper);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover { background: rgba(143, 219, 120, 0.14); color: var(--sprout-light); }
+.menu-item:active { background: rgba(143, 219, 120, 0.22); }
+.menu-quit { color: var(--danger); }
+.menu-quit:hover { background: rgba(237, 128, 101, 0.14); color: var(--danger); }
 
 .pet::before,
 .pet::after {

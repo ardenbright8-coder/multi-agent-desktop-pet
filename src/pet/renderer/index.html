@@ -98,7 +98,7 @@
           </div>
         </fieldset>
 
-        <p class="settings-note">Windows 关闭动画时，“安静”保持静态；选“自然”或“活泼”会只为幼苗重新开启动作。</p>
+        <p class="settings-note">桌面幼苗已移除（2026-08-14），大小与活泼程度设置不再生效；如需恢复请告知。</p>
       </section>
 
       <!-- 完成弹窗：任何 Agent 干完活就弹，跟权限/询问一个壳。
@@ -123,17 +123,24 @@
       </section>
 
       <section id="pet-zone" class="pet-zone" aria-label="桌面宠物">
+        <!-- 画框容器：胡桃木圆角边框 + 场景图 contain 完整显示（用户 2026-08-14 定规格：
+             物理 480×290 浮窗、圆角14、边框1px、内边距8px、场景不裁切）。
+             data-interactive：画框整体可交互（按住拖窗口、右键出菜单），画框外透明区仍穿透。 -->
+        <div class="scene-frame" data-interactive>
+          <img id="scene-bg" class="scene-bg" src="assets/classroom.png" alt="" aria-hidden="true" draggable="false" />
+          <div id="agent-seats" class="agent-seats" aria-label="各Agent座位"></div>
+        </div>
+
         <button id="status-note" class="status-note" data-interactive type="button">
           <span class="note-topline"><span id="status-agent">事件中心</span><i id="status-dot" class="note-dot"></i></span>
           <strong id="status-copy">连接正常，正在等消息</strong>
           <small id="status-state">空闲</small>
         </button>
 
-        <!-- 各 Agent 状态气泡（v0.1.22 新增）：每个开着的 Agent 终端一个气泡，竖排往下延伸，
-             最多 9 个；灯色 绿=工作中 / 黄=休息中 / 红=卡顿（工作状态 5 分钟没动静）。
-             点气泡直接切到那个终端窗口（走 focusAgent）。
-             顶位置由 shell.js 按状态框底边动态算，面板弹出时整条让位（:has 规则）。 -->
-        <div id="agent-bubbles" class="agent-bubbles" aria-label="各Agent状态气泡" hidden></div>
+        <!-- 各 Agent 座位环境（v0.1.23）：环境 = 像素教室背景（在画框内），9 个座位精确对齐背景图里的 9 套工位。
+             开一个 CLI 会话就「抱出」一个小人坐上；会话关了小人消失，工位空着。
+             小人图 = assets/avatars/<agent>.png（用户自己加，没有就隐藏留空）。
+             座位位置由 styles.css 的 .seat-pos-0~8 定（对齐背景工位中心百分比）。 -->
 
         <button id="pet" class="pet" data-interactive type="button" aria-label="按住幼苗拖动，松手放下">
           <span class="pet-motion">
@@ -161,6 +168,15 @@
         </button>
 
       </section>
+      <!-- 右键功能菜单（2026-08-14：桌面幼苗移除，托盘功能集成到窗口右键） -->
+      <div id="pet-menu" class="pet-menu" data-interactive role="menu" aria-label="桌宠菜单" hidden>
+        <button class="menu-item" data-menu="drawer" type="button" role="menuitem">详情（事件与搜索）</button>
+        <button class="menu-item" data-menu="settings" type="button" role="menuitem">设置</button>
+        <button class="menu-item" data-menu="hide" type="button" role="menuitem">藏起来</button>
+        <button class="menu-item" data-menu="simulate" type="button" role="menuitem">发一条测试通知</button>
+        <button class="menu-item" data-menu="logs" type="button" role="menuitem">打开日志文件夹</button>
+        <button class="menu-item menu-quit" data-menu="quit" type="button" role="menuitem">退出</button>
+      </div>
     </main>
     <script src="shell.js"></script>
     <script src="pet.js"></script>

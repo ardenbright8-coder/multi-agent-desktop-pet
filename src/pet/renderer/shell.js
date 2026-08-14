@@ -18,7 +18,7 @@ const elements = {
   completionAgent: document.querySelector("#completion-agent"),
   completionHeading: document.querySelector("#completion-heading"),
   completionExplanation: document.querySelector("#completion-explanation"),
-  agentBubbles: document.querySelector("#agent-bubbles"),
+  agentSeats: document.querySelector("#agent-seats"),
   sessionList: document.querySelector("#session-list"),
   searchInput: document.querySelector("#search-input"),
   searchState: document.querySelector("#search-state"),
@@ -159,20 +159,22 @@ function refreshPetPose() {
   updatePetPose();
 }
 
-// ===== 各 Agent 状态气泡（v0.1.22 新增）=====
-// 每个开着的 Agent 终端 = 一个气泡，竖着往下排，最多 9 个；点气泡切回那个终端窗口。
-// 灯色（跟用户 2026-08-13 拍的板一致）：
-//   绿 = 工作中（working / thinking / waiting 都在干活）
-//   黄 = 休息中（idle / done，闲着或刚干完）
-//   红 = 卡顿 / 故障（error 算故障；工作状态但 5 分钟没收到任何动静 → 卡住了，
-//        大概率是卡在某个工具/请求上，该去看看）
-const BUBBLE_LIMIT = 9;
-const BUBBLE_STUCK_MS = 5 * 60 * 1000;
-let bubbleSignature = null;
+// ===== 各 Agent 座位环境（v0.1.23 从「气泡条」改版，第三版：表情小人）=====
+// 环境 = 像素教室背景图（assets/classroom.png，用户原型图），9 套工位就是 9 个座位。
+// 座位 = 椅子贴片（assets/seats/chair-0~8.png，从背景原位抠出贴回无缝）+ 坐在椅子上的小人 + 状态灯。
+// 小人素材 = assets/avatars/<agent>.png，按状态分表情：
+//   <agent>-working.png（干活） / <agent>-error.png（报错） / <agent>-done.png（开心完成） / <agent>-waiting.png（疑问）
+//   回落顺序：<agent>-<state>.png → <agent>.png → 隐藏（只留椅子+状态灯，不崩）。
+//   用户 2026-08-14 拍板：不要 CSS 像素小人占位，表情图用户自己提供。
+// 灯色规矩沿用拍的板（状态灯保留，集成到表情之外仍亮着）：
+//   绿 = 工作中 / 黄 = 休息中 / 红 = 卡顿·故障。
+const SEAT_COUNT = 9;
+const SEAT_STUCK_MS = 5 * 60 * 1000;
+let seatSignature = null;
 
-function bubbleStatus(session, now) {
+function seatStatus(session, now) {
   const lastSeen = session.lastSeenAt || session.updatedAt || now;
-  const silent = now - lastSeen > BUBBLE_STUCK_MS;
+  const silent = now - lastSeen > SEAT_STUCK_MS;
   if (session.state === "error") return "stuck";
   if (session.state === "working" || session.state === "thinking" || session.state === "waiting") {
     return silent ? "stuck" : "working";
@@ -180,36 +182,52 @@ function bubbleStatus(session, now) {
   return "resting";
 }
 
+// 会话状态 → 表情素材后缀（用户 2026-08-14 定的四态）
+const SEAT_EXPRESSION = {
+  working: "working",
+  thinking: "working",
+  waiting: "waiting",
+  done: "done",
+  error: "error",
+  idle: "",
+};
+
+// 小人头像路径：先找 <agent>-<状态>.png（如 pi-working.png）。回落链在 boot.js 的 error 委托：
+//   <agent>-<状态>.png → <状态>.png（通用图，如 done.png）→ <agent>.png → 隐藏。
+function seatAvatarPath(agent, state) {
+  const expr = SEAT_EXPRESSION[state] || "";
+  const agentPart = encodeURIComponent(agent);
+  if (expr) return `assets/avatars/${agentPart}-${expr}.png`;
+  return `assets/avatars/${agentPart}.png`;
+}
+
+function filledSeatHtml(session, now, index) {
+  const status = seatStatus(session, now);
+  const agentName = labels[session.agent] || session.agent;
+  const project = session.project && session.project !== "未命名项目" ? session.project : "";
+  const stateText = status === "stuck" ? "卡顿，5分钟没动静" : status === "working" ? "工作中" : "休息中";
+  const tip = `${agentName} · ${stateText}${project ? ` · ${project}` : ""}`;
+  return `<button class="seat seat-filled seat-pos-${index}" type="button" data-interactive
+    data-agent="${escapeHtml(session.agent)}" data-project="${escapeHtml(project)}" data-origin-pid="${session.originPid || 0}"
+    aria-label="${escapeHtml(tip)}" title="${escapeHtml(tip)}">
+    <img class="seat-chair-img" src="assets/seats/chair-${index}.png" alt="" aria-hidden="true" draggable="false">
+    <span class="seat-person" aria-hidden="true">
+      <img class="seat-avatar" src="${escapeHtml(seatAvatarPath(session.agent, session.state))}"
+        data-agent="${escapeHtml(session.agent)}" data-expr="${escapeHtml(SEAT_EXPRESSION[session.state] || "")}" data-step="0" alt="">
+    </span>
+  </button>`;
+}
+
 // 每次快照都调，但只在「哪几个会话 + 各自灯色」变了才重画 DOM——
-// 干活时快照来得很快，每次都重建会让气泡闪烁（用户视力不好，不许闪）。
-function renderBubbles(sessions) {
+// 干活时快照来得很快，每次都重建会让座位闪烁（用户视力不好，不许闪）。
+// 会话按优先级排序后依次坐进 seat-pos-0~8；空工位不渲染（背景图里本来就有）。
+function renderSeats(sessions) {
   const now = Date.now();
-  const bubbles = (sessions || []).slice(0, BUBBLE_LIMIT);
-  const signature = bubbles.map((session) => `${session.key}:${bubbleStatus(session, now)}`).join("|");
-  if (signature !== bubbleSignature) {
-    bubbleSignature = signature;
-    if (!bubbles.length) {
-      elements.agentBubbles.hidden = true;
-    } else {
-      elements.agentBubbles.hidden = false;
-      elements.agentBubbles.innerHTML = bubbles.map((session) => {
-        const status = bubbleStatus(session, now);
-        const agentName = labels[session.agent] || session.agent;
-        const project = session.project && session.project !== "未命名项目" ? session.project : "";
-        const stateText = status === "stuck" ? "卡顿，5分钟没动静" : status === "working" ? "工作中" : "休息中";
-        const tip = `${agentName} · ${stateText}${project ? ` · ${project}` : ""}`;
-        return `<button class="agent-bubble" type="button" data-interactive
-          data-agent="${escapeHtml(session.agent)}" data-project="${escapeHtml(project)}" data-origin-pid="${session.originPid || 0}"
-          aria-label="${escapeHtml(tip)}" title="${escapeHtml(tip)}">
-          <i class="agent-dot ${status}"></i><span class="agent-name">${escapeHtml(agentName)}</span>
-          ${project ? `<small class="agent-project">${escapeHtml(project)}</small>` : ""}
-        </button>`;
-      }).join("");
-    }
-  }
-  // 顶位置跟着状态框走：状态框高度会随文案变，气泡永远排在它下面。
-  const note = elements.statusNote;
-  elements.agentBubbles.style.top = `${note.offsetTop + note.offsetHeight + 8}px`;
+  const seatSessions = (sessions || []).slice(0, SEAT_COUNT);
+  const signature = seatSessions.map((session) => `${session.key}:${seatStatus(session, now)}`).join("|") || "·empty";
+  if (signature === seatSignature) return;
+  seatSignature = signature;
+  elements.agentSeats.innerHTML = seatSessions.map((session, index) => filledSeatHtml(session, now, index)).join("");
 }
 
 function renderSnapshot(next) {
@@ -231,7 +249,7 @@ function renderSnapshot(next) {
   noteCompletionTransitions(next.sessions);
   if (!celebrationTimer) updatePetPose();
   renderSessions(next.sessions);
-  renderBubbles(next.sessions);
+  renderSeats(next.sessions);
   if (!interactionSubmitting) renderInteraction(pending);
   if (drawerOpen) renderDiagnostics();
 }

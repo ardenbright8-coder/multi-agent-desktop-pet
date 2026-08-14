@@ -35,7 +35,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "focusAgent", "hideWindow", "onNoteSide", "onPetCommand", "onSnapshot", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "simulate", "snapshot", "startDragging", "stopDragging"]);
+    assert.deepEqual(exposed, ["diagnostics", "focusAgent", "hideWindow", "onNoteSide", "onPetCommand", "onSnapshot", "openLogs", "quitApp", "reportError", "respondInteraction", "search", "setHoveringInteractive", "setPanelVisibility", "showWindow", "simulate", "snapshot", "startDragging", "stopDragging"]);
 
     const marker = `controls-${Date.now()}`;
     hub.publish(makeEvent("state.working", "search-session", { summary: `${marker} searchable event`, target: "package.json" }));
@@ -181,17 +181,19 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       const dom = await evaluate<string>(win, "(() => { const el = document.elementFromPoint(3, 3); return el ? (el.id || el.className || el.tagName) + ' interactive=' + Boolean(el.closest('[data-interactive]')) : 'null'; })()");
       assert.fail(`Pointer left the pet but the window still swallowed mouse events —— 主进程：${mouseModeState()}；界面 elementFromPoint(3,3)=${dom}`);
     }
-    const petCenter = await center(win, "#pet");
+    // 画框左上角内侧（避开座位区）——按住画框拖动窗口
+    const frameCorner = () => evaluate(win, "(() => { const r = document.querySelector('.scene-frame').getBoundingClientRect(); return { x: Math.round(r.x) + 14, y: Math.round(r.y) + 14 }; })()") as Promise<{ x: number; y: number }>;
+    const petCenter = await frameCorner();
     win.webContents.sendInputEvent({ type: "mouseMove", x: petCenter.x, y: petCenter.y, movementX: 5, movementY: 5 });
-    await waitFor(() => !isIgnoringMouse(), 1_500, "Pointer entered the pet but the window stayed click-through");
+    await waitFor(() => !isIgnoringMouse(), 1_500, "Pointer entered the frame but the window stayed click-through");
 
     // 拖动是「按住拖、松手放」，而且**整个窗口一律锁在屏幕里**（用户明确要求「框不要超出屏幕」）。
     // 窗口位置由主进程读系统光标算，所以这儿直接喂坐标给 dragTick，不能靠 sendInputEvent 移动假光标。
     const beforeMove = win.getBounds();
-    const petPoint = await center(win, "#pet");
+    const petPoint = await frameCorner();
     win.webContents.sendInputEvent({ type: "mouseMove", x: petPoint.x, y: petPoint.y, movementX: 0, movementY: 0 });
     win.webContents.sendInputEvent({ type: "mouseDown", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
-    await waitForRenderer(win, "document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'true'", 2_000);
+    await waitForRenderer(win, "document.body.classList.contains('pet-picked-up')", 2_000);
 
     const area = screen.getPrimaryDisplay().workArea;
     // 平时窗口必须留够上下挪的空间（用户实机：只能左右平移）；
@@ -235,7 +237,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     assert.ok(sizeAfter.height <= area.height - 100, `Window is too tall to move vertically: ${sizeAfter.height} in ${area.height}`);
 
     win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
-    await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up') && document.querySelector('#pet').getAttribute('aria-pressed') === 'false'", 2_000);
+    await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up')", 2_000);
 
     context.trayActions.hide();
     await delay(150);
@@ -263,17 +265,17 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     context.trayActions.show();
     await waitFor(() => win.isVisible(), 1_500, "Tray show callback did not restore a closed window");
 
-    // 面板弹出来不许遮住幼苗：幼苗那块必须整个露在面板上边（用户 2026-08-12 的硬要求）
+    // 面板弹出来时画框（场景+座位）整区让位隐藏（2026-08-14：桌面幼苗已移除，画框隐藏即环境退场）
     const permissionForBand = makePermissionEvent("panel-band-session", "panel-band-request");
     hub.publish(permissionForBand);
     await interactionVisible(win, permissionForBand.eventId);
-    const overlap = await evaluate<{ petBottom: number; panelTop: number }>(
+    const frameState = await evaluate<{ frameDisplay: string; panelHidden: boolean }>(
       win,
-      "(() => { const pet = document.querySelector('#pet').getBoundingClientRect(); const panel = document.querySelector('#interaction-panel').getBoundingClientRect(); return { petBottom: Math.round(pet.bottom), panelTop: Math.round(panel.top) }; })()",
+      "({ frameDisplay: getComputedStyle(document.querySelector('.scene-frame')).display, panelHidden: document.querySelector('#interaction-panel').hidden })",
     );
     assert.ok(
-      overlap.panelTop >= overlap.petBottom,
-      `Panel covers the pet: 幼苗底 ${overlap.petBottom} vs 面板顶 ${overlap.panelTop}`,
+      !frameState.panelHidden && frameState.frameDisplay === "none",
+      `Panel did not make the scene frame yield: panelHidden=${frameState.panelHidden} frame=${frameState.frameDisplay}`,
     );
     await click(win, "#interaction-top-close");
     await hidden(win, "#interaction-panel");

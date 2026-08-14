@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld("agentPet", {
   setPanelVisibility: (visible: boolean): void => ipcRenderer.send("window:panel-visibility", visible),
   focusAgent: (hint?: { agent?: string; project?: string; originPid?: number }): void => ipcRenderer.send("window:focus-agent", hint || {}),
   hideWindow: (): void => ipcRenderer.send("window:hide"),
+  // 2026-08-14：托盘功能集成到窗口右键菜单
+  showWindow: (): void => ipcRenderer.send("window:show"),
+  openLogs: (): void => ipcRenderer.send("window:open-logs"),
+  quitApp: (): void => ipcRenderer.send("window:quit"),
   reportError: (info: { message: string; where?: string; stack?: string }): void => ipcRenderer.send("window:renderer-error", info),
   onNoteSide: (listener: (side: "left" | "right") => void): void => {
     ipcRenderer.on("pet:note-side", (_event, side: "left" | "right") => listener(side));
