@@ -13,6 +13,32 @@ const PROTOCOL_VERSION = 1;
 const ALLOW_WORDS = new Set(["yes", "y", "ok", "okay", "是", "好", "行", "可以", "允许", "同意", "确认", "准", "放行"]);
 const ALWAYS_WORDS = new Set(["always", "一直允许", "以后都允许", "不再问", "都允许"]);
 const REJECT_WORDS = new Set(["no", "n", "deny", "reject", "不", "拒绝", "不准", "不行"]);
+// ═══ 什么算"大权限"，只有命中这张表的才弹桌宠 ═══
+// 标准：碰 Windows 系统那一摊、改网络配置、不可逆、或者往外发。
+// 改项目文件、跑测试、本地 git commit 这类小事不算，别弹。
+// 想加想减就改这张表，改完跑 `node agent-pet-hook.mjs --self-test` 确认没写错。
+// ⚠️ 必须放在文件顶部：脚本一进来就调 shouldGateThroughPet()，const 不会提升，
+//    放在文件中段会报 "Cannot access 'BIG_DEAL' before initialization"，
+//    而且这个错会被 failOpen 静默吞掉 —— 表现就是"桌宠死活不弹"，很难查。
+const BIG_DEAL = [
+  // 删东西 / 清空
+  /\brm\s+-[a-z]*[rf]/i, /Remove-Item[^\n]*-Recurse/i, /\brmdir\s+\/s/i, /\bdel\s+\/[qsf]/i,
+  // 磁盘 / 引导 / 分区
+  /Format-Volume/i, /Clear-Disk/i, /\bdiskpart\b/i, /\bbcdedit\b/i, /\bmkfs\b/i,
+  // 注册表 / 服务 / 账户 / 权限
+  /reg\s+delete/i, /\bsc\s+delete/i, /\bnet\s+user\b/i, /\btakeown\b/i, /\bicacls\b/i,
+  /Set-ExecutionPolicy/i, /New-LocalUser/i,
+  // 关机重启
+  /\bshutdown\b/i, /Restart-Computer/i, /Stop-Computer/i,
+  // 往外发（推出去就收不回来了）
+  /git\s+push/i, /npm\s+publish/i, /\bgh\s+(pr|release)\s+create/i,
+  // Windows 系统那一摊
+  /C:[\\/]+Windows[\\/]/i, /C:[\\/]+Program Files/i, /C:[\\/]+ProgramData/i, /System32/i,
+  // 网络配置那一摊（Clash / mihomo / VMISS 网关 / VPS）
+  /mihomo|clash|verge/i, /mine\.yaml|sister\.yaml|backup\.yaml/i,
+  /proxy-groups|nameserver-policy|\bsubscri/i, /\bssh\s+\S/i, /vmiss|gateway/i,
+];
+
 const EVENT_KINDS = new Set([
   "session.started", "context.updated", "state.thinking", "state.working",
   "permission.requested", "permission.resolved", "question.asked", "question.resolved",
@@ -33,14 +59,32 @@ if (argv[0] === "--self-test") {
 
 const [agentArg = "generic", hookArg = "context.updated"] = argv;
 
+// 桌宠没起来就别耗着——照 app 自带原版的做法：连不上，静默走人，零输出。
+// 不加这行的话 publish() 会硬撑重试，然后 failOpen 吐一段 CC 不认的 JSON，
+// 结果就是启动慢 10 秒 + 每次回答后打印一整张 schema。
+if (!existsSync(discoveryPath())) process.exit(0);
+
 try {
   if (argv[0] === "--live-gate") {
     await runLiveGate(argv.slice(1).join(" ").trim());
   } else {
     const input = await readInput();
     const agent = detectAgent(agentArg, input);
+    // 留个底：把权限请求的原始 payload 存下来，字段名对不上时好查。
+    if (String(hookArg || "").toLowerCase().includes("permissionrequest")) {
+      try {
+        const dir = hubDataDir();
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "last-permission-payload.json"), JSON.stringify(input, null, 2), "utf8");
+      } catch { /* 存不下也不能挡 */ }
+    }
     if (shouldGateThroughPet(hookArg, input)) {
       writeHookDecision(agent, await gateThroughPet(agent, hookArg, input));
+    } else if (String(hookArg || "").toLowerCase().includes("permissionrequest")) {
+      // 小事的权限请求：连报都不报。
+      // 不加这条的话，它会掉进上报路径 → 桌宠照样弹一个"不支持回传，请回终端"的窗，
+      // 等于白弹一次。小事就该在终端里回车过，桌宠一声不吭。
+      process.exit(0);
     } else {
       const event = translate(agent, hookArg, input);
       if (event) await publish(event);
@@ -355,7 +399,7 @@ function decideFromClaim(claim) {
 function permissionPrompt() {
   return {
     id: "permission",
-    question: "选一项，或在下面自己填。写 yes / 允许 / 同意 就是放行。",
+    question: "点一个，或自己填。",
     multiple: false,
     allowCustomInput: true,
     options: [
@@ -366,13 +410,36 @@ function permissionPrompt() {
   };
 }
 
+// CC 对不同事件收的字段不一样，写错一个字它就把整张 schema 打屏幕上。
+//   PreToolUse       → hookSpecificOutput.permissionDecision（allow/deny/ask）
+//   PermissionRequest→ 顶层 permissionDecision（allow/deny/ask）
+//   其它事件（含 Notification）→ 一个字都不能输出
+// 顶层的 decision 字段只收 approve/block，之前那版写 "allow" 是非法的，就是报错的根。
 function writeHookDecision(agent, decision) {
   if (decision === "always") rememberAlways(agent);
-  if (decision === "reject") {
-    process.stdout.write(`${JSON.stringify({ decision: "deny", reason: "用户在桌宠上拒绝了这次操作" })}\n`);
+  // 桌宠上没人点 → 不表态，交回给 CC 自己问。别替用户做主。
+  if (decision === "timeout") return;
+  const hook = String(hookArg || "").toLowerCase();
+  const permissionDecision = decision === "reject" ? "deny" : "allow";
+  const reason = decision === "reject"
+    ? "用户在桌宠上拒绝了这次操作"
+    : "用户在桌宠上放行了这次操作";
+
+  if (hook.includes("pretooluse")) {
+    process.stdout.write(`${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision,
+        permissionDecisionReason: reason,
+      },
+    })}\n`);
     return;
   }
-  process.stdout.write(`${JSON.stringify({ decision: "allow" })}\n`);
+  if (hook.includes("permissionrequest")) {
+    process.stdout.write(`${JSON.stringify({ permissionDecision, reason })}\n`);
+    return;
+  }
+  // Notification 之类的事件根本不接受决定，回传也没处使，闭嘴。
 }
 
 function failOpen(error) {
@@ -381,9 +448,8 @@ function failOpen(error) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "hook-error.log"), `${new Date().toISOString()} ${error?.stack || error}\n`, "utf8");
   } catch { /* 记不住也不能挡 */ }
-  try {
-    process.stdout.write(`${JSON.stringify({ decision: "allow" })}\n`);
-  } catch { /* ignore */ }
+  // 出错时什么都别输出。上报型钩子的任何 stdout 都会被 CC 当决定去校验，一校验就报错。
+  // 放行本来就是"不表态"的默认结果，闭嘴走人即可。
   process.exit(0);
 }
 
@@ -393,9 +459,30 @@ function shouldGateThroughPet(hook, input) {
     const text = notificationText(input);
     return text.includes("permission") || text.includes("plan") || text.includes("approval") || text.includes("input");
   }
-  if (name !== "pretooluse" && !name.includes("permissionrequest")) return false;
-  const tool = String(input.tool_name || input.toolName || input.tool || "").toLowerCase();
-  return !tool || /bash|shell|terminal|command|edit|write|search_replace/.test(tool);
+  // PermissionRequest 是 CC 已经决定要问你了，那就一律走桌宠网关（可回传）。
+  // 之前这里跟 PreToolUse 共用工具白名单，ExitPlanMode 这类工具名不匹配就掉进上报路径，
+  // 上报路径的 responseCapability 写死 false → 桌宠只能显示"不支持回传，请回终端"。
+  // 只有动真格的才弹桌宠。小事让 CC 自己按 settings.json 处理，别烦人。
+  if (name.includes("permissionrequest")) return isBigDeal(input);
+  // PreToolUse 不再走桌宠网关：它在 CC 还没决定要不要问你之前就触发，
+  // 结果是每一次 Bash/Edit/Write 都要去桌宠上点一下，会话直接没法用。
+  // CC 自己放行的照常飞过，等它真要问你时会发 PermissionRequest，那时才弹桌宠。
+  return false;
+}
+
+function isBigDeal(input) {
+  const bag = [];
+  const eat = (value, depth = 0) => {
+    if (depth > 4 || value == null) return;
+    if (typeof value === "string") { bag.push(value); return; }
+    if (Array.isArray(value)) { value.forEach((item) => eat(item, depth + 1)); return; }
+    if (typeof value === "object") { Object.values(value).forEach((item) => eat(item, depth + 1)); }
+  };
+  eat(objectValue(input.tool_input, input.toolInput, input.input, input.arguments));
+  eat(firstString(input.tool_name, input.toolName, input.tool));
+  eat(firstString(input.message, input.reason, input.permission, input.action));
+  const text = bag.join("\n").slice(0, 20_000);
+  return BIG_DEAL.some((rule) => rule.test(text));
 }
 
 function replyGrokTerminal(decision) {
@@ -500,9 +587,9 @@ async function gateThroughPet(agent, hook, input) {
     kind: "permission.requested",
     project: basename(firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()) || agent),
     cwd: firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()),
-    title: `${agentLabel(agent)} 需要你点一下`,
-    summary: `是否允许使用 ${tool}？`,
-    reason: `点允许或写下 yes 才会真的执行；点拒绝就不做。`,
+    title: `${agentLabel(agent)} 要用 ${tool}`,
+    summary: target && target !== "未提供目标" ? target : `是否允许使用 ${tool}？`,
+    reason: "",
     tool,
     target,
     requestId,
@@ -514,14 +601,21 @@ async function gateThroughPet(agent, hook, input) {
       prompts: [permissionPrompt()],
       action: tool,
       resources: [target],
-      impact: "允许就会真的做这件事，拒绝就跳过。",
-      rollback: "拒绝则什么都不改。",
-      unknowns: "无",
+      // impact / rollback / unknowns 三个字段桌宠会原样拼进说明里，
+      // 拼出来就是"允许就会真的做这件事，拒绝就跳过。拒绝则什么都不改。仍未核实：无。"
+      // 一堆废话，不传。
       responseCapability: true,
       responseStatus: "pending",
     },
   };
   await publish(event);
+  // 等多久是个权衡：
+  //   等太久 → 桌宠没人管时，CC 在这儿干站着；
+  //   等太短 → 钩子先退了，你再点，桌宠那边永远卡在"正在交回…"（app 侧没有超时处理，
+  //            它不知道对面已经没人了）。30 秒实测就短了，人还没走到跟前就超时。
+  // 2 分钟（用户定的）：宁可多等，也别出现"点了没人接"。
+  // ⚠️ 改这个数就得同步改 settings.json 里 PermissionRequest 那条钩子的 timeout，
+  //    CC 的钩子超时默认 60 秒，比这个短的话 CC 会先把进程杀了，白设。
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     let claim;
@@ -557,7 +651,9 @@ async function gateThroughPet(agent, hook, input) {
     if (String(hook || "").toLowerCase().includes("notification")) replyGrokTerminal(decision);
     return decision;
   }
-  return "allow";
+  // 等超时了。原来这里直接返回 allow —— 等于"没人管就放行"，太危险。
+  // 改成不表态：钩子什么都不输出，CC 回落到它自己的权限询问。
+  return "timeout";
 }
 
 async function runLiveGate(reason) {
@@ -694,7 +790,9 @@ async function publishOnce(event) {
 }
 
 async function publish(event) {
-  const deadline = Date.now() + 10_000;
+  // 原来是 10 秒。桌宠没开时这 10 秒会实打实地卡住 CC 的每一次提问、工具调用和回答。
+  // 桌宠开着但一时忙不过来，1 秒也够补上了。
+  const deadline = Date.now() + 1_000;
   let lastError;
   while (Date.now() < deadline) {
     try {
