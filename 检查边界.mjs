@@ -41,6 +41,18 @@ const allowed = {
   app: ["shared", "events", "interaction", "channel", "pet", "integrations", "testkit"],
 };
 
+// ---------- 每块根上哪些文件是对外入口（别的块只准 import 这些）----------
+// 子夹（renderer/、lib/）一律内部。自测块 testkit 可 import 任意根文件，方便单测内部模块。
+const publicEntries = {
+  shared: ["protocol.ts", "paths.ts", "atomic-file.ts", "log.ts"],
+  events: ["hub.ts", "simulation.ts"],
+  interaction: ["broker.ts", "presenter.ts", "permission-explainer.ts"],
+  channel: ["ipc-server.ts", "ipc-client.ts", "ipc-handlers.ts", "preload.ts", "cli-emit.ts"],
+  pet: ["window.ts", "window-ipc.ts", "tray.ts"],
+  integrations: ["manager.ts"],
+  testkit: ["modes.ts", "controls-test.ts", "lifecycle.ts", "screenshot.ts", "single-instance.ts", "smoke.ts", "host.ts"],
+};
+
 // ---------- 界面侧：哪个文件是底座、哪个是启动装配 ----------
 // shell.js 是调度层（renderSnapshot 得挨个通知各块），boot.js 是启动装配，
 // 这两份可以调所有人；其余界面文件之间不许互调。
@@ -72,8 +84,17 @@ for (const file of tsFiles) {
     const target = relative(srcRoot, resolve(dirname(file), specifier)).split(sep).join("/");
     const to = blockOf(target);
     if (to === from) continue;
-    if ((allowed[from] || []).includes(to)) continue;
-    violations.push(`${rel}  第 ${line(source, statement)} 行  import 了  ${target}（${to} 块）　—— ${from} 不许依赖 ${to}`);
+    if (isNestedPath(target)) {
+      violations.push(`${rel}  第 ${line(source, statement)} 行  import 了  ${target}（${to} 块子夹）　—— 跨块只准走入口，不许进子夹`);
+      continue;
+    }
+    if (!(allowed[from] || []).includes(to)) {
+      violations.push(`${rel}  第 ${line(source, statement)} 行  import 了  ${target}（${to} 块）　—— ${from} 不许依赖 ${to}`);
+      continue;
+    }
+    if (from !== "testkit" && !isPublicEntry(to, target)) {
+      violations.push(`${rel}  第 ${line(source, statement)} 行  import 了  ${target}　—— ${to} 块入口只有 ${(publicEntries[to] || []).join("、") || "（未登记）"}`);
+    }
   }
 }
 
@@ -163,6 +184,16 @@ function walk(directory) {
 function blockOf(relativePath) {
   const head = relativePath.split("/")[0];
   return head.endsWith(".ts") ? "app" : head;
+}
+
+function isNestedPath(relativePath) {
+  return relativePath.split("/").length > 2;
+}
+
+function isPublicEntry(block, relativePath) {
+  const base = relativePath.split("/").pop() || "";
+  const fileName = /\.(ts|js)$/.test(base) ? base : `${base}.ts`;
+  return (publicEntries[block] || []).includes(fileName);
 }
 
 function importSpecifier(statement) {
