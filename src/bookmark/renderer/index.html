@@ -3,32 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
-  <title>书签台</title>
+  <title>Agent 看板</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app">
     <header id="titlebar">
-      <span class="title">书签台</span>
+      <span class="sun" aria-hidden="true">☀</span>
+      <span class="title">Agent 看板</span>
       <span class="hint">Alt+S 呼出 / 收起</span>
       <button id="hide-btn" type="button" title="收起（Alt+S）">─</button>
     </header>
 
-    <section id="composer">
-      <textarea id="input" rows="2"
-        placeholder="随手记：一句话 / 粘个网址（Enter 记下，Shift+Enter 换行）"></textarea>
-      <div id="assignee-row">
-        <span class="label">交给谁：</span>
-        <div id="chips"></div>
-        <input id="custom-assignee" type="text" placeholder="自定义" maxlength="20" />
-      </div>
-      <div id="composer-foot">
-        <span id="composer-error" role="alert"></span>
-        <button id="add-btn" type="button">记下来</button>
-      </div>
-    </section>
+    <!-- 看板：分组全部由 bookmark.js 渲染（待定区在最上，下面是各 agent 组） -->
+    <main id="board"></main>
 
-    <ul id="list"></ul>
+    <footer id="board-foot">
+      <button id="add-agent-btn" type="button" title="加一个 Agent 分组">＋ 加Agent</button>
+      <span id="board-error" role="alert"></span>
+    </footer>
+
+    <!-- 加Agent 的内联输入行 -->
+    <div id="add-agent-row" hidden>
+      <input id="new-agent-name" type="text" maxlength="24" placeholder="Agent 名字（如 Codex）" />
+      <button id="new-agent-ok" type="button">添加</button>
+      <button id="new-agent-cancel" type="button">取消</button>
+    </div>
+
+    <!-- 右键/点手柄弹出的派给菜单（内容由 js 填） -->
+    <div id="ctx-menu" hidden></div>
   </div>
   <script src="bookmark.js"></script>
 </body>

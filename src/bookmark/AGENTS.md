@@ -1,13 +1,19 @@
 # bookmark —— 书签台（完全隔离的大板块）
 
-**这块管什么**：随手记 / 网址收藏 / 「交给谁」标记的独立板块。2026-09-09 用户拍板并入桌宠当常驻壳——**一个壳两个项目**：代码一个区、数据一个库、与桌宠本体零共享状态，后期想拆整块搬走。
+**这块管什么**：随手记 / 网址收藏 / 「交给谁」标记的独立板块，2026-09-10 界面改版成 **「Agent 看板」**（照用户原型图：💭待定区置顶 + 各 agent 分组任务行，分组清单无限加，行尾无确认钮——自动同步）。2026-09-09 用户拍板并入桌宠当常驻壳——**一个壳两个项目**：代码一个区、数据一个库、与桌宠本体零共享状态，后期想拆整块搬走。
+
+**看板分组与待定的约定**（手机端收发箱同款约定，接 ntfy 时对齐）：
+- 条目归属看 `assignee` 字段：空 = 💭待定区；值 = 对应 agent 组（大小写不敏感对齐）
+- 分组清单存在 `<appDataRoot>\bookmark\agents.json`，真名单以主进程 AgentRoster 为准；assignee 指向已删除的组时条目回落待定区
+- 外来新增入口 = `BookmarkStore.add(input)`（含 dedupeKey），ntfy 收信接线时直接调，不走 UI
 
 | 文件 | 管什么 |
 |---|---|
 | `store.ts` | 本地库：增删查、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；JSON 原子写 |
-| `panel-window.ts` | 面板窗口（Win11 毛玻璃）、全局热键 Alt+S、本块专属 IPC（bookmark:*） |
+| `agents.ts` | Agent 看板分组清单（默认四组 Claude/ChatGPT/Pi Agent/Hermes + 自定义无限加），独立存 `agents.json`；坏档回落默认组 |
+| `panel-window.ts` | 面板窗口（Win11 毛玻璃）、全局热键 Alt+S、本块专属 IPC（bookmark:*，含 agents:*） |
 | `preload.ts` | 本块渲染层专属桥（`window.bookmark`），跟 `channel\preload` 互不相干 |
-| `renderer\` | 界面三件套（index.html / bookmark.js / styles.css），独立窗口自含，**不经 shell.js 调度** |
+| `renderer\` | 界面三件套（index.html / bookmark.js / styles.css）——**Agent 看板**：💭待定区置顶 + 各 agent 分组任务行，⊕无限加，行尾无确认钮（自动同步），右键/点手柄改派；独立窗口自含，**不经 shell.js 调度** |
 
 ## 对外露出什么
 

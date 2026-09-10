@@ -7,5 +7,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   remove: (id: string) => ipcRenderer.invoke("bookmark:remove", id),
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
+  agents: () => ipcRenderer.invoke("bookmark:agents"),
+  addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),
+  removeAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:remove", name),
   hide: () => ipcRenderer.invoke("bookmark:hide"),
 });

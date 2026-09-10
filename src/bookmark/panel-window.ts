@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
+import { AgentRoster } from "./agents";
 import { BookmarkStore } from "./store";
 
 const log = createLogger("bookmark");
@@ -12,11 +13,13 @@ const log = createLogger("bookmark");
 export const BOOKMARK_HOTKEY = "Alt+S";
 
 // 物理尺寸（跟桌宠一个思路：按主屏 scaleFactor 换算成逻辑像素，跨缩放视觉大小一致）。
-const PANEL_PHYSICAL_WIDTH = 420;
-const PANEL_PHYSICAL_HEIGHT = 640;
+// 看板改版（2026-09-10）：分组列表比旧输入+列表高，420×640 → 440×780。
+const PANEL_PHYSICAL_WIDTH = 440;
+const PANEL_PHYSICAL_HEIGHT = 780;
 
 let panel: BrowserWindow | null = null;
 let store: BookmarkStore | null = null;
+let roster: AgentRoster | null = null;
 let hotkeyRegistered = false;
 let pendingShow = false;
 let rendererReady = false;
@@ -30,9 +33,10 @@ export interface BookmarkPanelOptions {
 export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   if (store) return;
   store = new BookmarkStore();
+  roster = new AgentRoster();
   registerIpc();
   if (options?.hotkey) registerHotkey();
-  log.记("书签台就绪", "init");
+  log.记("书签台就绪（Agent 看板）", "init");
 }
 
 /** 呼出/收起面板（热键和托盘都走这里）。 */
@@ -186,6 +190,31 @@ function registerIpc(): void {
   ipcMain.handle("bookmark:hide", () => {
     panel?.hide();
   });
+
+  // ── Agent 看板分组（2026-09-10 改版）：分组清单独立存 agents.json ──
+  ipcMain.handle("bookmark:agents", () => requireRoster().list());
+  ipcMain.handle("bookmark:agents:add", (_event, name: unknown) => requireRoster().add(String(name ?? "")));
+  ipcMain.handle(
+    "bookmark:agents:remove",
+    (_event, name: unknown) => {
+      const target = String(name ?? "").trim();
+      const removed = requireRoster().remove(target);
+      // 名下条目不丢：全部收回待定（assignee 置空）。大小写不敏感对齐。
+      if (removed) {
+        for (const record of requireStore().list()) {
+          if ((record.assignee ?? "").toLowerCase() === target.toLowerCase()) {
+            requireStore().setAssignee(record.id, null);
+          }
+        }
+      }
+      return requireRoster().list();
+    },
+  );
+}
+
+function requireRoster(): AgentRoster {
+  if (!roster) throw new Error("书签台还没初始化（initBookmarkPanel 没被调）");
+  return roster;
 }
 
 function requireStore(): BookmarkStore {

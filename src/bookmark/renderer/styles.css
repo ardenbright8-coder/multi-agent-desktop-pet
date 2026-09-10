@@ -1,4 +1,5 @@
-/* 书签台：Win11 acrylic 毛玻璃在窗口层，这里铺半透明深底兜底（老系统没材质也有对比度）。 */
+/* Agent 看板（2026-09-10 照原型图改版）：淡青玉底 + 金色点缀的毛玻璃。
+   窗口层 acrylic 材质照旧，这里铺半透明浅底兜底（老系统没材质也有对比度）。 */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -7,7 +8,7 @@ html, body { height: 100%; background: transparent; }
 body {
   font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
   font-size: 15px;
-  color: #f2f4f8;
+  color: #31402f;
   overflow: hidden;
 }
 
@@ -15,9 +16,9 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: rgba(24, 27, 34, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
+  background: rgba(233, 239, 226, 0.72);
+  border: 1px solid rgba(201, 165, 76, 0.4);
+  border-radius: 16px;
   overflow: hidden;
 }
 
@@ -29,18 +30,20 @@ body {
   gap: 8px;
   padding: 10px 12px;
   -webkit-app-region: drag;
-  background: rgba(255, 255, 255, 0.05);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.28);
+  border-bottom: 1px solid rgba(201, 165, 76, 0.28);
 }
 
-#titlebar .title { font-weight: 600; font-size: 16px; }
+#titlebar .sun { font-size: 16px; color: #c9a54c; }
 
-#titlebar .hint { margin-left: auto; font-size: 12px; opacity: 0.55; }
+#titlebar .title { font-weight: 700; font-size: 16px; color: #2f3e2c; }
+
+#titlebar .hint { margin-left: auto; font-size: 12px; opacity: 0.5; }
 
 #hide-btn {
   -webkit-app-region: no-drag;
   border: 0;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(47, 62, 44, 0.08);
   color: inherit;
   border-radius: 8px;
   width: 26px;
@@ -49,167 +52,271 @@ body {
   line-height: 1;
 }
 
-#hide-btn:hover { background: rgba(255, 255, 255, 0.16); }
+#hide-btn:hover { background: rgba(47, 62, 44, 0.16); }
 
-/* ── 输入区 ───────────────────────────────────── */
+/* ── 看板 ───────────────────────────────────────── */
 
-#composer {
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+#board {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
 }
 
-#input {
+.group {
+  background: rgba(255, 255, 255, 0.44);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 16px;
+  padding: 8px;
+  margin-bottom: 10px;
+}
+
+.group.inbox {
+  background: rgba(243, 234, 208, 0.5);
+  border-color: rgba(201, 165, 76, 0.35);
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 6px;
+}
+
+.dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.group-name { font-weight: 600; font-size: 15px; color: #2f3e2c; }
+
+.group-count {
+  margin-left: 2px;
+  font-size: 12px;
+  color: rgba(47, 62, 44, 0.55);
+  background: rgba(47, 62, 44, 0.07);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+.g-add, .g-fold {
+  border: 1px solid rgba(201, 165, 76, 0.55);
+  background: rgba(255, 255, 255, 0.5);
+  color: #8a6f2f;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex: none;
+}
+
+.g-add:hover, .g-fold:hover { background: rgba(201, 165, 76, 0.18); }
+
+.g-fold { border-color: rgba(47, 62, 44, 0.25); color: rgba(47, 62, 44, 0.65); }
+
+.g-add { margin-left: auto; }
+
+/* ── 组内输入行（⊕ 展开） ─────────────────────────── */
+
+.group-composer {
+  padding: 4px 2px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-composer textarea {
   resize: none;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(201, 165, 76, 0.4);
   border-radius: 10px;
   color: inherit;
   font: inherit;
-  padding: 8px 10px;
+  padding: 7px 9px;
 }
 
-#input::placeholder { color: rgba(242, 244, 248, 0.4); }
+.group-composer textarea:focus { outline: 1px solid rgba(201, 165, 76, 0.75); }
 
-#input:focus, #custom-assignee:focus { outline: 1px solid rgba(120, 180, 255, 0.55); }
+.composer-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 
-#assignee-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
+.composer-err { color: #b0524f; font-size: 12.5px; margin-right: auto; min-height: 1em; }
 
-#assignee-row .label { font-size: 13px; opacity: 0.7; }
-
-.chip {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 999px;
-  padding: 2px 10px;
-  font-size: 12.5px;
-  cursor: pointer;
-  color: inherit;
-}
-
-.chip:hover { background: rgba(255, 255, 255, 0.12); }
-
-.chip.selected { background: #2f6fed; border-color: #2f6fed; color: #fff; }
-
-#custom-assignee {
-  width: 92px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  color: inherit;
-  padding: 2px 10px;
-  font-size: 12.5px;
-}
-
-#composer-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-#composer-error {
-  color: #ff9c9c;
-  font-size: 12.5px;
-  margin-right: auto;
-  min-height: 1em;
-}
-
-#add-btn {
-  background: #2f6fed;
+.g-ok, .g-cancel {
   border: 0;
-  border-radius: 10px;
-  color: #fff;
-  padding: 6px 16px;
-  font-size: 14px;
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
-#add-btn:hover { filter: brightness(1.12); }
+.g-ok { background: #6f8f5f; color: #fff; }
 
-/* ── 列表 ─────────────────────────────────────── */
+.g-ok:hover { filter: brightness(1.08); }
 
-#list {
-  list-style: none;
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
+.g-cancel { background: rgba(47, 62, 44, 0.08); color: #4a5a47; }
 
-.item {
+/* ── 任务行 ─────────────────────────────────────── */
+
+.task-list { list-style: none; }
+
+.task {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 12px;
+  padding: 7px 8px;
   margin-bottom: 6px;
 }
 
-.item .body { flex: 1; min-width: 0; }
-
-.item .text { word-break: break-all; white-space: pre-wrap; }
-
-.item .url {
-  display: block;
-  margin-top: 2px;
-  color: #7db4ff;
-  text-decoration: none;
-  word-break: break-all;
-  font-size: 13px;
-}
-
-.item .url:hover { text-decoration: underline; }
-
-.item .meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 12px;
-  opacity: 0.75;
-}
-
-.badge {
-  background: rgba(47, 111, 237, 0.25);
-  border: 1px solid rgba(47, 111, 237, 0.55);
-  color: #bcd2ff;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
-.badge.none {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.15);
-  color: rgba(242, 244, 248, 0.75);
-}
-
-.del {
+.task .handle {
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(47, 62, 44, 0.35);
   cursor: pointer;
-  font-size: 14px;
-  padding: 2px 4px;
+  font-size: 13px;
+  padding: 2px 2px;
+  letter-spacing: 1px;
+  flex: none;
 }
 
-.del:hover { color: #ff8b8b; }
+.task .handle:hover { color: rgba(47, 62, 44, 0.75); }
+
+.task .num {
+  color: rgba(47, 62, 44, 0.45);
+  font-size: 13px;
+  padding-top: 1px;
+  flex: none;
+}
+
+.task-body { flex: 1; min-width: 0; }
+
+.task .task-text { word-break: break-all; white-space: pre-wrap; font-size: 14px; }
+
+.task .task-url {
+  display: block;
+  margin-top: 2px;
+  color: #4a7d5c;
+  text-decoration: none;
+  word-break: break-all;
+  font-size: 12.5px;
+}
+
+.task .task-url:hover { text-decoration: underline; }
 
 .empty {
   text-align: center;
-  opacity: 0.5;
-  padding: 24px 0;
-  font-size: 13.5px;
+  opacity: 0.45;
+  padding: 14px 0;
+  font-size: 13px;
 }
+
+/* ── 底栏（加Agent） ─────────────────────────────── */
+
+#board-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(201, 165, 76, 0.28);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+#add-agent-btn {
+  border: 1px dashed rgba(201, 165, 76, 0.7);
+  background: rgba(255, 255, 255, 0.4);
+  color: #8a6f2f;
+  border-radius: 10px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#add-agent-btn:hover { background: rgba(201, 165, 76, 0.15); }
+
+#board-error { color: #b0524f; font-size: 12.5px; min-height: 1em; }
+
+/* ── 加Agent 输入行 ──────────────────────────────── */
+
+#add-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px dashed rgba(201, 165, 76, 0.35);
+  background: rgba(255, 255, 255, 0.3);
+}
+
+#add-agent-row[hidden] { display: none; }
+
+#new-agent-name {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(201, 165, 76, 0.4);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  padding: 4px 9px;
+}
+
+#new-agent-name:focus { outline: 1px solid rgba(201, 165, 76, 0.75); }
+
+#new-agent-ok, #new-agent-cancel {
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#new-agent-ok { background: #6f8f5f; color: #fff; }
+
+#new-agent-cancel { background: rgba(47, 62, 44, 0.08); color: #4a5a47; }
+
+/* ── 右键菜单 ───────────────────────────────────── */
+
+#ctx-menu {
+  position: fixed;
+  z-index: 50;
+  width: 168px;
+  background: rgba(250, 252, 246, 0.97);
+  border: 1px solid rgba(201, 165, 76, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(47, 62, 44, 0.22);
+  padding: 6px;
+}
+
+#ctx-menu[hidden] { display: none; }
+
+.ctx-title { font-size: 12px; color: rgba(47, 62, 44, 0.55); padding: 2px 8px 4px; }
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #31402f;
+  font-size: 13.5px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ctx-item:hover { background: rgba(111, 143, 95, 0.14); }
+
+.ctx-item.back:hover { background: rgba(201, 165, 76, 0.18); }
+
+.ctx-item.danger { color: #b0524f; }
+
+.ctx-item.danger:hover { background: rgba(176, 82, 79, 0.12); }
+
+.ctx-none { font-size: 12.5px; color: rgba(47, 62, 44, 0.45); padding: 2px 8px 4px; }
 
 ::-webkit-scrollbar { width: 8px; }
 
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: rgba(47, 62, 44, 0.22); border-radius: 4px; }
