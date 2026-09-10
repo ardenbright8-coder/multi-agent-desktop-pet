@@ -7,6 +7,7 @@
 // （用户正打字时不许被盖）。热键 Alt+S 撤，改 F3 = 显示/收起切换。
 
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { computeDockedBounds, HWND_BOTTOM, SWP_SINK_FLAGS } from "./dock";
@@ -19,6 +20,24 @@ export const BOOKMARK_HOTKEY = "F3";
 
 /** 沉底兜底定时器：失焦事件之外，每 2 秒再检查一遍（没聚焦就压底）。 */
 const SINK_TIMER_MS = 2_000;
+
+/** 版本戳：启动时算一次（git 短 hash + 当前时间），整个运行期不变——reload 不变，重启才变，
+ * 用户靠它一眼分辨“现在跑的是哪一版”。打包环境没 git 就只剩时间，一样能分。 */
+const PANEL_VERSION: string = (() => {
+  let hash = "";
+  try {
+    hash = execSync("git rev-parse --short HEAD", {
+      timeout: 3_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+  } catch {
+    // 打包环境 / 没 git：只显示时间，够分辨新旧。
+  }
+  const now = new Date();
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  return hash ? `${hash}·${stamp}` : stamp;
+})();
 
 let panel: BrowserWindow | null = null;
 let store: BookmarkStore | null = null;
@@ -202,8 +221,8 @@ function createPanel(): BrowserWindow {
     void shell.openExternal(url);
     return { action: "deny" };
   });
-  void win.loadFile(join(__dirname, "renderer", "index.html"))
-    .then(() => log.记("看板 loadFile promise 完成", "load"))
+  void win.loadFile(join(__dirname, "renderer", "index.html"), { query: { v: PANEL_VERSION } })
+    .then(() => log.记(`看板 loadFile promise 完成（版本 ${PANEL_VERSION}）`, "load"))
     .catch((error) => log.出事("看板 loadFile 失败", error, "load"));
   // 6 秒兜底：加载事件全都不到场（开机早期渲染器冻结实测过）就强制 show 逼它动。
   setTimeout(() => {
@@ -298,6 +317,10 @@ function registerIpc(): void {
   );
   ipcMain.handle("bookmark:hide", () => {
     panel?.hide();
+  });
+  // 局部刷新（面板内 Ctrl+R 触发，renderer 键盘监听发上来；🚨 不准改成 globalShortcut——全局会拦掉其他软件的 Ctrl+R）。
+  ipcMain.handle("bookmark:reload", () => {
+    if (panel && !panel.isDestroyed()) panel.webContents.reload();
   });
 
   // ── Agent 看板分组（2026-09-10 改版）：分组清单独立存 agents.json ──

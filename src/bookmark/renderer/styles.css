@@ -38,6 +38,14 @@ body {
 
 #titlebar .title { font-weight: 700; font-size: 16px; color: #2f3e2c; }
 
+#titlebar .title-version {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(47, 62, 44, 0.42);
+  white-space: nowrap;
+  user-select: none;
+}
+
 #titlebar .hint { margin-left: auto; font-size: 12px; opacity: 0.5; }
 
 #hide-btn {

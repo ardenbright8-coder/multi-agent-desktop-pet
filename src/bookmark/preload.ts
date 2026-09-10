@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld("bookmark", {
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),
   removeAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:remove", name),
   hide: () => ipcRenderer.invoke("bookmark:hide"),
+  reload: () => ipcRenderer.invoke("bookmark:reload"),
 });

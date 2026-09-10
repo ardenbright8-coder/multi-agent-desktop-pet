@@ -36,6 +36,17 @@ function bmDotColor(name) {
 }
 
 function bmInit() {
+  // 版本戳：主进程通过 query 传进来的（git短hash·启动时间），reload 不变重启才变——一眼分辨新旧。
+  const versionStamp = new URLSearchParams(window.location.search).get("v") ?? "";
+  const versionEl = document.getElementById("title-version");
+  if (versionEl) versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
+  // 局部 Ctrl+R：重载面板（只在本窗口监听，🚨 不注册 globalShortcut，不拦其他软件）。
+  document.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && (event.key === "r" || event.key === "R")) {
+      event.preventDefault();
+      window.bookmark.reload();
+    }
+  });
   document.getElementById("hide-btn").addEventListener("click", () => { window.bookmark.hide(); });
   document.getElementById("add-agent-btn").addEventListener("click", () => bmToggleAddAgentRow(true));
   document.getElementById("new-agent-ok").addEventListener("click", () => { void bmSubmitNewAgent(); });
