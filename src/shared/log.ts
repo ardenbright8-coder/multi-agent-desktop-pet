@@ -26,7 +26,7 @@ const KEEP_FILES = 10;
 const REPEAT_LIMIT = 3;
 
 /** 一个功能域一本，照 clawd-on-desk 的分法。要加新的域，在这儿加一个名字就行。 */
-export type LogArea = "app" | "window" | "session" | "permission";
+export type LogArea = "app" | "window" | "session" | "permission" | "bookmark";
 
 export type Level = "调试" | "记录" | "出事";
 const LEVEL_ORDER: Record<Level, number> = { 调试: 0, 记录: 1, 出事: 2 };

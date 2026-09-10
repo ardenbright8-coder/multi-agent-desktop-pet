@@ -26,3 +26,12 @@ export function eventJournalPath(): string {
 export function preferencesPath(): string {
   return join(dataDirectory(), "preferences.json");
 }
+
+// 书签台（书签板块）自己的数据夹 —— 刻意独立于 data\，跟桌宠数据分家（2026-09-09 并入拍板）。
+export function bookmarkDataDirectory(): string {
+  return join(appDataRoot(), "bookmark");
+}
+
+export function bookmarksDataPath(): string {
+  return join(bookmarkDataDirectory(), "bookmarks.json");
+}

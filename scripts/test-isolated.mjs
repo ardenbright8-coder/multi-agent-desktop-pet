@@ -23,6 +23,7 @@ for (const file of [
   "src/pet/renderer/pet.js",
   "src/pet/renderer/boot.js",
   "src/interaction/renderer/panel.js",
+  "src/bookmark/renderer/bookmark.js",
   "src/events/renderer/drawer.js",
   "scripts/install-claude-code.mjs",
   "scripts/install-pi.mjs",

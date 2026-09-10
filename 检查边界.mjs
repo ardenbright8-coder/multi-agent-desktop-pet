@@ -37,8 +37,11 @@ const allowed = {
   channel: ["shared", "events"],
   pet: ["shared", "events"],
   integrations: ["shared"],
-  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations"],
-  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "testkit"],
+  // bookmark（书签台）是 2026-09-09 并入的完全隔离大板块：只认 shared，跟桌宠本体零共享状态。
+  // 托盘入口走 app.ts 注入（PetTrayActions.openBookmark），pet 块不 import 它，反向依赖不存在。
+  bookmark: ["shared"],
+  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark"],
+  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "testkit"],
 };
 
 // ---------- 每块根上哪些文件是对外入口（别的块只准 import 这些）----------
@@ -50,6 +53,7 @@ const publicEntries = {
   channel: ["ipc-server.ts", "ipc-client.ts", "ipc-handlers.ts", "preload.ts", "cli-emit.ts"],
   pet: ["window.ts", "window-ipc.ts", "tray.ts"],
   integrations: ["manager.ts"],
+  bookmark: ["panel-window.ts", "store.ts", "preload.ts"],
   testkit: ["modes.ts", "controls-test.ts", "lifecycle.ts", "screenshot.ts", "single-instance.ts", "smoke.ts", "host.ts"],
 };
 

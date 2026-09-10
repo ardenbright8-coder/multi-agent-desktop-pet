@@ -25,6 +25,7 @@ import {
 } from "./pet/window";
 import { registerWindowIpc } from "./pet/window-ipc";
 import { createTray, createTrayActions } from "./pet/tray";
+import { closeBookmarkPanel, initBookmarkPanel, toggleBookmarkPanel } from "./bookmark/panel-window";
 import { controlsMode, lifecycleMode, screenshotMode, singleInstanceHostMode, smokeMode, testMode, testModeName } from "./testkit/modes";
 import { runControlsTest } from "./testkit/controls-test";
 import { runLifecycleTest } from "./testkit/lifecycle";
@@ -112,6 +113,12 @@ async function bootstrap(): Promise<void> {
     },
   });
   registerWindowIpc();
+  // 书签台（独立板块，2026-09-09 并入）：坏了不许连坐桌宠本体，这里兠住。
+  try {
+    initBookmarkPanel({ hotkey: !testMode });
+  } catch (error) {
+    log.出事("书签台初始化失败（不影响桌宠本体）", error, "bookmark");
+  }
   const cleanupTimer = setInterval(() => hub.cleanup(), 10_000);
   cleanupTimer.unref();
 
@@ -130,7 +137,7 @@ async function bootstrap(): Promise<void> {
 
   const mainWindow = createPetWindow(hub);
   watchDisplayChanges();
-  const trayActions = createTrayActions(hub);
+  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel });
   tray = createTray(hub, trayActions);
   hub.on("snapshot", (snapshot) => {
     const window = getPetWindow();
@@ -152,6 +159,7 @@ async function bootstrap(): Promise<void> {
     log.记("收到退出请求，开始清理", "before-quit");
     setShuttingDown(true);
     persistWindowPosition();
+    closeBookmarkPanel();
     Promise.resolve(ipcServer?.close())
       .catch(logError)
       .finally(() => {
