@@ -8,16 +8,17 @@
 
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
-import { bookmarkDataDirectory } from "../shared/paths";
+import { bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
 import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_SINK_FLAGS } from "./dock";
 import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
 import { startBookmarkCliServer } from "./cli-server";
+import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 
 const log = createLogger("bookmark");
 
@@ -163,6 +164,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
       store: {
         add: (input) => bookmarkCliAdd(input),
         list: () => bookmarkCliList(),
+        remove: (id) => bookmarkCliRemove(id),
       },
       onChanged: notifyInboxChanged,
     });
@@ -407,6 +409,9 @@ function registerIpc(): void {
 
   // ── Agent 看板分组（2026-09-10 改版）：分组清单独立存 agents.json ──
   ipcMain.handle("bookmark:agents", () => requireRoster().list());
+  // 外观设置（透明度）：读用在面板首渲染前，写由滑条防抖调（存 appearance.json）。
+  ipcMain.handle("bookmark:appearance:get", () => readBoardOpacity());
+  ipcMain.handle("bookmark:appearance:set", (_event, opacity: unknown) => writeBoardOpacity(Number(opacity)));
   ipcMain.handle("bookmark:agents:add", (_event, name: unknown) => requireRoster().add(String(name ?? "")));
   ipcMain.handle(
     "bookmark:agents:remove",
@@ -445,8 +450,8 @@ function notifyInboxChanged(): void {
   }
 }
 
-function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null } {
-  const raw = (input ?? {}) as { text?: unknown; url?: unknown; assignee?: unknown; dedupeKey?: unknown };
+function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail: string | null; kind: "note" | "handoff" } {
+  const raw = (input ?? {}) as { text?: unknown; url?: unknown; assignee?: unknown; dedupeKey?: unknown; detail?: unknown; kind?: unknown };
   const text = String(raw.text ?? "").trim();
   if (!text) throw new Error("书签内容不能为空");
   return {
@@ -454,17 +459,47 @@ function normalizeInput(input: unknown): { text: string; url: string | null; ass
     url: raw.url ? String(raw.url) : null,
     assignee: raw.assignee ? String(raw.assignee) : null,
     dedupeKey: raw.dedupeKey ? String(raw.dedupeKey) : null,
+    detail: raw.detail ? String(raw.detail) : null,
+    kind: raw.kind === "handoff" ? "handoff" : "note",
   };
 }
 
 // ── CLI 接入的读写口（cli-server 收到请求后走这里，与 UI/IPC 同一个 store 同一条管道） ──
 
 /** CLI 写入：POST /add → 与 IPC add 同一条 normalizeInput 管道，入库后由 cli-server 统一回调刷新。 */
-export function bookmarkCliAdd(input: unknown): { id: string } {
+export function bookmarkCliAdd(input: unknown): BookmarkRecord {
   return requireStore().add(normalizeInput(input));
 }
 
 /** CLI 读取：GET /list → 新→旧快照（过滤逻辑在 cli-server 纯函数里做）。 */
 export function bookmarkCliList(): BookmarkRecord[] {
   return requireStore().list();
+}
+
+/** CLI 删除：POST /remove → 与 IPC remove 同一管道；没找到返回 false。 */
+export function bookmarkCliRemove(id: string): boolean {
+  return requireStore().remove(String(id ?? ""));
+}
+
+// ── 外观设置（透明度）：appearance.json 读写（纯函数在 appearance.ts） ──
+
+function readBoardOpacity(): number {
+  try {
+    if (!existsSync(bookmarkAppearancePath())) return DEFAULT_BOARD_OPACITY;
+    return parseAppearance(readFileSync(bookmarkAppearancePath(), "utf8"));
+  } catch (error) {
+    log.出事("appearance.json 读取失败（回落默认透明度）", error, "appearance");
+    return DEFAULT_BOARD_OPACITY;
+  }
+}
+
+function writeBoardOpacity(opacity: number): number {
+  const clamped = clampOpacity(opacity);
+  try {
+    mkdirSync(bookmarkDataDirectory(), { recursive: true });
+    writeJsonAtomic(bookmarkAppearancePath(), { opacity: clamped });
+  } catch (error) {
+    log.出事("appearance.json 写盘失败（本次不记忆，看板照用）", error, "appearance");
+  }
+  return clamped;
 }

@@ -28,9 +28,20 @@
     <main id="board"></main>
 
     <footer id="board-foot">
+      <button id="settings-btn" type="button" title="设置">⚙</button>
       <button id="add-agent-btn" type="button" title="加一个 Agent 分组" hidden>＋ 加Agent</button>
       <span id="board-error" role="alert"></span>
     </footer>
+
+    <!-- 设置浮层（透明度；以后设置项往这里一行一行加） -->
+    <div id="settings-popover" hidden>
+      <div class="settings-title">设置</div>
+      <div class="settings-row">
+        <span class="settings-label">看板透明度</span>
+        <input id="opacity-slider" type="range" min="0.3" max="0.95" step="0.01" value="0.6" />
+        <span id="opacity-value" class="settings-value">60%</span>
+      </div>
+    </div>
 
     <!-- 加Agent 的内联输入行 -->
     <div id="add-agent-row" hidden>

@@ -16,7 +16,8 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: rgba(233, 239, 226, 0.72);
+  /* 透明度由设置浮层的滑条实时调（CSS 变量 --bm-alpha，存档在 appearance.json）；默认 0.6 比初版淡（用户嫌太实）。 */
+  background: rgba(233, 239, 226, var(--bm-alpha, 0.6));
   border: 1px solid rgba(201, 165, 76, 0.4);
   border-radius: 16px;
   overflow: hidden;
@@ -257,6 +258,114 @@ body {
 }
 
 .task .task-url:hover { text-decoration: underline; }
+
+/* ── 交接单（显眼：📋 标记 + 淡黄底描边，跟普通条目一眼区分） ── */
+
+.task.handoff {
+  background: rgba(250, 242, 214, 0.85);
+  border: 1px solid rgba(201, 165, 76, 0.55);
+}
+
+.task.handoff .handle { color: rgba(138, 111, 47, 0.55); }
+
+.handoff-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a6f2f;
+  background: rgba(201, 165, 76, 0.18);
+  border: 1px solid rgba(201, 165, 76, 0.45);
+  border-radius: 999px;
+  padding: 0 7px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+.task-detail {
+  margin-top: 6px;
+  padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 13px;
+  color: rgba(47, 62, 44, 0.85);
+}
+
+.task.has-detail { cursor: pointer; }
+
+.detail-fold {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #8a6f2f;
+  user-select: none;
+}
+
+/* 拖拽中：组头高亮 = 松手落到这个组 */
+
+.group-head.drag-target {
+  outline: 2px dashed rgba(201, 165, 76, 0.85);
+  outline-offset: 2px;
+  border-radius: 10px;
+  background: rgba(201, 165, 76, 0.16);
+}
+
+/* ── 设置按钮（左下角小齿轮）+ 浮层 ─────────── */
+
+#settings-btn {
+  -webkit-app-region: no-drag;
+  border: 1px solid rgba(201, 165, 76, 0.45);
+  background: rgba(255, 255, 255, 0.4);
+  color: #8a6f2f;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex: none;
+}
+
+#settings-btn:hover { background: rgba(201, 165, 76, 0.18); }
+
+#settings-popover {
+  position: fixed;
+  left: 10px;
+  bottom: 46px;
+  z-index: 60;
+  width: 240px;
+  background: rgba(250, 252, 246, 0.97);
+  border: 1px solid rgba(201, 165, 76, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(47, 62, 44, 0.22);
+  padding: 8px 10px;
+}
+
+#settings-popover[hidden] { display: none; }
+
+.settings-title {
+  font-size: 12px;
+  color: rgba(47, 62, 44, 0.55);
+  padding-bottom: 4px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-label { font-size: 13px; color: #31402f; flex: none; }
+
+.settings-value {
+  font-size: 12px;
+  color: #8a6f2f;
+  min-width: 34px;
+  text-align: right;
+}
+
+#opacity-slider { flex: 1; accent-color: #8a6f2f; }
 
 .empty {
   text-align: center;

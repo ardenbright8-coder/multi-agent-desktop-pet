@@ -41,6 +41,8 @@ function bmInit() {
   const versionStamp = new URLSearchParams(window.location.search).get("v") ?? "";
   const versionEl = document.getElementById("title-version");
   if (versionEl) versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
+  // 透明度：首渲染前先应用存档（避免闪一下旧透明度），坏档/缺档主进程回落默认。
+  void window.bookmark.getAppearance?.().then((opacity) => bmApplyOpacity(Number(opacity)));
   // 局部 Ctrl+R：重载面板（只在本窗口监听，🚨 不注册 globalShortcut，不拦其他软件）。
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && (event.key === "r" || event.key === "R")) {
@@ -49,6 +51,21 @@ function bmInit() {
     }
   });
   document.getElementById("hide-btn").addEventListener("click", () => { window.bookmark.hide(); });
+  // 设置浮层（透明度滑条；以后设置项往这个浮层里加）。
+  document.getElementById("settings-btn")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    bmToggleSettings();
+  });
+  const slider = document.getElementById("opacity-slider");
+  slider?.addEventListener("input", () => bmOnOpacityInput(Number(slider.value)));
+  slider?.addEventListener("click", (event) => event.stopPropagation());
+  // 页签在拖拽条目经过时自动切页（从待定拖到分组、或反向，中途不用松手）。
+  for (const tab of document.querySelectorAll("#page-tabs .page-tab")) {
+    tab.addEventListener("dragenter", (event) => {
+      event.preventDefault();
+      if (tab.dataset.page !== bmCurrentPage) bmSwitchPage(tab.dataset.page);
+    });
+  }
   // 页签切换：一次只见一页，每页占满面板（需求：待定/分组各自都能多放条目）。
   document.querySelectorAll("#page-tabs .page-tab").forEach((tab) => {
     tab.addEventListener("click", () => bmSwitchPage(tab.dataset.page));
@@ -67,6 +84,9 @@ function bmInit() {
     // 点菜单外面收起右键菜单。
     const menu = document.getElementById("ctx-menu");
     if (!menu.hidden && !menu.contains(event.target)) bmHideCtxMenu();
+    // 点浮层外面收起设置浮层（浮层内部点击已 stopPropagation）。
+    const pop = document.getElementById("settings-popover");
+    if (pop && !pop.hidden && !pop.contains(event.target)) pop.hidden = true;
   });
   window.addEventListener("focus", () => { void bmRefresh(); });
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
@@ -148,6 +168,21 @@ function bmBuildGroup(key, displayName, records) {
 
   const head = document.createElement("header");
   head.className = "group-head";
+  // 拖拽改派的目标：条目拖到组头上松手 = 改派到这个组（待定区组头 = 收回待定）。
+  head.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    head.classList.add("drag-target");
+  });
+  head.addEventListener("dragleave", () => { head.classList.remove("drag-target"); });
+  head.addEventListener("drop", (event) => {
+    event.preventDefault();
+    head.classList.remove("drag-target");
+    const id = event.dataTransfer ? event.dataTransfer.getData("text/bm-id") : "";
+    if (!id) return;
+    const assignee = key === BM_INBOX_KEY ? null : bmAgents.find((name) => name === key) ?? null;
+    void bmReassign(id, assignee);
+  });
+  head.addEventListener("dropend", () => { head.classList.remove("drag-target"); });
 
   const dot = document.createElement("span");
   dot.className = "dot";
@@ -210,7 +245,16 @@ function bmBuildGroup(key, displayName, records) {
 function bmBuildTask(record, groupKey, order) {
   const item = document.createElement("li");
   item.className = "task";
+  if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（📋 标记+淡黄底），一眼认出
   item.dataset.id = record.id;
+  // 拖拽改派：拖起来记 id，落到组头上由组头的 drop 处理。
+  item.draggable = true;
+  item.addEventListener("dragstart", (event) => {
+    if (event.dataTransfer) {
+      event.dataTransfer.setData("text/bm-id", record.id);
+      event.dataTransfer.effectAllowed = "move";
+    }
+  });
 
   const handle = document.createElement("button");
   handle.type = "button";
@@ -234,6 +278,12 @@ function bmBuildTask(record, groupKey, order) {
 
   const body = document.createElement("div");
   body.className = "task-body";
+  if (record.kind === "handoff") {
+    const badge = document.createElement("span");
+    badge.className = "handoff-badge";
+    badge.textContent = "📋 交接单";
+    body.appendChild(badge);
+  }
   const text = document.createElement("div");
   text.className = "task-text";
   text.textContent = record.text;
@@ -244,6 +294,24 @@ function bmBuildTask(record, groupKey, order) {
     link.href = record.url;
     link.textContent = record.url;
     body.appendChild(link);
+  }
+  // 详情（交接单的长内容）：有 detail 的条目点一下展开/收起，默认收起（板上只占标题两行）。
+  if (record.detail) {
+    const detail = document.createElement("div");
+    detail.className = "task-detail";
+    detail.textContent = record.detail;
+    detail.hidden = true;
+    body.appendChild(detail);
+    item.classList.add("has-detail");
+    const fold = document.createElement("span");
+    fold.className = "detail-fold";
+    fold.textContent = "▸ 详情";
+    body.appendChild(fold);
+    body.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest("a")) return; // 链接照常点
+      detail.hidden = !detail.hidden;
+      fold.textContent = detail.hidden ? "▸ 详情" : "▾ 收起";
+    });
   }
   item.appendChild(body);
   return item;
@@ -447,6 +515,33 @@ async function bmSubmitNewAgent() {
   } catch (error) {
     bmShowError("加分组失败了： " + bmErrorText(error));
   }
+}
+
+// ── 外观设置（透明度）：左下角小齿轮 → 浮层滑条实时预览，防抖存档 ──
+
+function bmApplyOpacity(opacity) {
+  const value = Math.min(0.95, Math.max(0.3, Number.isFinite(opacity) ? opacity : 0.6));
+  document.documentElement.style.setProperty("--bm-alpha", String(value));
+  const readout = document.getElementById("opacity-value");
+  if (readout) readout.textContent = Math.round(value * 100) + "%";
+  const slider = document.getElementById("opacity-slider");
+  if (slider && document.activeElement !== slider) slider.value = String(value);
+}
+
+function bmToggleSettings() {
+  const pop = document.getElementById("settings-popover");
+  if (!pop) return;
+  pop.hidden = !pop.hidden;
+}
+
+let bmOpacitySaveTimer = null;
+
+function bmOnOpacityInput(value) {
+  bmApplyOpacity(value); // 滑动实时预览
+  if (bmOpacitySaveTimer) window.clearTimeout(bmOpacitySaveTimer);
+  bmOpacitySaveTimer = window.setTimeout(() => {
+    void window.bookmark.setAppearance?.(Number(document.getElementById("opacity-slider").value));
+  }, 500); // 防抖半秒：滑完才落盘，不写坏盘
 }
 
 // ── 杂项 ─────────────────────────────────────────────────

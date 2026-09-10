@@ -20,12 +20,16 @@ export interface CliRecord {
   url: string | null;
   assignee: string | null;
   dedupeKey: string | null;
+  detail: string | null;
+  kind: "note" | "handoff";
   createdAt: string;
 }
 
 export interface CliStoreAdapter {
-  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null }): { id: string };
+  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff" }): CliRecord;
   list(): CliRecord[];
+  /** 删除一条（交接完自删用）；没找到返回 false。 */
+  remove(id: string): boolean;
 }
 
 export interface BookmarkCliDeps {
@@ -41,22 +45,30 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list";
+  command: "add" | "list" | "handoff" | "remove";
   text?: string;
   to?: string;
   url?: string;
+  detail?: string;
+  id?: string;
+  handoffOnly?: boolean;
   json: boolean;
 }
 
-/** 解析命令行参数。add 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
+const CLI_USAGE =
+  '用法：bookmark-cli add "内容" [--to Agent名] [--url 网址] [--json] | list [--to Agent名] [--handoff] [--json] | '
+  + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id>';
+
+/** 解析命令行参数。add/handoff 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
 export function parseCliArgs(argv: string[]): CliArgs {
   const command = argv[0];
-  if (command !== "add" && command !== "list") {
-    throw new Error(
-      '用法：bookmark-cli add "内容" [--to Agent名] [--url 网址] [--json] 或 bookmark-cli list [--to Agent名] [--json]',
-    );
+  if (command !== "add" && command !== "list" && command !== "handoff" && command !== "remove") {
+    throw new Error(CLI_USAGE);
   }
-  const args: CliArgs = { command, text: undefined, to: undefined, url: undefined, json: false };
+  const args: CliArgs = {
+    command, text: undefined, to: undefined, url: undefined,
+    detail: undefined, id: undefined, handoffOnly: false, json: false,
+  };
   const positional: string[] = [];
   for (let i = 1; i < argv.length; i++) {
     const flag = argv[i];
@@ -70,15 +82,30 @@ export function parseCliArgs(argv: string[]): CliArgs {
       const value = argv[++i];
       if (value == null) throw new Error("--url 后面要跟网址");
       args.url = value;
+    } else if (flag === "--detail") {
+      const value = argv[++i];
+      if (value == null) throw new Error("--detail 后面要跟详情内容（可长可短，不写就只有标题）");
+      args.detail = value;
+    } else if (flag === "--handoff") {
+      args.handoffOnly = true;
     } else if (flag.startsWith("--")) {
-      throw new Error(`不认识的参数 ${flag}。用法：add "内容" [--to Agent名] [--url 网址] | list [--to Agent名] [--json]`);
+      throw new Error(`不认识的参数 ${flag}。${CLI_USAGE}`);
+    } else if (command === "remove" && args.id == null) {
+      args.id = flag; // remove 的位置参数是条目 id
     } else {
       positional.push(flag);
     }
   }
-  if (command === "add") {
+  if (command === "add" || command === "handoff") {
     args.text = positional.join(" ").trim();
-    if (!args.text) throw new Error("add 缺内容不能为空（要记的话写一条：add \"内容\"）");
+    if (!args.text) {
+      throw new Error(command === "handoff"
+        ? 'handoff 缺标题不能为空（写法：handoff "标题两行内说清交了啥" [--detail 详情] [--to Agent名]）'
+        : 'add 缺内容不能为空（要记的话写一条：add "内容"）');
+    }
+  }
+  if (command === "remove" && !args.id) {
+    throw new Error('remove 缺条目 id（先 list 拿 id：remove <条目id>）');
   }
   return args;
 }
@@ -125,15 +152,51 @@ export function handleCliRequest(
     }
     return { status: 200, body: { ok: true, id: record.id } };
   }
+  if (method === "POST" && path === "/handoff") {
+    const raw = (body ?? {}) as Record<string, unknown>;
+    const text = String(raw.text ?? "").trim();
+    if (!text) return { status: 400, body: { ok: false, error: "交接单标题不能为空（两行内说清做了啥、交了啥）" } };
+    const record = ctx.store.add({
+      text,
+      url: null,
+      assignee: raw.assignee ? String(raw.assignee) : null,
+      dedupeKey: null,
+      kind: "handoff",
+      detail: raw.detail ? String(raw.detail) : null,
+    });
+    try {
+      ctx.onChanged?.();
+    } catch {
+      /* 刷新失败无所谓 */
+    }
+    return { status: 200, body: { ok: true, id: record.id, kind: record.kind } };
+  }
+  if (method === "POST" && path === "/remove") {
+    const raw = (body ?? {}) as Record<string, unknown>;
+    const id = String(raw.id ?? "").trim();
+    if (!id) return { status: 400, body: { ok: false, error: "缺条目 id" } };
+    const removed = ctx.store.remove(id);
+    if (!removed) return { status: 404, body: { ok: false, error: "没找到这条（可能已删）" } };
+    try {
+      ctx.onChanged?.();
+    } catch {
+      /* 刷新失败无所谓 */
+    }
+    return { status: 200, body: { ok: true } };
+  }
   if (method === "GET" && path === "/list") {
     const query = new URL(urlPath, "http://localhost").searchParams;
     const to = query.get("to");
-    const items = ctx.store.list().filter((record) =>
-      to ? (record.assignee ?? "").toLowerCase() === to.toLowerCase() : true,
-    );
+    const handoffOnly = query.get("handoff") === "1";
+    const items = ctx.store
+      .list()
+      .filter((record) => (handoffOnly ? record.kind === "handoff" : true))
+      .filter((record) =>
+        to ? (record.assignee ?? "").toLowerCase() === to.toLowerCase() : true,
+      );
     return { status: 200, body: { ok: true, items } };
   }
-  return { status: 404, body: { ok: false, error: "未知端点（只有 POST /add 和 GET /list）" } };
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | POST /handoff | POST /remove | GET /list）" } };
 }
 
 // ── HTTP 层（随主进程活；启动失败只记日志不连坐） ──

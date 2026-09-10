@@ -45,3 +45,8 @@ export function bookmarkNtfyConfigPath(): string {
 export function bookmarkCliPortPath(): string {
   return join(bookmarkDataDirectory(), "cli-port.json");
 }
+
+// 看板外观设置（透明度等，结构 {opacity:0.6} 预留以后加项）——appData 不进 git。
+export function bookmarkAppearancePath(): string {
+  return join(bookmarkDataDirectory(), "appearance.json");
+}

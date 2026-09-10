@@ -16,4 +16,7 @@ contextBridge.exposeInMainWorld("bookmark", {
   onInboxChanged: (callback: () => void) => {
     ipcRenderer.on("bookmark:inbox-changed", () => callback());
   },
+  // 外观设置（透明度滑条）：读用在首渲染前，写由滑条防抖调。
+  getAppearance: () => ipcRenderer.invoke("bookmark:appearance:get") as Promise<number>,
+  setAppearance: (opacity: number) => ipcRenderer.invoke("bookmark:appearance:set", opacity) as Promise<number>,
 });

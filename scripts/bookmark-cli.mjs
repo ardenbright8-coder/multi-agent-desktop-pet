@@ -55,8 +55,25 @@ try {
       body: JSON.stringify({ text: args.text, url: args.url ?? null, assignee: args.to ?? null }),
       signal: AbortSignal.timeout(5_000),
     });
+  } else if (args.command === "handoff") {
+    res = await fetch(`${base}/handoff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null }),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } else if (args.command === "remove") {
+    res = await fetch(`${base}/remove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ id: args.id }),
+      signal: AbortSignal.timeout(5_000),
+    });
   } else {
-    const query = args.to ? `?to=${encodeURIComponent(args.to)}` : "";
+    const params = new URLSearchParams();
+    if (args.to) params.set("to", args.to);
+    if (args.handoffOnly) params.set("handoff", "1");
+    const query = params.size ? `?${params.toString()}` : "";
     res = await fetch(`${base}/list${query}`, {
       headers: { Authorization: `Bearer ${cfg.token}` },
       signal: AbortSignal.timeout(5_000),
@@ -75,12 +92,17 @@ if (!res.ok || data?.ok === false) {
 // 4. 展示
 if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `✅ 已进看板（${data.id}）`);
+} else if (args.command === "handoff") {
+  console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）；接手的 AI 接完活要用 remove 删掉它`);
+} else if (args.command === "remove") {
+  console.log(args.json ? JSON.stringify(data) : "✅ 已删");
 } else if (args.json) {
   console.log(JSON.stringify(data.items, null, 2));
 } else if (!data.items?.length) {
-  console.log("（没有条目）");
+  console.log(args.handoffOnly ? "（没有待接的交接单）" : "（没有条目）");
 } else {
   for (const item of data.items) {
-    console.log(`${item.id}  [${item.assignee ?? "待定"}]  ${item.text}${item.url ? `  ${item.url}` : ""}  ${item.createdAt}`);
+    const mark = item.kind === "handoff" ? "📋 " : "";
+    console.log(`${item.id}  [${item.assignee ?? "待定"}]  ${mark}${item.text}${item.url ? `  ${item.url}` : ""}  ${item.createdAt}`);
   }
 }

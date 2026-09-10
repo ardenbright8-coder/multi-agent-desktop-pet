@@ -15,6 +15,10 @@ export interface BookmarkInput {
   assignee?: string | null;
   /** 一样的 key 重复投递只记一条（手机端离线重发去重用）。 */
   dedupeKey?: string | null;
+  /** 详情（交接单等长内容用）：看板上收起，点条目展开。缺省 null。 */
+  detail?: string | null;
+  /** 条目类型：note 普通记录（默认）/ handoff AI 交接单（看板显眼标记）。 */
+  kind?: "note" | "handoff";
 }
 
 export interface BookmarkRecord {
@@ -23,6 +27,10 @@ export interface BookmarkRecord {
   url: string | null;
   assignee: string | null;
   dedupeKey: string | null;
+  /** 详情（交接单等长内容）：板上收起，点条目展开；没有就是 null。 */
+  detail: string | null;
+  /** note 普通记录 / handoff AI 交接单（显眼标记）。旧库无此字段读入时回落 note。 */
+  kind: "note" | "handoff";
   createdAt: string;
 }
 
@@ -56,6 +64,8 @@ export class BookmarkStore {
       url: input.url ? String(input.url) : null,
       assignee: input.assignee ? String(input.assignee) : null,
       dedupeKey,
+      detail: input.detail ? String(input.detail) : null,
+      kind: input.kind === "handoff" ? "handoff" : "note",
       createdAt: new Date().toISOString(),
     };
     this.records.unshift(record);
@@ -97,7 +107,14 @@ export class BookmarkStore {
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
       if (!Array.isArray(parsed)) throw new Error("书签库顶层不是数组");
-      return parsed.filter(isRecord);
+      // 旧库没有 kind/detail 字段：读入时补齐默认（note/无详情），内存里字段永远完整。
+      return parsed
+        .filter(isRecord)
+        .map((record) => ({
+          ...record,
+          detail: typeof record.detail === "string" ? record.detail : null,
+          kind: record.kind === "handoff" ? "handoff" : "note",
+        }));
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;
       try {

@@ -103,3 +103,36 @@ test("bookmark store ignores malformed entries but keeps the good ones", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("bookmark handoff detail/kind 落库（交接单：标题+详情+显眼类型）", () => {
+  const { store, root } = tempStore();
+  try {
+    const record = store.add({
+      text: "书签台分页改完了，交给你验收",
+      kind: "handoff",
+      detail: "做了：两页签切换+角标。交出来：renderer 三件套改动，测试全绿。下一步：手机端同款分页待拍板。",
+    });
+    assert.equal(record.kind, "handoff");
+    assert.ok(record.detail?.includes("两页签"));
+    // 普通条目 kind 回落 note。
+    const plain = store.add({ text: "普通一条" });
+    assert.equal(plain.kind, "note");
+    assert.equal(plain.detail, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bookmark store 旧库没有 kind/detail 字段照常读（回落 note/无详情）", () => {
+  const { store, path, root } = tempStore();
+  try {
+    const legacy = { id: "b-legacy", text: "旧版记录", url: null, assignee: "Claude", dedupeKey: null, createdAt: "2026-09-09T00:00:00.000Z" };
+    writeFileSync(path, `${JSON.stringify([legacy])}\n`, "utf8");
+    const list = new BookmarkStore(path).list();
+    assert.equal(list.length, 1);
+    assert.equal(list[0]?.kind, "note");
+    assert.equal(list[0]?.detail, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
