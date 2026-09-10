@@ -40,3 +40,8 @@ export function bookmarksDataPath(): string {
 export function bookmarkNtfyConfigPath(): string {
   return join(bookmarkDataDirectory(), "ntfy.json");
 }
+
+// CLI 接入服务的端口发现文件（{port, token}）——本机回环，桌宠没运行时 CLI 读不到就报错退出。
+export function bookmarkCliPortPath(): string {
+  return join(bookmarkDataDirectory(), "cli-port.json");
+}

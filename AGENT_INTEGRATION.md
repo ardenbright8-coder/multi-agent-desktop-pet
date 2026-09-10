@@ -85,3 +85,27 @@ $payload | node "$env:APPDATA\AgentPetHub\integrations\agent-pet-hook.mjs" my-ag
 2. 没有 API，再查是否有稳定的 JSONL / SQLite / 结构化日志。
 3. 再没有，才做启动包装器。
 4. 不解析终端文字和颜色猜状态。
+
+## 书签看板 CLI（Agent 用命令行读写看板 · 2026-09-10）
+
+桌宠运行时，任何能跑 node 命令的 agent 都能用短命令往 **Agent 看板**写任务/结果、领任务。命令**用完即退零常驻**——连的是看板主进程内的本机小服务（127.0.0.1），桌宠没开就报「看板没开」退出，不会挂死。
+
+前提：桌宠仓 `npm run build` 过（CLI 读 dist 编译产物），node 18+。
+
+```powershell
+# 干完活报结果：进看板 Claude 分组（实时显示）
+node "E:\个人AI资源管理\10_按项目存放（某个项目专用的脚本和资料）\01_手作园（自己从0搓的·应用网页工具）\应用\多Agent桌面宠物（统一通知与权限说明）\app（Electron本体·带git）\scripts\bookmark-cli.mjs" add --to Claude "登录页改完了，等验收"
+
+# 随手记进 💭待定区（不带 --to）
+node "...同上路径...\scripts\bookmark-cli.mjs" add "明天问用户要不要加导出功能"
+
+# 领任务：列出交给某个 agent 的条目（大小写不敏感，对齐看板分组）
+node "...同上路径...\scripts\bookmark-cli.mjs" list --to Claude
+
+# 机器可读输出（JSON）
+node "...同上路径...\scripts\bookmark-cli.mjs" list --to Claude --json
+```
+
+- 端口和 token 自动写在 `%APPDATA%\AgentPetHub\bookmark\cli-port.json`（CLI 自动读，不用管）
+- 退出码：0 成功；1 看板没开/请求失败；2 参数不对
+- 写入的数据与 UI/手机端同一个库：CLI 写的看板里实时出现，右键改派/删除照常

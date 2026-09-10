@@ -8,12 +8,16 @@
 
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
-import { computeDockedBounds, HWND_BOTTOM, SWP_SINK_FLAGS } from "./dock";
+import { writeJsonAtomic } from "../shared/atomic-file";
+import { bookmarkDataDirectory } from "../shared/paths";
+import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_SINK_FLAGS } from "./dock";
 import { AgentRoster } from "./agents";
-import { BookmarkStore } from "./store";
+import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
+import { startBookmarkCliServer } from "./cli-server";
 
 const log = createLogger("bookmark");
 
@@ -21,6 +25,38 @@ export const BOOKMARK_HOTKEY = "F3";
 
 /** 沉底兜底定时器：失焦事件之外，每 2 秒再检查一遍（没聚焦就压底）。 */
 const SINK_TIMER_MS = 2_000;
+
+// ── 窗口尺寸记性（2026-09-10 用户拍板）：默认尺寸 = 用户现在拖的这个，之后手动 resize 也记住，
+// 以后每次开就是这个尺寸。只存宽高，位置永远贴右缘由几何函数算。
+
+/** 用户拍板时的实测值（2026-09-10 Win32 GetWindowRect 实测，DPI 96 无换算）：无存档时的默认尺寸。 */
+const DEFAULT_PANEL_SIZE = { width: 1025, height: 1399 };
+const WINDOW_BOUNDS_FILE = "window-bounds.json";
+const RESIZE_SAVE_DEBOUNCE_MS = 1_500;
+
+function windowBoundsPath(): string {
+  return join(bookmarkDataDirectory(), WINDOW_BOUNDS_FILE);
+}
+
+/** 读存档宽高。缺文件/坏档一律 undefined（回落默认尺寸，不炸不存证——尺寸档不值钱）。 */
+function readSavedWindowSize(): { width: number; height: number } | undefined {
+  try {
+    const path = windowBoundsPath();
+    if (!existsSync(path)) return undefined;
+    return parseSavedWindowSize(readFileSync(path, "utf8")) ?? undefined;
+  } catch (error) {
+    log.出事("看板尺寸存档读取失败（回落默认尺寸）", error, "window");
+    return undefined;
+  }
+}
+
+function writeSavedWindowSize(size: { width: number; height: number }): void {
+  try {
+    writeJsonAtomic(windowBoundsPath(), size);
+  } catch (error) {
+    log.出事("看板尺寸存盘失败（不影响使用，下次 resize 再试）", error, "window");
+  }
+}
 
 /** 版本戳：启动时算一次（git 短 hash + 当前时间），整个运行期不变——reload 不变，重启才变，
  * 用户靠它一眼分辨“现在跑的是哪一版”。打包环境没 git 就只剩时间，一样能分。 */
@@ -120,6 +156,18 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
     } catch (error) {
       log.出事("书签台常驻显示失败（不影响桌宠本体）", error, "init");
     }
+  }
+  // CLI 接入服务（2026-09-10 拍板）：本机回环小服务，AI agent 用命令行读写看板。本地功能跟邮局无关，testMode 也照常起。
+  try {
+    startBookmarkCliServer({
+      store: {
+        add: (input) => bookmarkCliAdd(input),
+        list: () => bookmarkCliList(),
+      },
+      onChanged: notifyInboxChanged,
+    });
+  } catch (error) {
+    log.出事("CLI 接入服务启动失败（看板仍可用，只是命令行连不上）", error, "cli");
   }
   log.记("书签台就绪（Agent 看板·常驻贴屏）", "init");
 }
@@ -225,6 +273,23 @@ function createPanel(): BrowserWindow {
   win.webContents.on("render-process-gone", (_e, details) =>
     log.出事(`看板渲染进程挂了：${details.reason}`, undefined, "load"));
   win.webContents.on("did-finish-load", () => log.记("看板 load：did-finish-load", "load"));
+  // 用户手动调大小 → 防抖存档（resize 事件拖动时连发，1.5 秒不动了才写盘）。
+  // 首次建窗/显示触发的 resize 也会走这里——存的值跟启动尺寸一样，幂等无害。
+  let resizeSaveTimer: NodeJS.Timeout | null = null;
+  win.on("resize", () => {
+    if (resizeSaveTimer) clearTimeout(resizeSaveTimer);
+    resizeSaveTimer = setTimeout(() => {
+      resizeSaveTimer = null;
+      try {
+        if (!win.isDestroyed()) {
+          const { width, height } = win.getBounds();
+          writeSavedWindowSize({ width, height });
+        }
+      } catch (error) {
+        log.出事("看板尺寸存档失败（不影响使用）", error, "window");
+      }
+    }, RESIZE_SAVE_DEBOUNCE_MS);
+  });
   // 失焦即沉底：用户点去别的窗口，看板立刻退到所有窗口之下，绝不挡人。
   win.on("blur", () => {
     if (!win.isDestroyed() && win.isVisible()) sinkToBottom(win);
@@ -256,7 +321,8 @@ function createPanel(): BrowserWindow {
 
 function buildWindow(): BrowserWindow {
   const workArea = screen.getPrimaryDisplay().workArea;
-  const bounds = computeDockedBounds(workArea);
+  // 有存档用存档宽高（换屏超界由 computeDockedBounds 夹住），没有用用户拍板的默认尺寸。
+  const bounds = computeDockedBounds(workArea, readSavedWindowSize() ?? DEFAULT_PANEL_SIZE);
   const base = {
     ...bounds,
     show: false,
@@ -389,4 +455,16 @@ function normalizeInput(input: unknown): { text: string; url: string | null; ass
     assignee: raw.assignee ? String(raw.assignee) : null,
     dedupeKey: raw.dedupeKey ? String(raw.dedupeKey) : null,
   };
+}
+
+// ── CLI 接入的读写口（cli-server 收到请求后走这里，与 UI/IPC 同一个 store 同一条管道） ──
+
+/** CLI 写入：POST /add → 与 IPC add 同一条 normalizeInput 管道，入库后由 cli-server 统一回调刷新。 */
+export function bookmarkCliAdd(input: unknown): { id: string } {
+  return requireStore().add(normalizeInput(input));
+}
+
+/** CLI 读取：GET /list → 新→旧快照（过滤逻辑在 cli-server 纯函数里做）。 */
+export function bookmarkCliList(): BookmarkRecord[] {
+  return requireStore().list();
 }
