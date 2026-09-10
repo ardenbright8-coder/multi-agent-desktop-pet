@@ -115,7 +115,7 @@ async function bootstrap(): Promise<void> {
   registerWindowIpc();
   // 书签台（独立板块，2026-09-09 并入）：坏了不许连坐桌宠本体，这里兠住。
   try {
-    initBookmarkPanel({ hotkey: !testMode });
+    initBookmarkPanel({ hotkey: !testMode, resident: !testMode });
   } catch (error) {
     log.出事("书签台初始化失败（不影响桌宠本体）", error, "bookmark");
   }

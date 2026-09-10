@@ -29,6 +29,7 @@
     "dist": "npm run build && electron-builder --win portable nsis --x64"
   },
   "dependencies": {
+    "koffi": "^3.2.1",
     "minisearch": "^7.2.0"
   },
   "devDependencies": {
