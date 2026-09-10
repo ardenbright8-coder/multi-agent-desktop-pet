@@ -35,3 +35,8 @@ export function bookmarkDataDirectory(): string {
 export function bookmarksDataPath(): string {
   return join(bookmarkDataDirectory(), "bookmarks.json");
 }
+
+// 收信模块的邮局配置（server/账号/主题）——含密码，放 appData 不进 git（密钥不进仓库铁律）。
+export function bookmarkNtfyConfigPath(): string {
+  return join(bookmarkDataDirectory(), "ntfy.json");
+}

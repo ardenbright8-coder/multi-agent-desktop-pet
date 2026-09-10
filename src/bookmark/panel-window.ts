@@ -13,6 +13,7 @@ import { createLogger } from "../shared/log";
 import { computeDockedBounds, HWND_BOTTOM, SWP_SINK_FLAGS } from "./dock";
 import { AgentRoster } from "./agents";
 import { BookmarkStore } from "./store";
+import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
 
 const log = createLogger("bookmark");
 
@@ -92,6 +93,8 @@ export interface BookmarkPanelOptions {
   hotkey?: boolean;
   /** 常驻模式：装配完立刻建窗并显示（贴右缘、沉底）。自测模式传 false，走旧惰性路径，别干扰测试。 */
   resident?: boolean;
+  /** 收信模块（连 ntfy 邮局收手机消息）。自测模式传 false，别连真邮局。 */
+  inbox?: boolean;
 }
 
 /** 装配口：注册 IPC（+ 可选热键、常驻显示）。书签台的任何失败在这里被吞掉记日志，不许往外炸。 */
@@ -101,6 +104,14 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   roster = new AgentRoster();
   registerIpc();
   if (options?.hotkey) registerHotkey();
+  if (options?.inbox) {
+    // 收信模块：坏了只记日志不连坐（隔离铁律）；连不上邮局会自己指数退避重连。
+    try {
+      ensureBookmarkInboxStarted({ store: requireStore(), onInboxChanged: notifyInboxChanged });
+    } catch (error) {
+      log.出事("收信模块启动失败（看板仍可用，只是收不到手机消息）", error, "inbox");
+    }
+  }
   if (options?.resident) {
     try {
       const win = ensurePanel();
@@ -150,6 +161,11 @@ export function closeBookmarkPanel(): void {
     }
   } catch (error) {
     log.出事("书签台沉底定时器清理失败", error, "close");
+  }
+  try {
+    stopBookmarkInbox();
+  } catch (error) {
+    log.出事("收信模块停止失败", error, "close");
   }
   try {
     panel?.destroy();
@@ -352,6 +368,15 @@ function requireRoster(): AgentRoster {
 function requireStore(): BookmarkStore {
   if (!store) throw new Error("书签台还没初始化（initBookmarkPanel 没被调）");
   return store;
+}
+
+/** 手机消息入库后叫面板重拉列表。通知失败无所谓（Ctrl+R 手动刷新兑底）。 */
+function notifyInboxChanged(): void {
+  try {
+    if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:inbox-changed");
+  } catch {
+    /* 面板不在就跳过，别让刷新通知出幺蛾子 */
+  }
 }
 
 function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null } {

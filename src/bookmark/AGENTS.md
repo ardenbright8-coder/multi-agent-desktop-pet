@@ -10,6 +10,7 @@
 | 文件 | 管什么 |
 |---|---|
 | `store.ts` | 本地库：增删查、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；JSON 原子写 |
+| `inbox.ts` | 收信+回执接线（2026-09-10 接通）：连邮局收手机消息→入 store→发「已收录」回执→通知面板刷新；断线指数退避重连+lastId 续读补收；配置读 `<appDataRoot>\bookmark\ntfy.json`（缺文件/坏档不启动不炸）；逻辑移植自通道夹 receiver.js，一切异常内部消化 |
 | `dock.ts` | 纯函数：贴右缘几何（宽=工作区1/3顶到底）+ Win32 沉底常量；零依赖好单测 |
 | `agents.ts` | Agent 看板分组清单（默认四组 Claude/ChatGPT/Pi Agent/Hermes + 自定义无限加），独立存 `agents.json`；坏档回落默认组 |
 | `panel-window.ts` | 面板窗口（Win11 毛玻璃）+ **常驻贴屏/总在其他窗口之下**（koffi 调 user32 SetWindowPos HWND_BOTTOM；失焦即沉底、聚焦不压、2秒兑底）+ 全局热键 F3（显示/收起切换）、本块专属 IPC（bookmark:*，含 agents:*） |
@@ -42,7 +43,7 @@ BookmarkStore（testkit 单测用）
 ## 二阶段计划（写在这防走样）
 
 - 二阶段计划里那条「桌面最底层嵌入（WorkerW）」的**用户诉求已由改版二（2026-09-10）达成**：常驻 + HWND_BOTTOM 沉底（失焦即沉、聚焦不压）。WorkerW 夹层仍是可选后续，别没事重爬。
-- ntfy 收信 + 「已收录」回执（`inbox.ts` 规划位；阿里云自建，缓存设长，带访问密码）
+- ~~ntfy 收信 + 「已收录」回执~~ **已完成（2026-09-10 接线联调）**：`inbox.ts` 已接通，收信配置在 `<appDataRoot>\bookmark\ntfy.json`（真值看通道夹 deploy\服务器信息）。唯一已知坑：配置文件别带 UTF-8 BOM（代码已刹但别故意踩）
 - 手机收发箱 APP 是**独立项目**，不在这个仓库里
 
 ## 验收

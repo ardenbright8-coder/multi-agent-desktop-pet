@@ -64,6 +64,8 @@ function bmInit() {
     if (!menu.hidden && !menu.contains(event.target)) bmHideCtxMenu();
   });
   window.addEventListener("focus", () => { void bmRefresh(); });
+  // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
+  window.bookmark.onInboxChanged?.(() => { void bmRefresh(); });
   void bmRefresh();
 }
 
