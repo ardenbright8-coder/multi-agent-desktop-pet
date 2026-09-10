@@ -16,11 +16,19 @@
       <button id="hide-btn" type="button" title="收起（F3）">─</button>
     </header>
 
-    <!-- 看板：分组全部由 bookmark.js 渲染（待定区在最上，下面是各 agent 组） -->
+    <!-- 页签栏：待定 / Agent 分组 两页切换（2026-09-10 用户拍板：上下分层改左右两页，每页占满面板能多放条目） -->
+    <nav id="page-tabs">
+      <button id="tab-inbox" type="button" class="page-tab active" data-page="inbox">
+        💭 待定 <span id="tab-inbox-count" class="tab-count">0</span>
+      </button>
+      <button id="tab-groups" type="button" class="page-tab" data-page="groups">🤖 Agent 分组</button>
+    </nav>
+
+    <!-- 看板：分组全部由 bookmark.js 渲染（按当前页签只画待定区或 agent 分组） -->
     <main id="board"></main>
 
     <footer id="board-foot">
-      <button id="add-agent-btn" type="button" title="加一个 Agent 分组">＋ 加Agent</button>
+      <button id="add-agent-btn" type="button" title="加一个 Agent 分组" hidden>＋ 加Agent</button>
       <span id="board-error" role="alert"></span>
     </footer>
 

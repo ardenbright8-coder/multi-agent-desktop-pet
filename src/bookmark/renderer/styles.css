@@ -62,6 +62,48 @@ body {
 
 #hide-btn:hover { background: rgba(47, 62, 44, 0.16); }
 
+/* ── 页签栏（待定 / Agent 分组两页切换） ─────────── */
+
+#page-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+
+.page-tab {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(201, 165, 76, 0.35);
+  background: rgba(255, 255, 255, 0.32);
+  color: rgba(47, 62, 44, 0.75);
+  border-radius: 12px;
+  padding: 5px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.page-tab:hover { background: rgba(201, 165, 76, 0.15); }
+
+.page-tab.active {
+  background: rgba(201, 165, 76, 0.22);
+  border-color: rgba(201, 165, 76, 0.7);
+  color: #5f4d1e;
+}
+
+.tab-count {
+  min-width: 20px;
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #8a6f2f;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
 /* ── 看板 ───────────────────────────────────────── */
 
 #board {

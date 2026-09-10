@@ -10,6 +10,7 @@ const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
 let bmCollapsed = bmLoadCollapsed();
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
+let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组（2026-09-10 拍板的两页切换）
 
 function bmLoadCollapsed() {
   try {
@@ -48,6 +49,10 @@ function bmInit() {
     }
   });
   document.getElementById("hide-btn").addEventListener("click", () => { window.bookmark.hide(); });
+  // 页签切换：一次只见一页，每页占满面板（需求：待定/分组各自都能多放条目）。
+  document.querySelectorAll("#page-tabs .page-tab").forEach((tab) => {
+    tab.addEventListener("click", () => bmSwitchPage(tab.dataset.page));
+  });
   document.getElementById("add-agent-btn").addEventListener("click", () => bmToggleAddAgentRow(true));
   document.getElementById("new-agent-ok").addEventListener("click", () => { void bmSubmitNewAgent(); });
   document.getElementById("new-agent-cancel").addEventListener("click", () => bmToggleAddAgentRow(false));
@@ -108,11 +113,32 @@ function bmRenderBoard(records) {
   const board = document.getElementById("board");
   board.textContent = "";
   const { inbox, byAgent } = bmGroupRecords(records);
-  board.appendChild(bmBuildGroup(BM_INBOX_KEY, "💭 待定（想想区）", inbox));
-  for (const name of bmAgents) {
-    board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
+  // 待定页签角标：两页都实时跟真数据对上（在分组页也能看到待定又多了几条）。
+  const tabCount = document.getElementById("tab-inbox-count");
+  if (tabCount) tabCount.textContent = String(inbox.length);
+  // 一次只画当前页：待定页占满面板；分组页显示各 agent 组（加Agent 按钮只在分组页有意义）。
+  if (bmCurrentPage === "inbox") {
+    board.appendChild(bmBuildGroup(BM_INBOX_KEY, "💭 待定（想想区）", inbox));
+  } else {
+    for (const name of bmAgents) {
+      board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
+    }
   }
   bmRestoreOpenComposer();
+}
+
+/** 切页签：改 active 态、重画 board、加Agent 按钮跟页走（待定页没它的事）。 */
+function bmSwitchPage(page) {
+  if (page !== "inbox" && page !== "groups") return;
+  if (page === bmCurrentPage) return;
+  bmCurrentPage = page;
+  bmOpenComposerGroup = null; // 切页收起正在展开的输入行
+  bmToggleAddAgentRow(false); // 收起加Agent 行（幂等）
+  document.getElementById("add-agent-btn").hidden = page !== "groups";
+  document.querySelectorAll("#page-tabs .page-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.page === page);
+  });
+  bmRenderCurrent();
 }
 
 function bmBuildGroup(key, displayName, records) {
