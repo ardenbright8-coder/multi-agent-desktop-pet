@@ -19,6 +19,7 @@ import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
 import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
+import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, resolveProjectPath } from "./projects";
 
 const log = createLogger("bookmark");
 
@@ -412,6 +413,29 @@ function registerIpc(): void {
   // 外观设置（透明度）：读用在面板首渲染前，写由滑条防抖调（存 appearance.json）。
   ipcMain.handle("bookmark:appearance:get", () => readBoardOpacity());
   ipcMain.handle("bookmark:appearance:set", (_event, opacity: unknown) => writeBoardOpacity(Number(opacity)));
+  // ── 📁 项目文件夹（2026-09-11 拍板）：真实文件夹+真实 md，存 bookmark\projects\；open 走系统默认程序 ──
+  ipcMain.handle("bookmark:projects:list", (_event, relative: unknown) => {
+    ensureProjectsRoot();
+    return listProjects(projectsRoot(), String(relative ?? ""));
+  });
+  ipcMain.handle("bookmark:projects:mkdir", (_event, payload: unknown) => {
+    const { parent, name } = (payload ?? {}) as { parent?: unknown; name?: unknown };
+    ensureProjectsRoot();
+    return createProjectFolder(projectsRoot(), String(parent ?? ""), String(name ?? ""));
+  });
+  ipcMain.handle("bookmark:projects:touch", (_event, payload: unknown) => {
+    const { parent, name } = (payload ?? {}) as { parent?: unknown; name?: unknown };
+    ensureProjectsRoot();
+    return createProjectMarkdown(projectsRoot(), String(parent ?? ""), String(name ?? ""));
+  });
+  ipcMain.handle("bookmark:projects:open", async (_event, relative: unknown) => {
+    // 先过安全闸（越界拒绝），再交系统默认程序（用户 md 关联了脑图应用）。
+    ensureProjectsRoot();
+    const abs = resolveProjectPath(projectsRoot(), String(relative ?? ""));
+    const errorMessage = await shell.openPath(abs);
+    if (errorMessage) throw new Error(`打不开：${errorMessage}`);
+    return true;
+  });
   ipcMain.handle("bookmark:agents:add", (_event, name: unknown) => requireRoster().add(String(name ?? "")));
   ipcMain.handle(
     "bookmark:agents:remove",

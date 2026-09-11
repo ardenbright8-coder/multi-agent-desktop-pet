@@ -50,3 +50,8 @@ export function bookmarkCliPortPath(): string {
 export function bookmarkAppearancePath(): string {
   return join(bookmarkDataDirectory(), "appearance.json");
 }
+
+// 📁 项目文件夹（2026-09-11 拍板：真实文件夹+真实 md 存这，跟书签库同窝不撒外面）。
+export function bookmarkProjectsDirectory(): string {
+  return join(bookmarkDataDirectory(), "projects");
+}

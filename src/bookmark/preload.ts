@@ -19,4 +19,9 @@ contextBridge.exposeInMainWorld("bookmark", {
   // 外观设置（透明度滑条）：读用在首渲染前，写由滑条防抖调。
   getAppearance: () => ipcRenderer.invoke("bookmark:appearance:get") as Promise<number>,
   setAppearance: (opacity: number) => ipcRenderer.invoke("bookmark:appearance:set", opacity) as Promise<number>,
+  // 📁 项目文件夹（第三页签）：真实文件夹+真实 md，存 bookmark\projects\；open 交系统默认程序。
+  projectsList: (relative: string) => ipcRenderer.invoke("bookmark:projects:list", relative),
+  projectsMkdir: (parent: string, name: string) => ipcRenderer.invoke("bookmark:projects:mkdir", { parent, name }),
+  projectsTouch: (parent: string, name: string) => ipcRenderer.invoke("bookmark:projects:touch", { parent, name }),
+  projectsOpen: (relative: string) => ipcRenderer.invoke("bookmark:projects:open", relative),
 });

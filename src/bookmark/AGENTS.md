@@ -11,6 +11,7 @@
 |---|---|
 | `store.ts` | 本地库：增删查、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；条目带 `detail`（详情，交接单等长内容）与 `kind`（note 普通 / handoff 交接单），旧库读入自动补齐默认；JSON 原子写 |
 | `appearance.ts` | 看板外观纯函数：透明度解析/夹取（范围 0.30–0.95，默认 0.6，坏档回落默认）；存取 IO 在 panel-window（appearance.json） |
+| `projects.ts` | 📁 项目文件夹（2026-09-11 第三页签）：真实文件夹+真实 md 存 bookmark\projects\（paths.bookmarkProjectsDirectory）；纯函数（名字校验 sanitizeEntryName/路径安全 resolveProjectPath 防 ../ 穿越）+IO（列表只露夹和 md/建夹/建 md 自动补后缀落标题行）；open 由 panel-window 调 shell.openPath 走系统默认程序；UI 在 renderer 项目页（悬停夹自动弹目录预览、单击进夹、新建夹/md）；手机端不做此功能（用户拍板） |
 | `cli-server.ts` | CLI 接入服务：主进程内 127.0.0.1 小服务（端口+token 写 cli-port.json），agent 命令行读写看板（add/list/handoff/remove）；数据只走 panel-window 注入的适配器，绝不直写 bookmarks.json（主进程内存会覆盖直写） |
 | `inbox.ts` | 收信+回执接线（2026-09-10 接通）：连邮局收手机消息→入 store→发「已收录」回执→通知面板刷新；断线指数退避重连+lastId 续读补收；配置读 `<appDataRoot>\bookmark\ntfy.json`（缺文件/坏档不启动不炸）；逻辑移植自通道夹 receiver.js，一切异常内部消化 |
 | `dock.ts` | 纯函数：贴右缘几何（宽=工作区1/3顶到底）+ Win32 沉底常量；零依赖好单测 |

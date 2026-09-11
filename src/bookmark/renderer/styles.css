@@ -493,3 +493,138 @@ body {
 ::-webkit-scrollbar { width: 8px; }
 
 ::-webkit-scrollbar-thumb { background: rgba(47, 62, 44, 0.22); border-radius: 4px; }
+
+/* ── 📁 项目（第三页签：真实文件夹+真实 md，2026-09-11 拍板）───────────── */
+
+.proj-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 8px;
+  flex-wrap: wrap;
+}
+
+.proj-crumbs {
+  flex: 1;
+  font-size: 12px;
+  color: rgba(47, 62, 44, 0.62);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proj-up,
+.proj-new-btn {
+  border: 1px solid rgba(201, 165, 76, 0.45);
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 9px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.proj-up:hover,
+.proj-new-btn:hover { background: rgba(255, 255, 255, 0.85); }
+
+.proj-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.proj-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.proj-row:hover { background: rgba(255, 255, 255, 0.72); }
+
+.proj-icon { flex: none; }
+
+.proj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proj-row.is-file .proj-name { color: rgba(47, 62, 44, 0.78); }
+
+.proj-empty { cursor: default; }
+.proj-empty:hover { background: transparent; }
+
+.proj-new-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 8px;
+}
+
+.proj-new-row input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(201, 165, 76, 0.4);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  padding: 6px 9px;
+}
+
+.proj-new-row input:focus { outline: 1px solid rgba(201, 165, 76, 0.75); }
+
+.proj-new-ok,
+.proj-new-cancel {
+  border: 1px solid rgba(201, 165, 76, 0.45);
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 9px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.proj-new-ok:hover,
+.proj-new-cancel:hover { background: rgba(255, 255, 255, 0.85); }
+
+/* 悬停文件夹自动弹的目录预览（不用点）：小卡片贴行右侧。 */
+#proj-pop {
+  position: fixed;
+  z-index: 60;
+  min-width: 160px;
+  max-width: 240px;
+  background: rgba(250, 252, 246, 0.97);
+  border: 1px solid rgba(201, 165, 76, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(47, 62, 44, 0.22);
+  padding: 7px 9px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+#proj-pop[hidden] { display: none; }
+
+.proj-pop-title {
+  font-weight: 600;
+  color: rgba(47, 62, 44, 0.85);
+  padding-bottom: 4px;
+  border-bottom: 1px dashed rgba(201, 165, 76, 0.35);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proj-pop-line { padding: 1px 0; color: rgba(47, 62, 44, 0.75); }
+
+.proj-pop-empty { color: rgba(47, 62, 44, 0.45); padding: 1px 0; }

@@ -22,6 +22,7 @@
         💭 待定 <span id="tab-inbox-count" class="tab-count">0</span>
       </button>
       <button id="tab-groups" type="button" class="page-tab" data-page="groups">🤖 Agent 分组</button>
+      <button id="tab-projects" type="button" class="page-tab" data-page="projects">📁 项目</button>
     </nav>
 
     <!-- 看板：分组全部由 bookmark.js 渲染（按当前页签只画待定区或 agent 分组） -->
@@ -52,6 +53,9 @@
 
     <!-- 右键/点手柄弹出的派给菜单（内容由 js 填） -->
     <div id="ctx-menu" hidden></div>
+
+    <!-- 📁 项目：悬停文件夹自动弹的目录预览（不用点，用户原话） -->
+    <div id="proj-pop" hidden></div>
   </div>
   <script src="bookmark.js"></script>
 </body>

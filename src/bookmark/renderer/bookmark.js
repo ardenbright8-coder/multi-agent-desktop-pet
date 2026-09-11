@@ -11,7 +11,7 @@ const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
 let bmCollapsed = bmLoadCollapsed();
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
-let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组（2026-09-10 拍板的两页切换）
+let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组 / projects = 📁 项目（2026-09-11 加第三页）
 
 function bmLoadCollapsed() {
   try {
@@ -140,9 +140,11 @@ function bmRenderBoard(records) {
   // 待定页签角标：两页都实时跟真数据对上（在分组页也能看到待定又多了几条）。
   const tabCount = document.getElementById("tab-inbox-count");
   if (tabCount) tabCount.textContent = String(inbox.length);
-  // 一次只画当前页：待定页占满面板；分组页显示各 agent 组（加Agent 按钮只在分组页有意义）。
+  // 一次只画当前页：待定页占满面板；分组页显示各 agent 组（加Agent 按钮只在分组页有意义）；项目页走真实文件夹浏览器。
   if (bmCurrentPage === "inbox") {
     board.appendChild(bmBuildGroup(BM_INBOX_KEY, "💭 待定（想想区）", inbox));
+  } else if (bmCurrentPage === "projects") {
+    void bmRenderProjects();
   } else {
     for (const name of bmAgents) {
       board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
@@ -155,7 +157,7 @@ function bmRenderBoard(records) {
 
 /** 切页签：改 active 态、重画 board、加Agent 按钮跟页走（待定页没它的事）。 */
 function bmSwitchPage(page) {
-  if (page !== "inbox" && page !== "groups") return;
+  if (page !== "inbox" && page !== "groups" && page !== "projects") return;
   if (page === bmCurrentPage) return;
   bmCurrentPage = page;
   bmOpenComposerGroup = null; // 切页收起正在展开的输入行
@@ -388,6 +390,230 @@ function bmBuildHandoffZone(records) {
     group.appendChild(list);
   }
   return group;
+}
+
+// ── 📁 项目文件夹（第三页签：真实文件夹+真实 md，用户拍板）───────────────
+
+let bmProjectsCwd = ""; // 当前所在相对路径（"" = projects 根）
+let bmProjectsMode = null; // 新建输入行目标："folder" / "md" / null
+
+/** 项目页渲染：返回上一级、新建两钮、当前夹列表（夹优先）；悬停夹自动弹目录预览。 */
+async function bmRenderProjects() {
+  const board = document.getElementById("board");
+  board.textContent = "";
+  bmHideProjPop();
+  board.dataset.page = "projects";
+
+  const bar = document.createElement("div");
+  bar.className = "proj-bar";
+  // 返回上一级：根上没有（已是顶层）。
+  if (bmProjectsCwd) {
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "proj-up";
+    up.textContent = "⬅ 上一级";
+    up.addEventListener("click", () => {
+      bmProjectsCwd = bmProjectsCwd.includes("/") ? bmProjectsCwd.slice(0, bmProjectsCwd.lastIndexOf("/")) : "";
+      void bmRenderProjects();
+    });
+    bar.appendChild(up);
+  }
+  const crumbs = document.createElement("span");
+  crumbs.className = "proj-crumbs";
+  crumbs.textContent = "📁 项目" + (bmProjectsCwd ? " / " + bmProjectsCwd.split("/").join(" / ") : "");
+  bar.appendChild(crumbs);
+  const newFolder = document.createElement("button");
+  newFolder.type = "button";
+  newFolder.className = "proj-new-btn";
+  newFolder.textContent = "＋ 新建项目夹";
+  newFolder.addEventListener("click", () => bmToggleProjNewRow("folder"));
+  bar.appendChild(newFolder);
+  const newMd = document.createElement("button");
+  newMd.type = "button";
+  newMd.className = "proj-new-btn";
+  newMd.textContent = "＋ 新建.md";
+  newMd.addEventListener("click", () => bmToggleProjNewRow("md"));
+  bar.appendChild(newMd);
+  board.appendChild(bar);
+
+  // 新建输入行（folder/md 两用，动态建——避免静态节点跨页搬家）。
+  if (bmProjectsMode) board.appendChild(bmBuildProjNewRow(bmProjectsMode));
+
+  let listing;
+  try {
+    listing = await window.bookmark.projectsList(bmProjectsCwd);
+  } catch (error) {
+    bmShowError("项目夹读不出来： " + bmErrorText(error));
+    return;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "proj-list";
+  if (!listing.dirs.length && !listing.files.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty proj-empty";
+    empty.textContent = bmProjectsCwd ? "这个夹还是空的，点上面建项目夹或建 .md。" : "还没有项目夹，点上面「＋ 新建项目夹」开一个。";
+    list.appendChild(empty);
+  }
+  for (const dir of listing.dirs) list.appendChild(bmBuildProjectRow(dir));
+  for (const file of listing.files) list.appendChild(bmBuildProjectRow(file));
+  board.appendChild(list);
+}
+
+/** 单行：文件夹（单击进入+悬停自动弹目录预览）/ md（单击系统默认程序打开）。 */
+function bmBuildProjectRow(entry) {
+  const row = document.createElement("li");
+  row.className = "proj-row" + (entry.isDir ? " is-dir" : " is-file");
+  row.dataset.rel = entry.relPath;
+
+  const icon = document.createElement("span");
+  icon.className = "proj-icon";
+  icon.textContent = entry.isDir ? "📁" : "📄";
+  row.appendChild(icon);
+
+  const name = document.createElement("span");
+  name.className = "proj-name";
+  name.textContent = entry.name;
+  row.appendChild(name);
+
+  if (entry.isDir) {
+    // 悬停自动弹目录预览（用户原话：鼠标碰到就弹，不用点）；半秒延迟防乱弹。
+    let hoverTimer = null;
+    row.addEventListener("mouseenter", () => {
+      hoverTimer = window.setTimeout(() => { void bmShowProjPop(entry, row); }, 500);
+    });
+    row.addEventListener("mouseleave", () => {
+      if (hoverTimer) window.clearTimeout(hoverTimer);
+      bmHideProjPop();
+    });
+    row.addEventListener("click", () => {
+      bmProjectsCwd = entry.relPath;
+      void bmRenderProjects();
+    });
+  } else {
+    row.addEventListener("click", () => { void window.bookmark.projectsOpen(entry.relPath); });
+  }
+  return row;
+}
+
+/** 悬停预览：列出该夹里有什么（夹优先），贴着行右边弹。 */
+async function bmShowProjPop(entry, anchor) {
+  const pop = document.getElementById("proj-pop");
+  pop.textContent = "";
+  const title = document.createElement("div");
+  title.className = "proj-pop-title";
+  title.textContent = entry.name;
+  pop.appendChild(title);
+  try {
+    const sub = await window.bookmark.projectsList(entry.relPath);
+    const names = [...sub.dirs, ...sub.files].map((item) => (item.isDir ? "📁 " : "📄 ") + item.name);
+    if (!names.length) {
+      const empty = document.createElement("div");
+      empty.className = "proj-pop-empty";
+      empty.textContent = "（空夹）";
+      pop.appendChild(empty);
+    } else {
+      for (const line of names.slice(0, 8)) {
+        const item = document.createElement("div");
+        item.className = "proj-pop-line";
+        item.textContent = line;
+        pop.appendChild(item);
+      }
+      if (names.length > 8) {
+        const more = document.createElement("div");
+        more.className = "proj-pop-empty";
+        more.textContent = `…还有 ${names.length - 8} 项`;
+        pop.appendChild(more);
+      }
+    }
+  } catch (error) {
+    const err = document.createElement("div");
+    err.className = "proj-pop-empty";
+    err.textContent = "读不了： " + bmErrorText(error);
+    pop.appendChild(err);
+  }
+  const panelRect = document.getElementById("app").getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  pop.hidden = false;
+  let left = rect.right - panelRect.left + 8;
+  if (left + 200 > panelRect.width) left = Math.max(6, rect.left - panelRect.left - 206);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${Math.max(6, rect.top - panelRect.top)}px`;
+}
+
+function bmHideProjPop() {
+  const pop = document.getElementById("proj-pop");
+  if (pop) pop.hidden = true;
+}
+
+/** 新建输入行开关（folder/md 两用，全局一行）。 */
+function bmToggleProjNewRow(mode) {
+  if (bmProjectsMode === mode) {
+    bmProjectsMode = null;
+  } else {
+    bmProjectsMode = mode;
+  }
+  bmHideProjPop();
+  void bmRenderProjects();
+}
+
+/** 新建输入行（folder/md 两用，动态建——照 composer 的样式路子）。 */
+function bmBuildProjNewRow(mode) {
+  const wrap = document.createElement("div");
+  wrap.className = "proj-new-row";
+  const kind = document.createElement("span");
+  kind.className = "proj-new-kind";
+  kind.textContent = mode === "folder" ? "📁" : "📄";
+  wrap.appendChild(kind);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 60;
+  input.placeholder = mode === "folder" ? "项目夹名字（如：毕业旅行）" : "文档名字（自动补 .md）";
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void bmSubmitProjNew(mode, input.value);
+    }
+    if (event.key === "Escape") {
+      bmProjectsMode = null;
+      void bmRenderProjects();
+    }
+  });
+  wrap.appendChild(input);
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "proj-new-cancel";
+  cancel.textContent = "取消";
+  cancel.addEventListener("click", () => {
+    bmProjectsMode = null;
+    void bmRenderProjects();
+  });
+  wrap.appendChild(cancel);
+  const ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = "proj-new-ok";
+  ok.textContent = "创建";
+  ok.addEventListener("click", () => { void bmSubmitProjNew(mode, input.value); });
+  wrap.appendChild(ok);
+  window.requestAnimationFrame(() => input.focus());
+  return wrap;
+}
+
+async function bmSubmitProjNew(mode, rawValue) {
+  const name = String(rawValue ?? "").trim();
+  if (!name) {
+    bmShowError("先写个名字");
+    return;
+  }
+  try {
+    if (mode === "folder") await window.bookmark.projectsMkdir(bmProjectsCwd, name);
+    else await window.bookmark.projectsTouch(bmProjectsCwd, name);
+    bmProjectsMode = null;
+    bmShowError("");
+    await bmRenderProjects();
+  } catch (error) {
+    bmShowError("建失败了： " + bmErrorText(error));
+  }
 }
 
 // ── 组内输入行（⊕ 展开的内联输入）──────────────────────
