@@ -2,10 +2,11 @@
 // 坏档不挡路：挪到 .corrupt-<时间戳> 存证后空库重来（照 events\event-journal 的先例）。
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
-import { bookmarksDataPath } from "../shared/paths";
+import { attachmentsRoot, bookmarksDataPath } from "../shared/paths";
 
 const log = createLogger("bookmark");
 
@@ -19,6 +20,8 @@ export interface BookmarkInput {
   detail?: string | null;
   /** 条目类型：note 普通记录（默认）/ handoff AI 交接单（看板显眼标记）。 */
   kind?: "note" | "handoff";
+  /** 贴图文件名（不含路径）；真文件在 attachments\。创建时传入就按原样落盘，不拷贝。 */
+  attachments?: string[];
 }
 
 export interface BookmarkRecord {
@@ -31,6 +34,8 @@ export interface BookmarkRecord {
   detail: string | null;
   /** note 普通记录 / handoff AI 交接单（显眼标记）。旧库无此字段读入时回落 note。 */
   kind: "note" | "handoff";
+  /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
+  attachments: string[];
   createdAt: string;
 }
 
@@ -66,6 +71,7 @@ export class BookmarkStore {
       dedupeKey,
       detail: input.detail ? String(input.detail) : null,
       kind: input.kind === "handoff" ? "handoff" : "note",
+      attachments: normalizeAttachmentNames(input.attachments),
       createdAt: new Date().toISOString(),
     };
     this.records.unshift(record);
@@ -80,6 +86,24 @@ export class BookmarkStore {
     if (this.records.length === before) return false;
     this.save();
     return true;
+  }
+
+  /** 把源图拷进 bookmark\attachments\（文件名加条目 id 前缀防撞），再追到该条 attachments。没这条返 null。 */
+  addAttachment(id: string, sourcePath: string): BookmarkRecord | null {
+    this.ensureLoaded();
+    const record = this.records.find((item) => item.id === id);
+    if (!record) return null;
+    const src = String(sourcePath ?? "").trim();
+    if (!src || !existsSync(src) || !statSync(src).isFile()) {
+      throw new Error("贴图源文件不存在");
+    }
+    const dir = attachmentsRoot();
+    mkdirSync(dir, { recursive: true });
+    const stored = uniqueAttachmentName(dir, record.id, src);
+    copyFileSync(src, join(dir, stored));
+    record.attachments = [...record.attachments, stored];
+    this.save();
+    return record;
   }
 
   setAssignee(id: string, assignee: string | null): BookmarkRecord | null {
@@ -107,13 +131,14 @@ export class BookmarkStore {
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.path, "utf8"));
       if (!Array.isArray(parsed)) throw new Error("书签库顶层不是数组");
-      // 旧库没有 kind/detail 字段：读入时补齐默认（note/无详情），内存里字段永远完整。
+      // 旧库没有 kind/detail/attachments 字段：读入时补齐默认（note/无详情/无图），内存里字段永远完整。
       return parsed
         .filter(isRecord)
         .map((record) => ({
           ...record,
           detail: typeof record.detail === "string" ? record.detail : null,
           kind: record.kind === "handoff" ? "handoff" : "note",
+          attachments: normalizeAttachmentNames(record.attachments),
         }));
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;
@@ -137,4 +162,30 @@ function isRecord(value: unknown): value is BookmarkRecord {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   return typeof record.id === "string" && typeof record.text === "string" && typeof record.createdAt === "string";
+}
+
+/** JSON 只存文件名：丢掉路径，空名/. /.. 丢掉。 */
+function normalizeAttachmentNames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const names: string[] = [];
+  for (const item of raw) {
+    const name = basename(String(item ?? "").trim());
+    if (!name || name === "." || name === "..") continue;
+    names.push(name);
+  }
+  return names;
+}
+
+/** `${条目id}-${原文件名}`，重名再加 -n 防撞。 */
+function uniqueAttachmentName(dir: string, id: string, sourcePath: string): string {
+  const original = basename(sourcePath).trim() || "image";
+  let stored = `${id}-${original}`;
+  let n = 1;
+  while (existsSync(join(dir, stored))) {
+    const ext = extname(original);
+    const stem = original.slice(0, original.length - ext.length) || "image";
+    stored = `${id}-${stem}-${n}${ext}`;
+    n += 1;
+  }
+  return stored;
 }

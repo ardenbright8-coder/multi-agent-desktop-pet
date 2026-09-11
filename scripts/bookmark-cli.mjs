@@ -52,7 +52,7 @@ try {
     res = await fetch(`${base}/add`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
-      body: JSON.stringify({ text: args.text, url: args.url ?? null, assignee: args.to ?? null }),
+      body: JSON.stringify({ text: args.text, url: args.url ?? null, assignee: args.to ?? null, attach: args.attach ?? [] }),
       signal: AbortSignal.timeout(5_000),
     });
   } else if (args.command === "handoff") {
@@ -103,6 +103,7 @@ if (args.command === "add") {
 } else {
   for (const item of data.items) {
     const mark = item.kind === "handoff" ? "📋 " : "";
-    console.log(`${item.id}  [${item.assignee ?? "待定"}]  ${mark}${item.text}${item.url ? `  ${item.url}` : ""}  ${item.createdAt}`);
+    const pics = Array.isArray(item.attachments) && item.attachments.length ? `  ${item.attachments.join(" ")}` : "";
+    console.log(`${item.id}  [${item.assignee ?? "待定"}]  ${mark}${item.text}${item.url ? `  ${item.url}` : ""}${pics}  ${item.createdAt}`);
   }
 }

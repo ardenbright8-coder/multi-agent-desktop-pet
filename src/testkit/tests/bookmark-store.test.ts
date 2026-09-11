@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BookmarkStore } from "../../bookmark/store";
+import { attachmentsRoot } from "../../shared/paths";
 
 function tempStore(): { store: BookmarkStore; path: string; root: string } {
   const root = mkdtempSync(join(tmpdir(), "agent-pet-bookmark-"));
@@ -19,6 +20,7 @@ test("bookmark add/list is newest first and rejects empty text", () => {
     const list = store.list();
     assert.deepEqual(list.map((record) => record.id), [second.id, first.id]);
     assert.equal(list[0].url, "https://example.com/a");
+    assert.deepEqual(list[0].attachments, []);
     assert.equal(list[1].assignee, null);
     assert.throws(() => store.add({ text: "   " }), /内容不能为空/);
     assert.equal(store.count(), 2);
@@ -132,7 +134,48 @@ test("bookmark store 旧库没有 kind/detail 字段照常读（回落 note/无�
     assert.equal(list.length, 1);
     assert.equal(list[0]?.kind, "note");
     assert.equal(list[0]?.detail, null);
+    assert.deepEqual(list[0]?.attachments, []);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bookmark attachments 字段创建时传入、落盘、读回原样", () => {
+  const { store, path, root } = tempStore();
+  try {
+    const record = store.add({ text: "带图的条目", attachments: ["shot.png", "C:\\pics\\note.jpg"] });
+    assert.deepEqual(record.attachments, ["shot.png", "note.jpg"]);
+    const reloaded = new BookmarkStore(path).list();
+    assert.deepEqual(reloaded[0]?.attachments, ["shot.png", "note.jpg"]);
+    assert.match(readFileSync(path, "utf8"), /"shot.png"/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bookmark addAttachment 拷贝进 attachments 并写字段", () => {
+  const { store, path, root } = tempStore();
+  const prev = process.env.AGENT_PET_HUB_HOME;
+  process.env.AGENT_PET_HUB_HOME = root;
+  try {
+    const record = store.add({ text: "要贴图" });
+    const src = join(root, "src.png");
+    writeFileSync(src, "fake-png-bytes");
+    const updated = store.addAttachment(record.id, src);
+    assert.ok(updated);
+    assert.equal(updated.attachments.length, 1);
+    const storedName = updated.attachments[0];
+    assert.equal(storedName, `${record.id}-src.png`);
+    const dest = join(attachmentsRoot(), storedName);
+    assert.ok(existsSync(dest));
+    assert.equal(readFileSync(dest, "utf8"), "fake-png-bytes");
+    const reloaded = new BookmarkStore(path).list();
+    assert.deepEqual(reloaded[0]?.attachments, [storedName]);
+    assert.equal(store.addAttachment("no-such-id", src), null);
+    assert.throws(() => store.addAttachment(record.id, join(root, "missing.png")), /贴图源文件不存在/);
+  } finally {
+    if (prev === undefined) delete process.env.AGENT_PET_HUB_HOME;
+    else process.env.AGENT_PET_HUB_HOME = prev;
     rmSync(root, { recursive: true, force: true });
   }
 });

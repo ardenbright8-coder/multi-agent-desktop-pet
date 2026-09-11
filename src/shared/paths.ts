@@ -55,3 +55,8 @@ export function bookmarkAppearancePath(): string {
 export function bookmarkProjectsDirectory(): string {
   return join(bookmarkDataDirectory(), "projects");
 }
+
+// 看板条目贴图：JSON 只存文件名，真文件统一落 bookmark\attachments\（PC/手机各自本地存，跨端同步后续做）。
+export function attachmentsRoot(): string {
+  return join(bookmarkDataDirectory(), "attachments");
+}

@@ -8,9 +8,10 @@
 
 import { createServer, type Server } from "node:http";
 import { randomBytes } from "node:crypto";
+import { basename, join } from "node:path";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
-import { bookmarkCliPortPath } from "../shared/paths";
+import { attachmentsRoot, bookmarkCliPortPath } from "../shared/paths";
 
 const log = createLogger("bookmark");
 
@@ -22,14 +23,18 @@ export interface CliRecord {
   dedupeKey: string | null;
   detail: string | null;
   kind: "note" | "handoff";
+  /** list 出口会把文件名展开成 attachmentsRoot 下的完整路径。 */
+  attachments: string[];
   createdAt: string;
 }
 
 export interface CliStoreAdapter {
-  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff" }): CliRecord;
+  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff"; attachments?: string[] }): CliRecord;
   list(): CliRecord[];
   /** 删除一条（交接完自删用）；没找到返回 false。 */
   remove(id: string): boolean;
+  /** 拷源图进 attachments\ 并追到该条；没这条返 null。接线在 panel-window 适配器。 */
+  addAttachment?(id: string, sourcePath: string): CliRecord | null;
 }
 
 export interface BookmarkCliDeps {
@@ -53,10 +58,12 @@ export interface CliArgs {
   id?: string;
   handoffOnly?: boolean;
   json: boolean;
+  /** add --attach 的源图片路径（可多次）。 */
+  attach: string[];
 }
 
 const CLI_USAGE =
-  '用法：bookmark-cli add "内容" [--to Agent名] [--url 网址] [--json] | list [--to Agent名] [--handoff] [--json] | '
+  '用法：bookmark-cli add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | list [--to Agent名] [--handoff] [--json] | '
   + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id>';
 
 /** 解析命令行参数。add/handoff 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
@@ -67,7 +74,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   const args: CliArgs = {
     command, text: undefined, to: undefined, url: undefined,
-    detail: undefined, id: undefined, handoffOnly: false, json: false,
+    detail: undefined, id: undefined, handoffOnly: false, json: false, attach: [],
   };
   const positional: string[] = [];
   for (let i = 1; i < argv.length; i++) {
@@ -86,6 +93,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
       const value = argv[++i];
       if (value == null) throw new Error("--detail 后面要跟详情内容（可长可短，不写就只有标题）");
       args.detail = value;
+    } else if (flag === "--attach") {
+      const value = argv[++i];
+      if (value == null) throw new Error("--attach 后面要跟图片路径（可写多次各贴一张）");
+      args.attach.push(value);
     } else if (flag === "--handoff") {
       args.handoffOnly = true;
     } else if (flag.startsWith("--")) {
@@ -139,17 +150,40 @@ export function handleCliRequest(
     const raw = (body ?? {}) as Record<string, unknown>;
     const text = String(raw.text ?? "").trim();
     if (!text) return { status: 400, body: { ok: false, error: "内容不能为空" } };
+    const attachSources = collectAttachSources(raw.attach);
     const record = ctx.store.add({
       text,
       url: raw.url ? String(raw.url) : null,
       assignee: raw.assignee ? String(raw.assignee) : null,
       dedupeKey: raw.dedupeKey ? String(raw.dedupeKey) : null,
     });
+    let attachError: CliReply | null = null;
+    if (attachSources.length) {
+      const addAttachment = ctx.store.addAttachment;
+      if (typeof addAttachment !== "function") {
+        attachError = { status: 500, body: { ok: false, error: "看板还不支持贴图（主进程未接线 addAttachment）" } };
+      } else {
+        for (const src of attachSources) {
+          try {
+            const updated = addAttachment(record.id, src);
+            if (!updated) {
+              attachError = { status: 404, body: { ok: false, error: "条目不在了，贴图没加上" } };
+              break;
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            attachError = { status: 400, body: { ok: false, error: message } };
+            break;
+          }
+        }
+      }
+    }
     try {
       ctx.onChanged?.();
     } catch {
       /* 刷新失败无所谓，别影响回包 */
     }
+    if (attachError) return attachError;
     return { status: 200, body: { ok: true, id: record.id } };
   }
   if (method === "POST" && path === "/handoff") {
@@ -193,10 +227,28 @@ export function handleCliRequest(
       .filter((record) => (handoffOnly ? record.kind === "handoff" : true))
       .filter((record) =>
         to ? (record.assignee ?? "").toLowerCase() === to.toLowerCase() : true,
-      );
+      )
+      .map(withAttachmentPaths);
     return { status: 200, body: { ok: true, items } };
   }
   return { status: 404, body: { ok: false, error: "未知端点（POST /add | POST /handoff | POST /remove | GET /list）" } };
+}
+
+function collectAttachSources(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((item) => String(item ?? "").trim()).filter(Boolean);
+  }
+  if (typeof raw === "string" && raw.trim()) return [raw.trim()];
+  return [];
+}
+
+/** list 给 Agent 的是完整路径，拿去就能读图；库里仍只存文件名。 */
+function withAttachmentPaths(record: CliRecord): CliRecord {
+  const names = record.attachments ?? [];
+  return {
+    ...record,
+    attachments: names.map((name) => join(attachmentsRoot(), basename(name))),
+  };
 }
 
 // ── HTTP 层（随主进程活；启动失败只记日志不连坐） ──
