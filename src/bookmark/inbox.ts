@@ -6,6 +6,8 @@
 //
 // 协议（跟手机端 lib/core/models.dart 对齐）：ntfy message 字段装业务 JSON 字符串：
 //   {"v":1,"type":"note|bookmark|task|cmd","content":"...","assignee":"","ts":123,"dedupeKey":"..."}
+// 兼容一层：手机端 publish 把 ntfy 发布 JSON（topic/title/message）整包 POST 到 /{topic} 时，
+// 邮局把整包当 message 存。外层没有 dedupeKey，内层 message 才是业务 JSON；回执也必须用内层。
 // type=cmd 只入库绝不执行（手机端约定）；回执 = 原业务 JSON 原样回发到 receipt 主题，手机端按 dedupeKey 对账。
 
 import { existsSync, readFileSync } from "node:fs";
@@ -177,11 +179,12 @@ function subscribe(config: NtfyInboxConfig, options: BookmarkInboxOptions): Book
 
   const handleMessage = (evt: NtfyEvent): void => {
     const raw = typeof evt.message === "string" ? evt.message : "";
-    const payload = tryDecodePayload(raw);
-    if (!payload) {
+    const decoded = tryDecodePayload(raw);
+    if (!decoded) {
       log.出事(`非协议消息跳过（不入库不回执）: ${raw.slice(0, 80)}`, undefined, "inbox");
       return;
     }
+    const payload = decoded.payload;
     // 入库（dedupeKey 去重是手机端离线重发的防重复闸；重复投递 add 幂等返回旧记录）。
     // type=cmd 也只入库绝不执行（手机端约定）。
     options.store.add({
@@ -196,7 +199,8 @@ function subscribe(config: NtfyInboxConfig, options: BookmarkInboxOptions): Book
     } catch {
       /* 通知刷新失败无所谓，Ctrl+R 还能手动刷 */
     }
-    void sendReceipt(config, raw, sink);
+    // 回执必须是内层业务 JSON：手机端按 dedupeKey 对账；外层 ntfy 发布包没有顶层 dedupeKey。
+    void sendReceipt(config, decoded.receiptMessage, sink);
   };
 
   connect();
@@ -223,8 +227,32 @@ interface BusinessPayload {
   dedupeKey: string;
 }
 
-/** 解析业务 JSON（照手机端 LedgerEntry.tryDecodePayload 的等价校验：dedupeKey 必须是非空字符串）。垃圾数据返回 null。 */
-function tryDecodePayload(raw: string): BusinessPayload | null {
+interface DecodedPayload {
+  payload: BusinessPayload;
+  /** 回执原样回发用：永远是内层业务 JSON（有顶层 dedupeKey），不是 ntfy 发布包。 */
+  receiptMessage: string;
+}
+
+/** 解析业务 JSON（照手机端 LedgerEntry.tryDecodePayload 的等价校验：dedupeKey 必须是非空字符串）。垃圾数据返回 null。
+ *  兼容一层：手机端 publish 把 ntfy 发布 JSON（topic/title/message）整包 POST 到 /{topic}，
+ *  邮局把整包当 message 存。外层没有 dedupeKey，内层 message 才是业务 JSON。 */
+function tryDecodePayload(raw: string): DecodedPayload | null {
+  const direct = decodeBusiness(raw);
+  if (direct) return { payload: direct, receiptMessage: raw };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const nested = (parsed as Record<string, unknown>).message;
+    if (typeof nested !== "string" || !nested) return null;
+    const inner = decodeBusiness(nested);
+    if (!inner) return null;
+    return { payload: inner, receiptMessage: nested };
+  } catch {
+    return null;
+  }
+}
+
+function decodeBusiness(raw: string): BusinessPayload | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;

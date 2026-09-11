@@ -129,6 +129,60 @@ test("inbox dedupeKey 重发：只入库一条，回执照发两回（幂等不�
   }
 });
 
+test("inbox 兼容 ntfy 发布 JSON 整包塞进 message：剥一层入库+回执用内层业务 JSON", async () => {
+  const root = tempRoot();
+  const inner = businessMessage("APP整包发送", "key-wrapped-1", "Claude");
+  const wrapped = JSON.stringify({
+    topic: "bookmark-up",
+    title: "给 Claude",
+    message: inner,
+    tags: ["bookmark_tabs"],
+  });
+  const mock = await startMockNtfy("bookmark-up", [
+    JSON.stringify({ id: "msg-wrap", event: "message", message: wrapped }),
+  ]);
+  const configPath = writeConfig(root, { server: mock.url });
+  const store = new BookmarkStore(join(root, "bookmarks.json"));
+  try {
+    const handle = startBookmarkInbox({ store, configPath, reconnectBaseMs: 10 });
+    await waitFor(() => store.count() === 1);
+    await waitFor(() => mock.receipts.length >= 1);
+    assert.equal(store.list()[0]?.text, "APP整包发送");
+    assert.equal(store.list()[0]?.assignee, "Claude");
+    assert.equal(store.list()[0]?.dedupeKey, "key-wrapped-1");
+    assert.equal(mock.receipts[0]?.message, inner);
+    handle.stop();
+  } finally {
+    mock.server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inbox 发布信封整包但内层不是业务 JSON：跳过不入库不回执", async () => {
+  const root = tempRoot();
+  const wrapped = JSON.stringify({
+    topic: "bookmark-up",
+    title: "给 Claude",
+    message: "这是句人话不是业务JSON",
+    tags: ["bookmark_tabs"],
+  });
+  const mock = await startMockNtfy("bookmark-up", [
+    JSON.stringify({ id: "msg-wrap-junk", event: "message", message: wrapped }),
+  ]);
+  const configPath = writeConfig(root, { server: mock.url });
+  const store = new BookmarkStore(join(root, "bookmarks.json"));
+  try {
+    const handle = startBookmarkInbox({ store, configPath, reconnectBaseMs: 10 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(store.count(), 0);
+    assert.equal(mock.receipts.length, 0);
+    handle.stop();
+  } finally {
+    mock.server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("inbox 非协议消息：跳过不入库不回执", async () => {
   const root = tempRoot();
   const mock = await startMockNtfy("bookmark-up", [
