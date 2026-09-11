@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_SINK_FLAGS } from "../../bookmark/dock";
+import {
+  computeDockedBounds,
+  parseSavedWindowSize,
+  pinToggleSteps,
+  HWND_BOTTOM,
+  HWND_TOPMOST,
+  HWND_NOTOPMOST,
+  SWP_ZORDER_FLAGS,
+} from "../../bookmark/dock";
 
 const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
 
@@ -30,10 +38,36 @@ test("窄屏兜底：宽至少 320，不许挤没了", () => {
   assert.equal(b.x, 600 - 320);
 });
 
-test("Win32 沉底参数：压到最底、不动位置尺寸、不抢激活", () => {
+test("Win32 Z 序参数：不动位置尺寸、不抢激活；沉底/提顶常量跟 Win32 对齐", () => {
   assert.equal(HWND_BOTTOM, 1);
+  assert.equal(HWND_TOPMOST, -1);
+  assert.equal(HWND_NOTOPMOST, -2);
   // SWP_NOSIZE(0x1) | SWP_NOMOVE(0x2) | SWP_NOACTIVATE(0x10)
-  assert.equal(SWP_SINK_FLAGS, 0x13);
+  assert.equal(SWP_ZORDER_FLAGS, 0x13);
+});
+
+// ── F1 置顶开关（2026-09-11 拍板）：纯决策 pinToggleSteps，状态只有 F1 翻转 ──
+
+test("F1 没置顶时按一下：一步提顶（HWND_TOPMOST），标志翻成已置顶", () => {
+  assert.deepEqual(pinToggleSteps(false), [{ insertAfter: HWND_TOPMOST, pinnedAfter: true }]);
+});
+
+test("F1 已置顶再按一下：先 NOTOPMOST 摘样式再 BOTTOM 沉底，两步顺序不能反", () => {
+  // 只发 HWND_BOTTOM 摘不掉 WS_EX_TOPMOST（窗悬在置顶层内、仍压着所有普通窗口），
+  // 所以摘样式必须先于沉底。
+  const steps = pinToggleSteps(true);
+  assert.deepEqual(steps, [
+    { insertAfter: HWND_NOTOPMOST, pinnedAfter: false },
+    { insertAfter: HWND_BOTTOM, pinnedAfter: false },
+  ]);
+  assert.equal(steps[steps.length - 1].insertAfter, HWND_BOTTOM);
+});
+
+test("F1 开关对称：按两下回到起点，标志位不反复横跳", () => {
+  // false → true → false：每按一次只翻转一次，中间态干净。
+  const up = pinToggleSteps(false);
+  const down = pinToggleSteps(up[up.length - 1].pinnedAfter);
+  assert.equal(down[down.length - 1].pinnedAfter, false);
 });
 
 // ── 用户拍板（2026-09-10）：默认尺寸=用户拖的尺寸，记住手动调整，以后默认开就这个 ──

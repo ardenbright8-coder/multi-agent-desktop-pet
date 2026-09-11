@@ -7,10 +7,11 @@ contextBridge.exposeInMainWorld("bookmark", {
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   remove: (id: string) => ipcRenderer.invoke("bookmark:remove", id),
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
+  // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
+  updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),
   agents: () => ipcRenderer.invoke("bookmark:agents"),
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),
   removeAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:remove", name),
-  hide: () => ipcRenderer.invoke("bookmark:hide"),
   reload: () => ipcRenderer.invoke("bookmark:reload"),
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   onInboxChanged: (callback: () => void) => {

@@ -49,20 +49,6 @@ body {
 
 #titlebar .hint { margin-left: auto; font-size: 12px; opacity: 0.5; }
 
-#hide-btn {
-  -webkit-app-region: no-drag;
-  border: 0;
-  background: rgba(47, 62, 44, 0.08);
-  color: inherit;
-  border-radius: 8px;
-  width: 26px;
-  height: 22px;
-  cursor: pointer;
-  line-height: 1;
-}
-
-#hide-btn:hover { background: rgba(47, 62, 44, 0.16); }
-
 /* ── 页签栏（待定 / Agent 分组两页切换） ─────────── */
 
 #page-tabs {
@@ -210,19 +196,7 @@ body {
 
 .composer-err { color: #b0524f; font-size: 12.5px; margin-right: auto; min-height: 1em; }
 
-.g-ok, .g-cancel {
-  border: 0;
-  border-radius: 8px;
-  padding: 4px 12px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.g-ok { background: #6f8f5f; color: #fff; }
-
-.g-ok:hover { filter: brightness(1.08); }
-
-.g-cancel { background: rgba(47, 62, 44, 0.08); color: #4a5a47; }
+/* 「记下来/取消」钮已撤（改版三 2026-09-11）：边写边自动存，写了就是写了，不用点保存。 */
 
 /* ── 任务行 ─────────────────────────────────────── */
 

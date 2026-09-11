@@ -115,6 +115,20 @@ export class BookmarkStore {
     return record;
   }
 
+  /** 改一条的正文/链接（看板输入行自动存档用，2026-09-11 改版三：同一份草稿跟着改同一条，
+   *  不另开新条；清空由 renderer 走 remove，这里空文照样拒）。找不到返回 null。 */
+  updateText(id: string, text: string, url?: string | null): BookmarkRecord | null {
+    this.ensureLoaded();
+    const record = this.records.find((item) => item.id === id);
+    if (!record) return null;
+    const next = String(text ?? "").trim();
+    if (!next) throw new Error("书签内容不能为空");
+    record.text = next;
+    record.url = url ? String(url) : null;
+    this.save();
+    return record;
+  }
+
   count(): number {
     this.ensureLoaded();
     return this.records.length;

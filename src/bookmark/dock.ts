@@ -51,7 +51,34 @@ function clamp(value: number, min: number, max: number): number {
 
 /** Win32：HWND_BOTTOM = 压到 Z 序最底；SWP 组合 = 不动位置尺寸、不抢激活。 */
 export const HWND_BOTTOM = 1;
+/** Win32：HWND_TOPMOST = 提到最上层（带上 WS_EX_TOPMOST，压在所有普通窗口之上）；
+ *  HWND_NOTOPMOST = 摘掉置顶样式回普通层。F1 置顶开关用（2026-09-11 用户拍板）。 */
+export const HWND_TOPMOST = -1;
+export const HWND_NOTOPMOST = -2;
 export const SWP_NOSIZE = 0x0001;
 export const SWP_NOMOVE = 0x0002;
 export const SWP_NOACTIVATE = 0x0010;
-export const SWP_SINK_FLAGS = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE;
+/** 沉底/提顶共用的 SWP 组合：只动 Z 序，不动位置尺寸、不抢激活。 */
+export const SWP_ZORDER_FLAGS = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE;
+
+/** F1 置顶开关的一步：SetWindowPos 的 hWndInsertAfter + 这步做完后的置顶态。 */
+export interface PinStep {
+  insertAfter: number;
+  pinnedAfter: boolean;
+}
+
+/** F1 置顶开关的纯决策（状态机，2026-09-11 拍板）：
+ *  - 没置顶 → 一步：HWND_TOPMOST 提到最上层；
+ *  - 已置顶 → 两步：先 HWND_NOTOPMOST 摘掉置顶样式，再 HWND_BOTTOM 沉回普通层最底。
+ *    只发 HWND_BOTTOM 摘不掉 WS_EX_TOPMOST（窗会悬在置顶层内部，仍压着所有普通窗口），
+ *    所以必须先摘样式再沉底，落点跟启动时的常驻沉底完全一致。
+ *  状态只有 F1 走这里翻转；失焦自动沉底/2秒兜底照旧只发 HWND_BOTTOM（置顶时=置顶层内沉底），
+ *  不碰标志位——不会反复横跳。 */
+export function pinToggleSteps(pinned: boolean): PinStep[] {
+  return pinned
+    ? [
+        { insertAfter: HWND_NOTOPMOST, pinnedAfter: false },
+        { insertAfter: HWND_BOTTOM, pinnedAfter: false },
+      ]
+    : [{ insertAfter: HWND_TOPMOST, pinnedAfter: true }];
+}

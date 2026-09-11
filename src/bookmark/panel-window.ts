@@ -4,7 +4,11 @@
 //
 // 改版二（2026-09-10 用户拍板）：看板**常驻贴屏**——启动即显示、贴主屏右缘占 1/3 宽、
 // **总在其他窗口之下**（压在桌面上、被别的窗口盖，绝不挡人）；失焦即沉底，聚焦期间不压
-// （用户正打字时不许被盖）。热键 Alt+S 撤，改 F3 = 显示/收起切换。
+// （用户正打字时不许被盖）。
+// 改版三（2026-09-11 用户拍板）：F3 显示/收起撤销——看板**永远常驻显示**（启动自动显示、
+// 失焦 2 秒自动沉底 HWND_BOTTOM 保留不动）；新增 F1 = 置顶/沉底开关：按一下提至最上层
+// （koffi SetWindowPos HWND_TOPMOST），再按一下沉回最底层；与失焦自动沉底共存，
+// 状态标志位只有 F1 翻转（纯函数 pinToggleSteps 在 dock.ts，单测覆盖）。
 
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -13,7 +17,7 @@ import { BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron"
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
-import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_SINK_FLAGS } from "./dock";
+import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_ZORDER_FLAGS, pinToggleSteps } from "./dock";
 import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
@@ -23,7 +27,8 @@ import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listPro
 
 const log = createLogger("bookmark");
 
-export const BOOKMARK_HOTKEY = "F3";
+/** 全局热键：F1 = 置顶/沉底开关（改版三 2026-09-11 拍板；旧 F3 显示/收起已撤）。 */
+export const BOOKMARK_HOTKEY = "F1";
 
 /** 沉底兜底定时器：失焦事件之外，每 2 秒再检查一遍（没聚焦就压底）。 */
 const SINK_TIMER_MS = 2_000;
@@ -86,6 +91,9 @@ let pendingShow = false;
 let rendererReady = false;
 let sinkTimer: NodeJS.Timeout | null = null;
 let sinkWarned = false;
+/** F1 置顶态标志：true = 看板带着 WS_EX_TOPMOST（提在所有普通窗口之上）。
+ *  只有 F1 开关（toggleBoardPin）翻转它；失焦沉底/2秒兑底照旧只发 HWND_BOTTOM，不碰这标志。 */
+let pinnedTopmost = false;
 
 // koffi（Win32 SetWindowPos）惰性加载：加载失败只警告一次，看板照常工作（只是不沉底），
 // 隔离铁律——这里出任何幺蛾子不许连坐桌宠本体。
@@ -119,10 +127,33 @@ function sinkToBottom(win: BrowserWindow): void {
     if (!fn || win.isDestroyed()) return;
     // getNativeWindowHandle() 是 HWND 的字节串；64 位下读 BigInt 塞进 uintptr_t。
     const hwndBig = win.getNativeWindowHandle().readBigUInt64LE(0);
-    const ok = fn(hwndBig, BigInt(HWND_BOTTOM), 0, 0, 0, 0, SWP_SINK_FLAGS);
+    const ok = fn(hwndBig, BigInt(HWND_BOTTOM), 0, 0, 0, 0, SWP_ZORDER_FLAGS);
     if (!ok) log.出事("SetWindowPos 返回 false（沉底没生效）", undefined, "window");
   } catch (error) {
     log.出事("沉底失败（不影响使用）", error, "window");
+  }
+}
+
+/** F1 置顶开关：提顶（HWND_TOPMOST）↔ 沉回最底层（先 NOTOPMOST 摘样式再 BOTTOM，纯函数
+ *  pinToggleSteps 给步骤）。标志位只有这里翻转；失败时保持旧状态，别让标志跟实际 Z 序劈叉。 */
+function toggleBoardPin(): void {
+  const win = panel;
+  if (!win || win.isDestroyed()) return;
+  try {
+    const fn = loadSink();
+    if (!fn) return; // koffi 不可用已警告过一次：无从置顶，保持原状。
+    const hwndBig = win.getNativeWindowHandle().readBigUInt64LE(0);
+    for (const step of pinToggleSteps(pinnedTopmost)) {
+      const ok = fn(hwndBig, BigInt(step.insertAfter), 0, 0, 0, 0, SWP_ZORDER_FLAGS);
+      if (!ok) {
+        log.出事(`SetWindowPos(${step.insertAfter}) 返回 false（F1 置顶开关没生效）`, undefined, "window");
+        return;
+      }
+      pinnedTopmost = step.pinnedAfter;
+    }
+    log.记(pinnedTopmost ? "F1：看板置顶（再按一次沉回最底层）" : "F1：看板沉回最底层", "window");
+  } catch (error) {
+    log.出事("F1 置顶开关失败（不影响使用）", error, "window");
   }
 }
 
@@ -175,23 +206,16 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   log.记("书签台就绪（Agent 看板·常驻贴屏）", "init");
 }
 
-/** 显示/收起面板（热键和托盘都走这里）。 */
+/** 托盘入口（app.ts 注入 pet 托盘）：看板已永远常驻显示，这里的「打开」= F1 同款置顶开关
+ *  （提上来好看见，再点一下沉回去）。旧的显示/收起 toggle 已随 F3 一起撤（改版三）。 */
 export function toggleBookmarkPanel(): void {
   try {
-    if (!panel) {
-      panel = createPanel();
-      pendingShow = true;
-      if (rendererReady) showDocked(panel);
-      startSinkTimer();
-      return;
-    }
-    if (panel.isVisible()) {
-      panel.hide();
-      return;
-    }
-    showDocked(panel);
+    const win = ensurePanel();
+    // 常驻不该隐藏；万一处于隐藏态先拉回来，别让托盘点了没反应。
+    if (!win.isVisible()) showDocked(win);
+    toggleBoardPin();
   } catch (error) {
-    log.出事("书签台显示/收起失败", error, "toggle");
+    log.出事("书签台置顶开关失败（托盘入口）", error, "toggle");
   }
 }
 
@@ -229,12 +253,12 @@ export function closeBookmarkPanel(): void {
 function registerHotkey(): void {
   if (hotkeyRegistered) return;
   try {
-    const ok = globalShortcut.register(BOOKMARK_HOTKEY, toggleBookmarkPanel);
+    const ok = globalShortcut.register(BOOKMARK_HOTKEY, toggleBoardPin);
     hotkeyRegistered = ok;
-    if (ok) log.记(`全局热键已注册 ${BOOKMARK_HOTKEY}（显示/收起）`, "init");
-    else log.出事(`全局热键 ${BOOKMARK_HOTKEY} 注册失败（被别的程序占了？书签台仍常驻显示，可从托盘开关）`, undefined, "init");
+    if (ok) log.记(`全局热键已注册 ${BOOKMARK_HOTKEY}（置顶/沉底开关）`, "init");
+    else log.出事(`全局热键 ${BOOKMARK_HOTKEY} 注册失败（被别的程序占了？看板仍常驻显示，置顶可从托盘开关）`, undefined, "init");
   } catch (error) {
-    log.出事("热键注册异常（书签台仍常驻显示，可从托盘开关）", error, "init");
+    log.出事("热键注册异常（看板仍常驻显示，置顶可从托盘开关）", error, "init");
   }
 }
 
@@ -263,7 +287,7 @@ function createPanel(): BrowserWindow {
         try {
           win.show();
         } catch {
-          /* 真没救了，留在隐藏态，托盘/F3 还能开 */
+          /* 真没救了，留在隐藏态，托盘入口还能拉（托盘点击会兜底重 show） */
         }
       }
     }
@@ -337,7 +361,8 @@ function buildWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    // 🚨 常驻沉底窗口：永远不置顶（置顶层级是桌宠窗口的，抢层级会打架）。
+    // 🚨 常驻沉底窗口：默认不置顶（Electron alwaysOnTop 层级是桌宠窗口的，抢层级会打架）。
+    // F1 置顶走 SetWindowPos(HWND_TOPMOST)，不碰 alwaysOnTop 状态（改版三）。
     alwaysOnTop: false,
     backgroundColor: "#00000000",
     webPreferences: {
@@ -400,9 +425,15 @@ function registerIpc(): void {
       return requireStore().setAssignee(String(id), assignee == null || assignee === "" ? null : String(assignee));
     },
   );
-  ipcMain.handle("bookmark:hide", () => {
-    panel?.hide();
-  });
+  // 输入行自动存档（2026-09-11 改版三）：草稿入库后边写边改同一条（renderer 防抖 400ms + 失焦必落盘，写了就是写了）。
+  ipcMain.handle(
+    "bookmark:update-text",
+    (_event, payload: unknown) => {
+      const { id, text, url } = (payload ?? {}) as { id?: unknown; text?: unknown; url?: unknown };
+      return requireStore().updateText(String(id), String(text ?? ""), url ? String(url) : null);
+    },
+  );
+  // 旧 bookmark:hide（收起面板）已随 F3 一起撤（改版三：看板永远常驻显示）。
   // 局部刷新（面板内 Ctrl+R 触发，renderer 键盘监听发上来；🚨 不准改成 globalShortcut——全局会拦掉其他软件的 Ctrl+R）。
   ipcMain.handle("bookmark:reload", () => {
     if (panel && !panel.isDestroyed()) panel.webContents.reload();

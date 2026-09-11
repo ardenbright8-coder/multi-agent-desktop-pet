@@ -1,12 +1,14 @@
-// Agent 看板界面（2026-09-10 照用户原型图改版）：分组条目、⊕无限加、💭待定区、无手动确认按钮。
+// Agent 看板界面（2026-09-10 照用户原型图改版）：分组条目、⊕无限加、💭待定区。
 // 🚨 函数名一律 bm 前缀：跟 pet renderer 共享全局作用域池（边界检查②会扫），别撞名。
-// 🚫 行尾没有任何"确认/发送"圆钮——记一条自动同步（用户原话：麻烦死了）。
+// 🚫 全程没有「确认/发送/取消」钮——任务行改动自动同步；组内输入行边写边自动存
+// （2026-09-11 改版三，用户原话：写了就是写了，不用点保存）。
 
 const BM_INBOX_KEY = "__inbox__"; // 💭 待定（想想区）：assignee 为空的普通条目都归这（交接单归专区，见下）
 const BM_HANDOFF_ZONE_KEY = "__handoff_zone__"; // 📋 交接单专区：AI 写的未派发交接单默认落这（Agent分组页最底部·＋加Agent按钮上方，用户拍板位置别挪）
 const BM_DEFAULT_ASSIGNEES = ["Claude", "ChatGPT", "Pi Agent", "Hermes"]; // 仅渲染兜底用，真名单以主进程为准
 const BM_COLLAPSE_STORAGE_KEY = "bm-collapsed-groups";
 const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "#b9a0c9", "#c9b47f", "#9fb8c9"];
+const bmOpenDetails = new Set(); // 点开过详情的条目 id：输入行自动存档会触发重画，别把人手点开的详情洗掉
 
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
 let bmCollapsed = bmLoadCollapsed();
@@ -51,7 +53,6 @@ function bmInit() {
       window.bookmark.reload();
     }
   });
-  document.getElementById("hide-btn").addEventListener("click", () => { window.bookmark.hide(); });
   // 设置浮层（透明度滑条；以后设置项往这个浮层里加）。
   document.getElementById("settings-btn")?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -304,20 +305,23 @@ function bmBuildTask(record, groupKey, order) {
     body.appendChild(link);
   }
   // 详情（交接单的长内容）：有 detail 的条目点一下展开/收起，默认收起（板上只占标题两行）。
+  // 展开态记进 bmOpenDetails：自动存档/改派触发重画后还原，别把点开的手气洗掉。
   if (record.detail) {
     const detail = document.createElement("div");
     detail.className = "task-detail";
     detail.textContent = record.detail;
-    detail.hidden = true;
+    detail.hidden = !bmOpenDetails.has(record.id);
     body.appendChild(detail);
     item.classList.add("has-detail");
     const fold = document.createElement("span");
     fold.className = "detail-fold";
-    fold.textContent = "▸ 详情";
+    fold.textContent = detail.hidden ? "▸ 详情" : "▾ 收起";
     body.appendChild(fold);
     body.addEventListener("click", (event) => {
       if (event.target instanceof Element && event.target.closest("a")) return; // 链接照常点
       detail.hidden = !detail.hidden;
+      if (detail.hidden) bmOpenDetails.delete(record.id);
+      else bmOpenDetails.add(record.id);
       fold.textContent = detail.hidden ? "▸ 详情" : "▾ 收起";
     });
   }
@@ -616,7 +620,98 @@ async function bmSubmitProjNew(mode, rawValue) {
   }
 }
 
-// ── 组内输入行（⊕ 展开的内联输入）──────────────────────
+// ── 组内输入行（⊕ 展开的内联输入；改版三 2026-09-11：边写边自动存，无「记下来/取消」钮）──
+
+// 自动存档纪律（用户原话：写了就是写了，不用点保存）：打字防抖 400ms 落库；失焦/回车/⊕收起
+// 必落盘；一份草稿只对应一条（首笔 add，之后 updateText 改同一条，别存出好几条）；
+// 框清空 = 把存出来的那条删掉（框空=没这回事）。
+const BM_COMPOSER_SAVE_DEBOUNCE_MS = 400;
+// 当前草稿（一次只有一组输入行开着，一份就够）：groupKey=属于哪组；id=这份草稿落库生成的
+// 条目（null=还没存过）；text=框里现值。
+let bmComposerDraft = null;
+let bmComposerSaveTimer = null;
+// 失焦/防抖/收起可能背靠背触发：落库串行排队，别并发重复入库。
+let bmComposerChain = Promise.resolve();
+
+function bmScheduleComposerSave(groupKey, input) {
+  if (bmComposerSaveTimer) window.clearTimeout(bmComposerSaveTimer);
+  bmComposerSaveTimer = window.setTimeout(() => {
+    bmComposerSaveTimer = null;
+    void bmComposerCommit(groupKey, { input });
+  }, BM_COMPOSER_SAVE_DEBOUNCE_MS);
+}
+
+/** 落库入口：排进串行队列（执行时才读最新草稿，排队期间接着打的字不会丢）。 */
+function bmComposerCommit(groupKey, opts = {}) {
+  const run = bmComposerChain.then(() => bmComposerCommitNow(groupKey, opts));
+  bmComposerChain = run.catch(() => { /* 失败已在框上报错，别让队列断 */ });
+  return run;
+}
+
+async function bmComposerCommitNow(groupKey, opts = {}) {
+  if (bmComposerSaveTimer) {
+    window.clearTimeout(bmComposerSaveTimer);
+    bmComposerSaveTimer = null;
+  }
+  const draft = bmComposerDraft && bmComposerDraft.groupKey === groupKey ? bmComposerDraft : null;
+  if (!draft) {
+    // 框开着但一个字没打过：没得存；收起路径照样收。
+    if (opts.close && bmOpenComposerGroup === groupKey) {
+      bmOpenComposerGroup = null;
+      await bmRefresh();
+    }
+    return;
+  }
+  const hadFocus = opts.input ? document.activeElement === opts.input : false;
+  const caret = hadFocus && opts.input ? opts.input.selectionStart : null;
+  const text = String(draft.text ?? "").trim();
+  try {
+    if (!text) {
+      // 框清空了：这份草稿存出来的那条跟着删；本来就没存过就无事。
+      if (draft.id) {
+        await window.bookmark.remove(draft.id);
+        draft.id = null;
+      }
+    } else if (draft.id) {
+      // 已落库：改同一条。
+      const url = bmDetectUrl(text);
+      const body = url ? (text.replace(url, "").trim() || url) : text;
+      const updated = await window.bookmark.updateText(draft.id, body, url);
+      if (!updated) draft.id = null; // 条目被人删了（右键菜单）：下次落库重开一条，别拿死 id 白写。
+    } else {
+      const url = bmDetectUrl(text);
+      const body = url ? (text.replace(url, "").trim() || url) : text;
+      const assignee = groupKey === BM_INBOX_KEY ? null : bmAgents.find((name) => name === groupKey) ?? null;
+      const record = await window.bookmark.add({ text: body, url, assignee, dedupeKey: null });
+      draft.id = record.id;
+    }
+  } catch (error) {
+    bmShowError("自动存档失败： " + bmErrorText(error));
+    return; // 存失败不收起不重画：字还在框里，接着写下笔再存。
+  }
+  if (opts.close) {
+    if (bmOpenComposerGroup === groupKey) bmOpenComposerGroup = null;
+    if (bmComposerDraft === draft) bmComposerDraft = null;
+    bmShowError("");
+    await bmRefresh();
+    return;
+  }
+  // 保持展开（打字中/失焦落盘后）：静默重画让列表和计数跟上，草稿文字随重画还回来
+  // （bmBuildComposer 读草稿），焦点和光标也还回去。
+  await bmRefresh();
+  if (hadFocus) bmRefocusComposer(groupKey, caret);
+}
+
+/** 重画后把焦点还给输入框（用户在存档瞬间没点到别处才还）。 */
+function bmRefocusComposer(groupKey, caret) {
+  const active = document.activeElement;
+  if (active && active !== document.body) return; // 人已点到别处，别把焦点拽回来。
+  const input = document.querySelector(`.group[data-group="${CSS.escape(groupKey)}"] textarea`);
+  if (!input) return;
+  input.focus();
+  const at = typeof caret === "number" ? caret : input.value.length;
+  input.setSelectionRange(at, at);
+}
 
 function bmBuildComposer(groupKey, displayName) {
   const wrap = document.createElement("div");
@@ -625,16 +720,32 @@ function bmBuildComposer(groupKey, displayName) {
   input.id = groupKey === BM_INBOX_KEY ? "bm-inbox-input" : "bm-group-input";
   input.rows = 2;
   input.placeholder = groupKey === BM_INBOX_KEY
-    ? "先记下来，想好派给谁再挪过去（Enter 记下）"
-    : `给 ${displayName} 记一条（Enter 记下，Shift+Enter 换行）`;
+    ? "先记下来，想好派给谁再挪过去（边写边自动存）"
+    : `给 ${displayName} 记一条（边写边自动存，Shift+Enter 换行）`;
+  // 自动存档会触发重画：草稿文字读回来，别把人正在打的字冲掉。
+  if (bmComposerDraft && bmComposerDraft.groupKey === groupKey) input.value = bmComposerDraft.text;
+  input.addEventListener("input", (event) => {
+    if (!bmComposerDraft || bmComposerDraft.groupKey !== groupKey) {
+      bmComposerDraft = { groupKey, id: null, text: "" };
+    }
+    bmComposerDraft.text = input.value;
+    if (event.isComposing) return; // 中文组字中不落库：别打断输入法，组完再存。
+    bmScheduleComposerSave(groupKey, input);
+  });
+  input.addEventListener("compositionend", () => bmScheduleComposerSave(groupKey, input));
+  input.addEventListener("blur", () => {
+    // 失焦必落盘：挂着的防抖立刻执行，别等人回来。
+    void bmComposerCommit(groupKey, { input });
+  });
   input.addEventListener("keydown", (event) => {
+    if (event.isComposing) return; // 组字用的回车/Esc 别当「落盘收起」。
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      void bmSubmitComposer(groupKey, input.value);
+      void bmComposerCommit(groupKey, { close: true });
     }
     if (event.key === "Escape") {
-      bmOpenComposerGroup = null;
-      bmRenderCurrent();
+      // 写了就是写了：Escape 只收起，已写的照存（挂着的防抖先落盘）。
+      void bmComposerCommit(groupKey, { close: true });
     }
   });
   wrap.appendChild(input);
@@ -644,27 +755,18 @@ function bmBuildComposer(groupKey, displayName) {
   const err = document.createElement("span");
   err.className = "composer-err";
   foot.appendChild(err);
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "g-cancel";
-  cancel.textContent = "取消";
-  cancel.addEventListener("click", () => {
-    bmOpenComposerGroup = null;
-    bmRenderCurrent();
-  });
-  foot.appendChild(cancel);
-  const ok = document.createElement("button");
-  ok.type = "button";
-  ok.className = "g-ok";
-  ok.textContent = "记下来";
-  ok.addEventListener("click", () => { void bmSubmitComposer(groupKey, input.value); });
-  foot.appendChild(ok);
+  // 「记下来/取消」钮已撤（改版三 2026-09-11）：边写边自动存，写了就是写了。
   wrap.appendChild(foot);
   return wrap;
 }
 
 function bmToggleComposer(groupKey) {
-  bmOpenComposerGroup = bmOpenComposerGroup === groupKey ? null : groupKey;
+  if (bmOpenComposerGroup === groupKey) {
+    // ⊕ 再点一下收起：挂着的防抖先落盘（写了就是写了），再收。
+    void bmComposerCommit(groupKey, { close: true });
+    return;
+  }
+  bmOpenComposerGroup = groupKey;
   bmRenderCurrent();
   if (bmOpenComposerGroup === groupKey) {
     // 渲染完把焦点还给输入框。
@@ -676,26 +778,7 @@ function bmToggleComposer(groupKey) {
 }
 
 function bmRestoreOpenComposer() {
-  // bmRefresh 重画后保持展开状态由 bmOpenComposerGroup 驱动，无需额外处理。
-}
-
-async function bmSubmitComposer(groupKey, rawValue) {
-  const text = String(rawValue ?? "").trim();
-  if (!text) {
-    bmShowError("先写点什么再记");
-    return;
-  }
-  const url = bmDetectUrl(text);
-  const body = url ? (text.replace(url, "").trim() || url) : text;
-  const assignee = groupKey === BM_INBOX_KEY ? null : bmAgents.find((name) => name === groupKey) ?? null;
-  try {
-    await window.bookmark.add({ text: body, url, assignee, dedupeKey: null });
-    bmOpenComposerGroup = null;
-    bmShowError("");
-    await bmRefresh();
-  } catch (error) {
-    bmShowError("记失败了： " + bmErrorText(error));
-  }
+  // bmRefresh 重画后保持展开状态由 bmOpenComposerGroup 驱动；草稿文字由 bmBuildComposer 读 bmComposerDraft 还原。
 }
 
 function bmDetectUrl(text) {
@@ -778,6 +861,7 @@ async function bmReassign(id, assignee) {
 async function bmRemove(id) {
   try {
     await window.bookmark.remove(id);
+    bmOpenDetails.delete(id); // 条目没了，展开手气也一并清掉，别攒脏 id
     bmHideCtxMenu();
     await bmRefresh();
   } catch (error) {
