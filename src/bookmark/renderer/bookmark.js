@@ -2,7 +2,8 @@
 // 🚨 函数名一律 bm 前缀：跟 pet renderer 共享全局作用域池（边界检查②会扫），别撞名。
 // 🚫 行尾没有任何"确认/发送"圆钮——记一条自动同步（用户原话：麻烦死了）。
 
-const BM_INBOX_KEY = "__inbox__"; // 💭 待定（想想区）：assignee 为空的条目都归这
+const BM_INBOX_KEY = "__inbox__"; // 💭 待定（想想区）：assignee 为空的普通条目都归这（交接单归专区，见下）
+const BM_HANDOFF_ZONE_KEY = "__handoff_zone__"; // 📋 交接单专区：AI 写的未派发交接单默认落这（Agent分组页最底部·＋加Agent按钮上方，用户拍板位置别挪）
 const BM_DEFAULT_ASSIGNEES = ["Claude", "ChatGPT", "Pi Agent", "Hermes"]; // 仅渲染兜底用，真名单以主进程为准
 const BM_COLLAPSE_STORAGE_KEY = "bm-collapsed-groups";
 const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "#b9a0c9", "#c9b47f", "#9fb8c9"];
@@ -112,19 +113,22 @@ function bmErrorText(error) {
 
 function bmGroupRecords(records) {
   const inbox = [];
+  const handoffZone = [];
   const byAgent = new Map();
   const lowerAgents = new Set(bmAgents.map((name) => name.toLowerCase()));
   for (const record of records) {
     const owner = record.assignee ? String(record.assignee) : null;
     if (!owner || !lowerAgents.has(owner.toLowerCase())) {
-      inbox.push(record); // 没派或派给了已删除的组 → 都回待定区
+      // 没派或派给了已删除的组 → 普通条目回待定区；交接单回交接单专区（用户拍板的默认落位）
+      if (record.kind === "handoff") handoffZone.push(record);
+      else inbox.push(record);
       continue;
     }
     const key = bmAgents.find((name) => name.toLowerCase() === owner.toLowerCase());
     if (!byAgent.has(key)) byAgent.set(key, []);
     byAgent.get(key).push(record);
   }
-  return { inbox, byAgent };
+  return { inbox, byAgent, handoffZone };
 }
 
 // ── 渲染 ─────────────────────────────────────────────────
@@ -132,7 +136,7 @@ function bmGroupRecords(records) {
 function bmRenderBoard(records) {
   const board = document.getElementById("board");
   board.textContent = "";
-  const { inbox, byAgent } = bmGroupRecords(records);
+  const { inbox, byAgent, handoffZone } = bmGroupRecords(records);
   // 待定页签角标：两页都实时跟真数据对上（在分组页也能看到待定又多了几条）。
   const tabCount = document.getElementById("tab-inbox-count");
   if (tabCount) tabCount.textContent = String(inbox.length);
@@ -143,6 +147,8 @@ function bmRenderBoard(records) {
     for (const name of bmAgents) {
       board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
     }
+    // 交接单专区固定垫底：所有分组之后、底栏（＋加Agent）之前——别的位置不加。
+    board.appendChild(bmBuildHandoffZone(handoffZone));
   }
   bmRestoreOpenComposer();
 }
@@ -322,6 +328,68 @@ function bmRenderCurrent() {
   void bmRefresh();
 }
 
+// ── 交接单专区（Agent分组页最底部）─────────────────────
+
+/**
+ * 📋 交接单专区：AI 干完活写的交接单（kind=handoff 且未派发）默认落这，用户拍板位置——
+ * Agent分组页最底部、＋加Agent 按钮上方，别处不加。拖到哪个组头=派给谁（条目拖拽复用 bmBuildTask）。
+ */
+function bmBuildHandoffZone(records) {
+  const group = document.createElement("section");
+  group.className = "group handoff-zone";
+  group.dataset.group = BM_HANDOFF_ZONE_KEY;
+
+  const head = document.createElement("header");
+  head.className = "group-head";
+
+  const mark = document.createElement("span");
+  mark.className = "handoff-zone-mark";
+  mark.textContent = "📋";
+  head.appendChild(mark);
+
+  const name = document.createElement("span");
+  name.className = "group-name";
+  name.textContent = "交接单（AI 干完活留下的）";
+  head.appendChild(name);
+
+  const count = document.createElement("span");
+  count.className = "group-count";
+  count.textContent = String(records.length);
+  head.appendChild(count);
+
+  const fold = document.createElement("button");
+  fold.type = "button";
+  fold.className = "g-fold";
+  fold.title = "收起 / 展开";
+  fold.textContent = bmCollapsed.has(BM_HANDOFF_ZONE_KEY) ? "›" : "⌄";
+  fold.addEventListener("click", () => {
+    if (bmCollapsed.has(BM_HANDOFF_ZONE_KEY)) bmCollapsed.delete(BM_HANDOFF_ZONE_KEY);
+    else bmCollapsed.add(BM_HANDOFF_ZONE_KEY);
+    bmSaveCollapsed();
+    bmRenderCurrent();
+  });
+  head.appendChild(fold);
+
+  group.appendChild(head);
+
+  if (!bmCollapsed.has(BM_HANDOFF_ZONE_KEY)) {
+    const list = document.createElement("ul");
+    list.className = "task-list";
+    if (!records.length) {
+      const empty = document.createElement("li");
+      empty.className = "empty";
+      empty.textContent = "还没有交接单。AI 干完活写的交接单默认落这，拖到哪个分组就派给谁。";
+      list.appendChild(empty);
+    } else {
+      records.forEach((record, index) => {
+        list.appendChild(bmBuildTask(record, BM_HANDOFF_ZONE_KEY, index + 1));
+      });
+    }
+    group.appendChild(list);
+  }
+  return group;
+}
+
 // ── 组内输入行（⊕ 展开的内联输入）──────────────────────
 
 function bmBuildComposer(groupKey, displayName) {
@@ -436,11 +504,12 @@ function bmShowCtxMenu(record, groupKey, anchor) {
     menu.appendChild(item);
   }
 
-  if (groupKey !== BM_INBOX_KEY) {
+  if (bmAgents.some((name) => name === groupKey)) {
     const back = document.createElement("button");
     back.type = "button";
     back.className = "ctx-item back";
-    back.textContent = "收回待定";
+    // 交接单收回=回专区（未派发交接单的默认落位），普通条目收回=回待定区。
+    back.textContent = record.kind === "handoff" ? "收回交接单专区" : "收回待定";
     back.addEventListener("click", () => { void bmReassign(record.id, null); });
     menu.appendChild(back);
   }

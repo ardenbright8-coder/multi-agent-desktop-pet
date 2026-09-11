@@ -126,6 +126,20 @@ body {
   border-color: rgba(201, 165, 76, 0.35);
 }
 
+/* 交接单专区（Agent分组页最底部）：跟交接单条目同款淡黄调，一眼认出这是 AI 交接的地方 */
+.group.handoff-zone {
+  background: rgba(250, 242, 214, 0.5);
+  border-color: rgba(201, 165, 76, 0.45);
+}
+
+.handoff-zone-mark {
+  font-size: 17px;
+  line-height: 1;
+  flex: none;
+}
+
+.group.handoff-zone .group-name { color: #6b5a26; }
+
 .group-head {
   display: flex;
   align-items: center;
