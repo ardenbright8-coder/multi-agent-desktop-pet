@@ -40,17 +40,39 @@ function bmDotColor(name) {
 }
 
 function bmInit() {
-  // 版本戳：主进程通过 query 传进来的（git短hash·启动时间），reload 不变重启才变——一眼分辨新旧。
+  // 版本戳：主进程通过 query 传进来的（git短hash·启动时间），页面刷新不变，Ctrl+R 整程序重开才变。
   const versionStamp = new URLSearchParams(window.location.search).get("v") ?? "";
   const versionEl = document.getElementById("title-version");
-  if (versionEl) versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
+  const justRelaunchedKey = "bm-just-relaunched";
+  const justAt = Number(window.localStorage.getItem(justRelaunchedKey) || 0);
+  if (justAt && Date.now() - justAt < 5 * 60 * 1000) {
+    window.localStorage.removeItem(justRelaunchedKey);
+    if (versionEl) versionEl.textContent = versionStamp ? `🌲 已换新 · v${versionStamp}` : "🌲 已换新，现在是最新代码";
+  } else if (versionEl) {
+    versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
+  }
   // 透明度：首渲染前先应用存档（避免闪一下旧透明度），坏档/缺档主进程回落默认。
   void window.bookmark.getAppearance?.().then((opacity) => bmApplyOpacity(Number(opacity)));
-  // 局部 Ctrl+R：重载面板（只在本窗口监听，🚨 不注册 globalShortcut，不拦其他软件）。
+  // 局部 Ctrl+R：真机编译+整程序重开（只在本窗口监听，🚨 不注册 globalShortcut，不拦其他软件）。
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && (event.key === "r" || event.key === "R")) {
       event.preventDefault();
-      window.bookmark.reload();
+      window.localStorage.setItem(justRelaunchedKey, String(Date.now()));
+      if (versionEl) versionEl.textContent = "正在换成最新代码…";
+      void Promise.resolve(window.bookmark.reload()).then((result) => {
+        if (!result || result.mode === "reload") {
+          window.localStorage.removeItem(justRelaunchedKey);
+          if (versionEl) versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
+          return;
+        }
+        if (result.ok === false) {
+          window.localStorage.removeItem(justRelaunchedKey);
+          if (versionEl) versionEl.textContent = "换新失败（看日志）";
+        }
+      }).catch(() => {
+        window.localStorage.removeItem(justRelaunchedKey);
+        if (versionEl) versionEl.textContent = "换新失败（看日志）";
+      });
     }
   });
   // 设置浮层（透明度滑条；以后设置项往这个浮层里加）。

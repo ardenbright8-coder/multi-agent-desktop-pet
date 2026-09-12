@@ -11,9 +11,9 @@
 // 状态标志位只有 F1 翻转（纯函数 pinToggleSteps 在 dock.ts，单测覆盖）。
 
 import { join } from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
@@ -65,7 +65,7 @@ function writeSavedWindowSize(size: { width: number; height: number }): void {
   }
 }
 
-/** 版本戳：启动时算一次（git 短 hash + 当前时间），整个运行期不变——reload 不变，重启才变，
+/** 版本戳：启动时算一次（git 短 hash + 当前时间），整个运行期不变——页面刷新不变，Ctrl+R 整程序重开才变。
  * 用户靠它一眼分辨“现在跑的是哪一版”。打包环境没 git 就只剩时间，一样能分。 */
 const PANEL_VERSION: string = (() => {
   let hash = "";
@@ -87,6 +87,8 @@ let panel: BrowserWindow | null = null;
 let store: BookmarkStore | null = null;
 let roster: AgentRoster | null = null;
 let hotkeyRegistered = false;
+/** 真机 Ctrl+R 走编译+整程序重开；自测保持面板刷新。 */
+let liveRestart = false;
 let pendingShow = false;
 let rendererReady = false;
 let sinkTimer: NodeJS.Timeout | null = null;
@@ -157,6 +159,9 @@ function toggleBoardPin(): void {
   }
 }
 
+/** Ctrl+R 整程序重开时带上，滤掉旧的再追加，免得连按越攒越多。 */
+const RELAUNCH_FLAG = "--bookmark-relaunch";
+
 export interface BookmarkPanelOptions {
   /** 注册全局热键。自测模式传 false，别跟真机抢热键。 */
   hotkey?: boolean;
@@ -164,6 +169,8 @@ export interface BookmarkPanelOptions {
   resident?: boolean;
   /** 收信模块（连 ntfy 邮局收手机消息）。自测模式传 false，别连真邮局。 */
   inbox?: boolean;
+  /** 真机：Ctrl+R = 编译源码 + 整程序重开。自测模式传 false，只刷新面板，别把测试进程干掉。 */
+  liveRestart?: boolean;
 }
 
 /** 装配口：注册 IPC（+ 可选热键、常驻显示）。书签台的任何失败在这里被吞掉记日志，不许往外炸。 */
@@ -171,6 +178,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   if (store) return;
   store = new BookmarkStore();
   roster = new AgentRoster();
+  liveRestart = Boolean(options?.liveRestart);
   registerIpc();
   if (options?.hotkey) registerHotkey();
   if (options?.inbox) {
@@ -414,6 +422,30 @@ function startSinkTimer(): void {
   sinkTimer.unref();
 }
 
+/** 编译当前源码再整程序重开。失败不重开，把原因交回面板。 */
+function rebuildAndRelaunch(): { ok: boolean; mode: "relaunch"; error?: string } {
+  const appRoot = app.getAppPath();
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  log.记(`Ctrl+R：开始编译源码（${appRoot}）`, "reload");
+  const result = spawnSync(npmCmd, ["run", "build"], {
+    cwd: appRoot,
+    encoding: "utf8",
+    timeout: 180_000,
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    const detail = `${result.stderr || ""}
+${result.stdout || ""}`.trim();
+    log.出事(`Ctrl+R 编译失败（status=${result.status}）`, detail || result.error, "reload");
+    return { ok: false, mode: "relaunch", error: detail.slice(0, 500) || "编译失败" };
+  }
+  const args = process.argv.slice(1).filter((item) => item !== RELAUNCH_FLAG).concat(RELAUNCH_FLAG);
+  log.记("Ctrl+R：编译完成，整程序重开", "reload");
+  app.relaunch({ args });
+  app.quit();
+  return { ok: true, mode: "relaunch" };
+}
+
 function registerIpc(): void {
   ipcMain.handle("bookmark:list", () => requireStore().list());
   ipcMain.handle("bookmark:add", (_event, input: unknown) => requireStore().add(normalizeInput(input)));
@@ -434,9 +466,14 @@ function registerIpc(): void {
     },
   );
   // 旧 bookmark:hide（收起面板）已随 F3 一起撤（改版三：看板永远常驻显示）。
-  // 局部刷新（面板内 Ctrl+R 触发，renderer 键盘监听发上来；🚨 不准改成 globalShortcut——全局会拦掉其他软件的 Ctrl+R）。
+  // 局部 Ctrl+R（面板内监听，🚨 不准改成 globalShortcut——全局会拦掉其他软件的 Ctrl+R）。
+  // 真机：编译源码 + 整程序重开（跟脑图设定11同一套，等几秒正常）。自测：只刷新面板。
   ipcMain.handle("bookmark:reload", () => {
-    if (panel && !panel.isDestroyed()) panel.webContents.reload();
+    if (!liveRestart) {
+      if (panel && !panel.isDestroyed()) panel.webContents.reload();
+      return { ok: true, mode: "reload" as const };
+    }
+    return rebuildAndRelaunch();
   });
 
   // ── Agent 看板分组（2026-09-10 改版）：分组清单独立存 agents.json ──

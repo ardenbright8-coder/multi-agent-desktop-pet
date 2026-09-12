@@ -37,7 +37,8 @@ BookmarkStore（testkit 单测用）
 - 🚨 **隔离铁律：本块出任何故障（断网、崩、超时）都不许连坐桌宠本体。** 收信/网络类逻辑（下一步的 ntfy inbox）必须独立成文件、自带 try/catch 和静默重试。
 - 🚨 **数据独立**：`<appDataRoot>\bookmark\bookmarks.json`（`shared\paths.ts` 的 `bookmarkDataDirectory`）。绝不写进桌宠的事件日记/索引，反之一致。坏档挪 `.corrupt-<时间戳>` 存证后空库重来（照 events\event-journal 的先例）。
 - 🚨 **置顶层级用 floating，别用 screen-saver** ——那是桌宠窗口的层级（还带 3 秒重申定时器），两个窗口抢层级会打架。
-- 🚨 **热键 F1 在 testMode 不注册（app.ts 传 `hotkey: !testMode`），常驻显示同理（`resident: !testMode`），别把守卫拆了**——自测会跟真机抢全局热键/弹窗捣乱。
+- 🚨 **热键 F1 在 testMode 不注册（app.ts 传 `hotkey: !testMode`），常驻显示同理（`resident: !testMode`），Ctrl+R 整程序重开同理（`liveRestart: !testMode`），别把守卫拆了**——自测会跟真机抢全局热键/弹窗捣乱，也会把测试进程重启掉。
+- 🚨 **真机看板里 Ctrl+R = 编译源码 + 整程序重开**（跟脑图一样，等几秒正常），不是刷新当前页面。开机和手点必须走项目根 `入口（开发版·跑源码）` 那个门面，不许再指 `release-0.1.xx`。
 - 🚨 **看板永远常驻显示（改版三 2026-09-11 拍板）**：旧 F3/托盘的显示/收起逻辑已撤，别加回收起路径；托盘「书签台」入口现在的动作 = F1 同款置顶开关（提上来/沉回去）。
 - 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM，只发 BOTTOM 摘不掉置顶样式。
 - 🚨 **输入行自动存档的落库纪律（改版三 2026-09-11，用户原话：写了就是写了）**：一份草稿只对应一条——首笔 `add`，之后 `updateText` 改同一条（IPC `bookmark:update-text`），别一份草稿存出好几条；打字防抖 400ms，失焦/回车/⊕收起必落盘；框清空=把存出来的那条删掉；落库后重画要把草稿文字+焦点还回去，别把人正在打的字冲掉。
@@ -60,4 +61,4 @@ BookmarkStore（testkit 单测用）
 2. `npm test` 过（含 `testkit\tests\bookmark-store.test.ts`）
 3. `node 检查边界.mjs` 过（bookmark 只认 shared，零越界）
 4. `node scripts/verify-bookmark-handoff.mjs` 过（交接单专区后台驱动验证：落位/📋标记/详情展开/拖拽派活/收回/自删）
-5. 上机人工验：F1 置顶/沉回最底、毛玻璃质感、记一条（不点钮、边写边自己现身）/删一条/改交给谁、托盘「书签台（随手记）」入口（=置顶开关）
+5. 上机人工验：F1 置顶/沉回最底、毛玻璃质感、记一条（不点钮、边写边自己现身）/删一条/改交给谁、托盘「书签台（随手记）」入口（=置顶开关）；真机看板里 Ctrl+R 应编译并整程序重开（版本戳变，可出现「🌲 已换新」）
