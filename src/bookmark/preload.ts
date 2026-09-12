@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("bookmark", {
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),
   removeAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:remove", name),
   reload: () => ipcRenderer.invoke("bookmark:reload"),
+  codeStatus: () => ipcRenderer.invoke("bookmark:code-status"),
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   onInboxChanged: (callback: () => void) => {
     ipcRenderer.on("bookmark:inbox-changed", () => callback());

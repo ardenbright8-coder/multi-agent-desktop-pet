@@ -12,7 +12,7 @@
 
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
@@ -26,6 +26,7 @@ import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearan
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, resolveProjectPath } from "./projects";
 
 const log = createLogger("bookmark");
+const PROCESS_STARTED_AT = Date.now();
 
 /** 全局热键：F1 = 置顶/沉底开关（改版三 2026-09-11 拍板；旧 F3 显示/收起已撤）。 */
 export const BOOKMARK_HOTKEY = "F1";
@@ -422,6 +423,36 @@ function startSinkTimer(): void {
   sinkTimer.unref();
 }
 
+/** 源码夹里最新一份文件的改动时间。只扫 src，不扫 node_modules。 */
+function latestSourceTime(): number {
+  const root = join(app.getAppPath(), "src");
+  let latest = 0;
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith("_old") || entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      try {
+        const stamp = statSync(full).mtimeMs;
+        if (stamp > latest) latest = stamp;
+      } catch {
+        // 单个文件读失败不影响整次比对
+      }
+    }
+  };
+  walk(root);
+  return latest;
+}
+
 /** 编译当前源码再整程序重开。失败不重开，把原因交回面板。 */
 function rebuildAndRelaunch(): { ok: boolean; mode: "relaunch"; error?: string } {
   const appRoot = app.getAppPath();
@@ -474,6 +505,14 @@ function registerIpc(): void {
       return { ok: true, mode: "reload" as const };
     }
     return rebuildAndRelaunch();
+  });
+  ipcMain.handle("bookmark:code-status", () => {
+    const codeAt = latestSourceTime();
+    return {
+      startedAt: PROCESS_STARTED_AT,
+      codeAt,
+      stale: codeAt > PROCESS_STARTED_AT + 2000,
+    };
   });
 
   // ── Agent 看板分组（2026-09-10 改版）：分组清单独立存 agents.json ──

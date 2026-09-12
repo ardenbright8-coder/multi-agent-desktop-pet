@@ -39,18 +39,59 @@ function bmDotColor(name) {
   return BM_DOT_PALETTE[hash % BM_DOT_PALETTE.length];
 }
 
+let bmToastTimer = null;
+function bmToast(msg, ms) {
+  const el = document.getElementById("bm-toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(bmToastTimer);
+  bmToastTimer = setTimeout(() => { el.hidden = true; }, ms || 2000);
+}
+function bmClock(ms) {
+  const d = new Date(Number(ms) || 0);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function bmReportJustRelaunched() {
+  const key = "bm-just-relaunched";
+  const justAt = Number(window.localStorage.getItem(key) || 0);
+  if (!justAt) return false;
+  window.localStorage.removeItem(key);
+  if (Date.now() - justAt < 5 * 60 * 1000) {
+    bmToast("🌲 已重启，现在跑的是最新代码", 3500);
+    return true;
+  }
+  return false;
+}
+async function bmReportCodeFreshness() {
+  if (!window.bookmark.codeStatus) {
+    bmToast("⚠️ 这个窗口挂在一个旧程序上，新功能可能用不了。把桌宠完全退出再开一次", 9000);
+    return;
+  }
+  try {
+    const status = await window.bookmark.codeStatus();
+    if (!status) {
+      bmToast("⚠️ 这个窗口挂在一个旧程序上，新功能可能用不了。把桌宠完全退出再开一次", 9000);
+      return;
+    }
+    if (Number(status.stale)) {
+      bmToast(`⚠️ 代码在 ${bmClock(status.codeAt)} 更新过，你现在跑的还是 ${bmClock(status.startedAt)} 启动的那份。按 Ctrl+R 换上新的`, 9000);
+      return;
+    }
+    bmToast(`🌲 代码是最新的（${bmClock(status.codeAt)} 那版）`, 2500);
+  } catch {
+    bmToast("⚠️ 这个窗口挂在一个旧程序上，新功能可能用不了。把桌宠完全退出再开一次", 9000);
+  }
+}
+
 function bmInit() {
   // 版本戳：主进程通过 query 传进来的（git短hash·启动时间），页面刷新不变，Ctrl+R 整程序重开才变。
   const versionStamp = new URLSearchParams(window.location.search).get("v") ?? "";
   const versionEl = document.getElementById("title-version");
+  if (versionEl) versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
   const justRelaunchedKey = "bm-just-relaunched";
-  const justAt = Number(window.localStorage.getItem(justRelaunchedKey) || 0);
-  if (justAt && Date.now() - justAt < 5 * 60 * 1000) {
-    window.localStorage.removeItem(justRelaunchedKey);
-    if (versionEl) versionEl.textContent = versionStamp ? `🌲 已换新 · v${versionStamp}` : "🌲 已换新，现在是最新代码";
-  } else if (versionEl) {
-    versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
-  }
+  // 跟脑图同一套：新旧都要报。不弹他就分不清是最新还是功能没生效。
+  if (!bmReportJustRelaunched()) setTimeout(() => { void bmReportCodeFreshness(); }, 1500);
   // 透明度：首渲染前先应用存档（避免闪一下旧透明度），坏档/缺档主进程回落默认。
   void window.bookmark.getAppearance?.().then((opacity) => bmApplyOpacity(Number(opacity)));
   // 局部 Ctrl+R：真机编译+整程序重开（只在本窗口监听，🚨 不注册 globalShortcut，不拦其他软件）。
@@ -58,20 +99,20 @@ function bmInit() {
     if ((event.ctrlKey || event.metaKey) && (event.key === "r" || event.key === "R")) {
       event.preventDefault();
       window.localStorage.setItem(justRelaunchedKey, String(Date.now()));
-      if (versionEl) versionEl.textContent = "正在换成最新代码…";
+      bmToast("正在换成最新代码…", 8000);
       void Promise.resolve(window.bookmark.reload()).then((result) => {
         if (!result || result.mode === "reload") {
           window.localStorage.removeItem(justRelaunchedKey);
-          if (versionEl) versionEl.textContent = versionStamp ? `v${versionStamp}` : "";
+          bmToast("🌲 代码是最新的", 2000);
           return;
         }
         if (result.ok === false) {
           window.localStorage.removeItem(justRelaunchedKey);
-          if (versionEl) versionEl.textContent = "换新失败（看日志）";
+          bmToast("换新失败（看日志）", 5000);
         }
       }).catch(() => {
         window.localStorage.removeItem(justRelaunchedKey);
-        if (versionEl) versionEl.textContent = "换新失败（看日志）";
+        bmToast("换新失败（看日志）", 5000);
       });
     }
   });

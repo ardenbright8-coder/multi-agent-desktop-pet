@@ -13,6 +13,7 @@ body {
 }
 
 #app {
+  position: relative;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -48,6 +49,26 @@ body {
 }
 
 #titlebar .hint { margin-left: auto; font-size: 12px; opacity: 0.5; }
+
+.bm-toast {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 80;
+  max-width: 72%;
+  background: rgba(255, 252, 245, 0.96);
+  border: 1px solid rgba(201, 165, 76, 0.55);
+  border-left: 4px solid #c9a54c;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #2f3e2c;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+.bm-toast[hidden] { display: none; }
 
 /* ── 页签栏（待定 / Agent 分组两页切换） ─────────── */
 
