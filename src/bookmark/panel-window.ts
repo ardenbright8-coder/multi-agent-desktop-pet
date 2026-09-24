@@ -23,7 +23,7 @@ import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
 import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
-import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, resolveProjectPath } from "./projects";
+import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -458,12 +458,20 @@ function rebuildAndRelaunch(): { ok: boolean; mode: "relaunch"; error?: string }
   const appRoot = app.getAppPath();
   const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
   log.记(`Ctrl+R：开始编译源码（${appRoot}）`, "reload");
-  const result = spawnSync(npmCmd, ["run", "build"], {
-    cwd: appRoot,
-    encoding: "utf8",
-    timeout: 180_000,
-    windowsHide: true,
-  });
+  // Windows 上直接 spawn npm.cmd 会 EINVAL，看板就报「换新失败」。走 cmd.exe。
+  const result = process.platform === "win32"
+    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm run build"], {
+        cwd: appRoot,
+        encoding: "utf8",
+        timeout: 180_000,
+        windowsHide: true,
+      })
+    : spawnSync(npmCmd, ["run", "build"], {
+        cwd: appRoot,
+        encoding: "utf8",
+        timeout: 180_000,
+        windowsHide: true,
+      });
   if (result.status !== 0) {
     const detail = `${result.stderr || ""}
 ${result.stdout || ""}`.trim();
@@ -480,6 +488,17 @@ ${result.stdout || ""}`.trim();
 function registerIpc(): void {
   ipcMain.handle("bookmark:list", () => requireStore().list());
   ipcMain.handle("bookmark:add", (_event, input: unknown) => requireStore().add(normalizeInput(input)));
+  ipcMain.handle("bookmark:insert-beside", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { anchorId?: unknown; place?: unknown };
+    const place = raw.place === "below" ? "below" : "above";
+    const anchorId = raw.anchorId ? String(raw.anchorId) : null;
+    return requireStore().insertBeside(anchorId, place, normalizeInput(payload));
+  });
+  ipcMain.handle("bookmark:move", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { id?: unknown; anchorId?: unknown; place?: unknown };
+    const place = raw.place === "below" ? "below" : "above";
+    return requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place);
+  });
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => requireStore().remove(String(id)));
   ipcMain.handle(
     "bookmark:set-assignee",
@@ -535,6 +554,12 @@ function registerIpc(): void {
     ensureProjectsRoot();
     return createProjectMarkdown(projectsRoot(), String(parent ?? ""), String(name ?? ""));
   });
+  ipcMain.handle("bookmark:projects:reorder", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { parent?: unknown; moving?: unknown; anchor?: unknown; place?: unknown };
+    const place = raw.place === "below" ? "below" : "above";
+    ensureProjectsRoot();
+    return reorderProjects(projectsRoot(), String(raw.parent ?? ""), String(raw.moving ?? ""), String(raw.anchor ?? ""), place);
+  });
   ipcMain.handle("bookmark:projects:open", async (_event, relative: unknown) => {
     // 先过安全闸（越界拒绝），再交系统默认程序（用户 md 关联了脑图应用）。
     ensureProjectsRoot();
@@ -542,6 +567,11 @@ function registerIpc(): void {
     const errorMessage = await shell.openPath(abs);
     if (errorMessage) throw new Error(`打不开：${errorMessage}`);
     return true;
+  });
+  ipcMain.handle("bookmark:agents:move", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { name?: unknown; anchor?: unknown; place?: unknown };
+    const place = raw.place === "below" ? "below" : "above";
+    return requireRoster().move(String(raw.name ?? ""), String(raw.anchor ?? ""), place);
   });
   ipcMain.handle("bookmark:agents:add", (_event, name: unknown) => requireRoster().add(String(name ?? "")));
   ipcMain.handle(

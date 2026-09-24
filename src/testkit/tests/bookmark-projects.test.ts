@@ -10,6 +10,8 @@ import {
   createProjectFolder,
   createProjectMarkdown,
   listProjects,
+  moveInOrder,
+  reorderProjects,
   resolveProjectPath,
   sanitizeEntryName,
 } from "../../bookmark/projects";
@@ -37,6 +39,31 @@ test("resolveProjectPath：root 内放行，../ 穿越拒绝", () => {
   assert.throws(() => resolveProjectPath(root, ".."), /越出项目夹/);
   assert.throws(() => resolveProjectPath(root, "a/../../x"), /越出项目夹/);
   assert.throws(() => resolveProjectPath(root, "C:/Windows"), /越出项目夹/);
+});
+
+test("reorderProjects：把第 3 个插到第 1 个前面，刷新还是这个顺序", () => {
+  const root = tempRoot();
+  createProjectFolder(root, "", "甲");
+  createProjectFolder(root, "", "乙");
+  createProjectMarkdown(root, "", "丙");
+  assert.deepEqual(moveInOrder(["甲", "乙", "丙.md"], "丙.md", "乙", "above"), ["甲", "丙.md", "乙"]);
+  const listing = reorderProjects(root, "", "丙.md", "甲", "above");
+  assert.deepEqual(listing.ordered.map((entry) => entry.name), ["丙.md", "甲", "乙"]);
+  assert.deepEqual(listProjects(root, "").ordered.map((entry) => entry.name), ["丙.md", "甲", "乙"]);
+});
+
+test("createProjectFolder：建好就带两份稿和一个空资源包", () => {
+  const root = tempRoot();
+  createProjectFolder(root, "", "毕业旅行");
+  const listing = listProjects(root, "毕业旅行");
+  assert.deepEqual(listing.dirs.map((dir) => dir.name), ["资源包"]);
+  assert.deepEqual(
+    listing.files.map((file) => file.name).sort(),
+    ["执行过程.md", "设计思路.md"].sort(),
+  );
+  const pack = listProjects(root, "毕业旅行/资源包");
+  assert.equal(pack.dirs.length, 0);
+  assert.equal(pack.files.length, 0);
 });
 
 test("createProjectFolder：真实建夹、重名抛错", () => {

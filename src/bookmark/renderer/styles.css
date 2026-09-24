@@ -29,8 +29,8 @@ body {
 #titlebar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 5px 8px;
   -webkit-app-region: drag;
   background: rgba(255, 255, 255, 0.28);
   border-bottom: 1px solid rgba(201, 165, 76, 0.28);
@@ -74,8 +74,9 @@ body {
 
 #page-tabs {
   display: flex;
-  gap: 6px;
-  padding: 8px 10px 0;
+  gap: 4px;
+  padding: 4px 6px 0;
+  align-items: center;
 }
 
 .page-tab {
@@ -86,9 +87,9 @@ body {
   border: 1px solid rgba(201, 165, 76, 0.35);
   background: rgba(255, 255, 255, 0.32);
   color: rgba(47, 62, 44, 0.75);
-  border-radius: 12px;
-  padding: 5px 14px;
-  font-size: 13.5px;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -117,15 +118,15 @@ body {
 #board {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 5px 6px;
 }
 
 .group {
   background: rgba(255, 255, 255, 0.44);
   border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 16px;
-  padding: 8px;
-  margin-bottom: 10px;
+  border-radius: 10px;
+  padding: 3px 5px 4px;
+  margin-bottom: 4px;
 }
 
 .group.inbox {
@@ -155,8 +156,8 @@ body {
 }
 
 .dot {
-  width: 24px;
-  height: 24px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   flex: none;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
@@ -177,11 +178,11 @@ body {
   border: 1px solid rgba(201, 165, 76, 0.55);
   background: rgba(255, 255, 255, 0.5);
   color: #8a6f2f;
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   flex: none;
 }
@@ -223,14 +224,34 @@ body {
 
 .task-list { list-style: none; }
 
+.gap-above { margin-top: 28px !important; }
+.gap-below { margin-bottom: 28px !important; }
+.task, .group, .proj-row { transition: margin 0.12s ease; }
+.is-dragging {
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border-width: 0 !important;
+  opacity: 0 !important;
+}
+.drag-ghost {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  opacity: 0.92;
+  box-shadow: 0 8px 22px rgba(47, 62, 44, 0.18);
+  transform: scale(1.02);
+}
+
 .task {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: flex-start;
   background: rgba(255, 255, 255, 0.55);
-  border-radius: 12px;
-  padding: 7px 8px;
-  margin-bottom: 6px;
+  border-radius: 8px;
+  padding: 2px 6px;
+  margin-bottom: 2px;
 }
 
 .task .handle {
@@ -255,7 +276,35 @@ body {
 
 .task-body { flex: 1; min-width: 0; }
 
-.task .task-text { word-break: break-all; white-space: pre-wrap; font-size: 14px; }
+.task .task-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.3;
+  cursor: text;
+}
+.task-edit, .insert-row textarea {
+  width: 100%;
+  resize: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.3;
+  color: inherit;
+  padding: 0;
+  overflow: hidden;
+}
+.insert-row textarea {
+  border: 1px dashed rgba(201, 165, 76, 0.7);
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.9);
+  padding: 2px 6px;
+}
 
 .task .task-url {
   display: block;
@@ -386,23 +435,23 @@ body {
 /* ── 底栏（加Agent） ─────────────────────────────── */
 
 #board-foot {
-  display: flex;
+  display: none;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 1px solid rgba(201, 165, 76, 0.28);
-  background: rgba(255, 255, 255, 0.22);
+  padding: 2px 8px 4px;
 }
+#board-foot:has(#board-error:not(:empty)) { display: flex; }
 
 #add-agent-btn {
+  margin-left: auto;
   border: 1px dashed rgba(201, 165, 76, 0.7);
   background: rgba(255, 255, 255, 0.4);
   color: #8a6f2f;
-  border-radius: 10px;
-  padding: 4px 12px;
-  font-size: 13px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
   cursor: pointer;
 }
+#titlebar #settings-btn { margin-left: 6px; width: 18px; height: 18px; font-size: 12px; }
 
 #add-agent-btn:hover { background: rgba(201, 165, 76, 0.15); }
 

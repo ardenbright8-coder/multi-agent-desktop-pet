@@ -14,6 +14,10 @@ let bmAgents = [...BM_DEFAULT_ASSIGNEES];
 let bmCollapsed = bmLoadCollapsed();
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
 let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组 / projects = 📁 项目（2026-09-11 加第三页）
+let bmInsertDraft = null; // 右键插进来、还在写的那一行：{ groupKey, anchorId, place, id, text, kind }
+let bmEditingId = null; // 点白条正在改的那条
+let bmInsertSaveTimer = null;
+let bmEditSaveTimer = null;
 
 function bmLoadCollapsed() {
   try {
@@ -233,6 +237,139 @@ function bmSwitchPage(page) {
   bmRenderCurrent();
 }
 
+const BM_LONG_MS = 320;
+const BM_DRAG_SLOP = 8;
+
+/** 左键按住气泡约三分之一秒再拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
+function bmBindLongDrag(opts) {
+  const handle = opts.handle;
+  const row = opts.row;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest("button, textarea, input, a, .handle")) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+    let armed = false;
+    let timer = window.setTimeout(arm, BM_LONG_MS);
+    let ghost = null;
+    let scrollTimer = 0;
+    let lastX = startX;
+    let lastY = startY;
+    let hit = null;
+
+    function cancelTimer() {
+      if (timer) window.clearTimeout(timer);
+      timer = 0;
+    }
+    function clearMarks() {
+      document.querySelectorAll(".gap-above, .gap-below, .drag-target").forEach((el) => {
+        el.classList.remove("gap-above", "gap-below", "drag-target");
+      });
+    }
+    function finish(commit) {
+      cancelTimer();
+      if (scrollTimer) window.clearInterval(scrollTimer);
+      clearMarks();
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onCancel);
+      if (ghost) ghost.remove();
+      row.classList.remove("is-dragging");
+      if (!armed) return;
+      row.dataset.swallow = "1";
+      if (commit && hit && opts.onDrop) void opts.onDrop(hit);
+    }
+    function arm() {
+      timer = 0;
+      armed = true;
+      const rect = row.getBoundingClientRect();
+      row.classList.add("is-dragging");
+      ghost = row.cloneNode(true);
+      ghost.classList.remove("is-dragging");
+      ghost.classList.add("drag-ghost");
+      ghost.style.width = rect.width + "px";
+      ghost.style.left = rect.left + "px";
+      ghost.style.top = rect.top + "px";
+      document.body.appendChild(ghost);
+      try { handle.setPointerCapture(pointerId); } catch (e) { /* 捕不到也不挡拖 */ }
+      scrollTimer = window.setInterval(() => bmDragScroll(lastY), 40);
+      paint(lastX, lastY);
+    }
+    function paint(x, y) {
+      if (ghost) {
+        ghost.style.left = (x - 28) + "px";
+        ghost.style.top = (y - 18) + "px";
+      }
+      clearMarks();
+      hit = null;
+      if (opts.reassign) {
+        const under = document.elementFromPoint(x, y);
+        const head = under && under.closest ? under.closest(".group-head") : null;
+        const section = head && head.closest(".group");
+        const key = section && section.dataset.group;
+        if (key && key !== opts.selfGroup && !section.classList.contains("handoff-zone")) {
+          head.classList.add("drag-target");
+          hit = { id: opts.idOf(row), reassignGroup: key };
+          return;
+        }
+      }
+      const list = opts.list();
+      if (!list) return;
+      const items = [...list.children].filter((el) => el !== row && opts.accept(el));
+      let anchor = null;
+      let place = "below";
+      for (const item of items) {
+        const rect = item.getBoundingClientRect();
+        if (y < rect.top + rect.height / 2) {
+          anchor = item;
+          place = "above";
+          break;
+        }
+      }
+      if (!anchor && items.length) {
+        anchor = items[items.length - 1];
+        place = "below";
+      }
+      if (!anchor) return;
+      anchor.classList.add(place === "above" ? "gap-above" : "gap-below");
+      const anchorId = opts.idOf(anchor);
+      const id = opts.idOf(row);
+      if (!anchorId || anchorId === id) return;
+      hit = { id, anchorId, place };
+    }
+    function onMove(event) {
+      lastX = event.clientX;
+      lastY = event.clientY;
+      if (!armed) {
+        if (Math.hypot(event.clientX - startX, event.clientY - startY) > BM_DRAG_SLOP) cancelTimer();
+        return;
+      }
+      event.preventDefault();
+      paint(event.clientX, event.clientY);
+    }
+    function onUp() { finish(true); }
+    function onCancel() { finish(false); }
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onCancel);
+  });
+  handle.addEventListener("click", (event) => {
+    if (row.dataset.swallow !== "1") return;
+    event.preventDefault();
+    event.stopPropagation();
+    delete row.dataset.swallow;
+  }, true);
+}
+
+function bmDragScroll(y) {
+  const board = document.getElementById("board");
+  if (!board) return;
+  const rect = board.getBoundingClientRect();
+  if (y < rect.top + 40) board.scrollTop -= 14;
+  else if (y > rect.bottom - 40) board.scrollTop += 14;
+}
+
 function bmBuildGroup(key, displayName, records) {
   const group = document.createElement("section");
   group.className = "group" + (key === BM_INBOX_KEY ? " inbox" : "");
@@ -255,6 +392,10 @@ function bmBuildGroup(key, displayName, records) {
     void bmReassign(id, assignee);
   });
   head.addEventListener("dropend", () => { head.classList.remove("drag-target"); });
+  head.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    bmBeginInsert(key, null, "above");
+  });
 
   const dot = document.createElement("span");
   dot.className = "dot";
@@ -276,7 +417,7 @@ function bmBuildGroup(key, displayName, records) {
   addBtn.className = "g-add";
   addBtn.title = key === BM_INBOX_KEY ? "记一条到待定区" : `给 ${displayName} 记一条`;
   addBtn.textContent = "＋";
-  addBtn.addEventListener("click", () => bmToggleComposer(key));
+  addBtn.addEventListener("click", () => bmBeginInsert(key, null, "above"));
   head.appendChild(addBtn);
 
   const fold = document.createElement("button");
@@ -299,17 +440,22 @@ function bmBuildGroup(key, displayName, records) {
   if (!bmCollapsed.has(key)) {
     const list = document.createElement("ul");
     list.className = "task-list";
-    if (!records.length) {
-      const empty = document.createElement("li");
-      empty.className = "empty";
-      empty.textContent = key === BM_INBOX_KEY ? "还没想好派给谁的，先放这。" : "这一组还没有任务，点 ＋ 记一条。";
-      list.appendChild(empty);
-    } else {
-      records.forEach((record, index) => {
-        list.appendChild(bmBuildTask(record, key, index + 1));
-      });
-    }
-    group.appendChild(list);
+    bmFillTaskList(list, records, key);
+    if (list.childElementCount) group.appendChild(list);
+  }
+  if (key !== BM_INBOX_KEY) {
+    bmBindLongDrag({
+      handle: head,
+      row: group,
+      list: () => document.getElementById("board"),
+      accept: (el) => el.classList.contains("group") && !el.classList.contains("handoff-zone"),
+      idOf: (el) => el.dataset.group || "",
+      onDrop: async (hit) => {
+        if (!hit.anchorId || hit.anchorId === hit.id) return;
+        await window.bookmark.moveAgent(hit.id, hit.anchorId, hit.place);
+        await bmRefresh();
+      },
+    });
   }
   return group;
 }
@@ -319,13 +465,11 @@ function bmBuildTask(record, groupKey, order) {
   item.className = "task";
   if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（📋 标记+淡黄底），一眼认出
   item.dataset.id = record.id;
-  // 拖拽改派：拖起来记 id，落到组头上由组头的 drop 处理。
-  item.draggable = true;
-  item.addEventListener("dragstart", (event) => {
-    if (event.dataTransfer) {
-      event.dataTransfer.setData("text/bm-id", record.id);
-      event.dataTransfer.effectAllowed = "move";
-    }
+  item.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const rect = item.getBoundingClientRect();
+    const place = event.clientY < rect.top + rect.height / 2 ? "above" : "below";
+    bmShowCtxMenu(record, groupKey, item, place);
   });
 
   const handle = document.createElement("button");
@@ -356,10 +500,40 @@ function bmBuildTask(record, groupKey, order) {
     badge.textContent = "📋 交接单";
     body.appendChild(badge);
   }
-  const text = document.createElement("div");
-  text.className = "task-text";
-  text.textContent = record.text;
-  body.appendChild(text);
+  if (bmEditingId === record.id) {
+    const input = document.createElement("textarea");
+    input.className = "task-edit";
+    input.value = record.text;
+    input.addEventListener("input", () => {
+      bmFitTextarea(input);
+      bmScheduleEditSave(record.id, input);
+    });
+    input.addEventListener("compositionend", () => bmScheduleEditSave(record.id, input));
+    input.addEventListener("blur", () => { void bmEditCommit(record.id, input, true); });
+    input.addEventListener("keydown", (event) => {
+      if (event.isComposing) return;
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void bmEditCommit(record.id, input, true);
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
+        bmEditingId = null;
+        bmRenderCurrent();
+      }
+    });
+    body.appendChild(input);
+  } else {
+    const text = document.createElement("div");
+    text.className = "task-text";
+    text.textContent = record.text;
+    text.addEventListener("click", (event) => {
+      event.stopPropagation();
+      bmBeginEdit(record.id);
+    });
+    body.appendChild(text);
+  }
   if (record.url) {
     const link = document.createElement("a");
     link.className = "task-url";
@@ -389,6 +563,25 @@ function bmBuildTask(record, groupKey, order) {
     });
   }
   item.appendChild(body);
+  bmBindLongDrag({
+    handle: item,
+    row: item,
+    selfGroup: groupKey,
+    reassign: true,
+    list: () => item.parentElement,
+    accept: (el) => el.classList.contains("task"),
+    idOf: (el) => el.dataset.id || "",
+    onDrop: async (hit) => {
+      if (hit.reassignGroup !== undefined) {
+        const assignee = hit.reassignGroup === BM_INBOX_KEY ? null : hit.reassignGroup;
+        await bmReassign(hit.id, assignee);
+        return;
+      }
+      if (!hit.anchorId || hit.anchorId === hit.id) return;
+      await window.bookmark.move(hit.id, hit.anchorId, hit.place);
+      await bmRefresh();
+    },
+  });
   return item;
 }
 
@@ -439,22 +632,17 @@ function bmBuildHandoffZone(records) {
   });
   head.appendChild(fold);
 
+  head.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    bmBeginInsert(BM_HANDOFF_ZONE_KEY, null, "above", "handoff");
+  });
   group.appendChild(head);
 
   if (!bmCollapsed.has(BM_HANDOFF_ZONE_KEY)) {
     const list = document.createElement("ul");
     list.className = "task-list";
-    if (!records.length) {
-      const empty = document.createElement("li");
-      empty.className = "empty";
-      empty.textContent = "还没有交接单。AI 干完活写的交接单默认落这，拖到哪个分组就派给谁。";
-      list.appendChild(empty);
-    } else {
-      records.forEach((record, index) => {
-        list.appendChild(bmBuildTask(record, BM_HANDOFF_ZONE_KEY, index + 1));
-      });
-    }
-    group.appendChild(list);
+    bmFillTaskList(list, records, BM_HANDOFF_ZONE_KEY);
+    if (list.childElementCount) group.appendChild(list);
   }
   return group;
 }
@@ -522,8 +710,8 @@ async function bmRenderProjects() {
     empty.textContent = bmProjectsCwd ? "这个夹还是空的，点上面建项目夹或建 .md。" : "还没有项目夹，点上面「＋ 新建项目夹」开一个。";
     list.appendChild(empty);
   }
-  for (const dir of listing.dirs) list.appendChild(bmBuildProjectRow(dir));
-  for (const file of listing.files) list.appendChild(bmBuildProjectRow(file));
+  const rows = listing.ordered && listing.ordered.length ? listing.ordered : listing.dirs.concat(listing.files);
+  for (const entry of rows) list.appendChild(bmBuildProjectRow(entry));
   board.appendChild(list);
 }
 
@@ -532,6 +720,7 @@ function bmBuildProjectRow(entry) {
   const row = document.createElement("li");
   row.className = "proj-row" + (entry.isDir ? " is-dir" : " is-file");
   row.dataset.rel = entry.relPath;
+  row.dataset.name = entry.name;
 
   const icon = document.createElement("span");
   icon.className = "proj-icon";
@@ -560,6 +749,18 @@ function bmBuildProjectRow(entry) {
   } else {
     row.addEventListener("click", () => { void window.bookmark.projectsOpen(entry.relPath); });
   }
+  bmBindLongDrag({
+    handle: row,
+    row,
+    list: () => row.parentElement,
+    accept: (el) => el.classList.contains("proj-row"),
+    idOf: (el) => el.dataset.name || "",
+    onDrop: async (hit) => {
+      if (!hit.anchorId || hit.anchorId === hit.id) return;
+      await window.bookmark.projectsReorder(bmProjectsCwd, hit.id, hit.anchorId, hit.place);
+      await bmRenderProjects();
+    },
+  });
   return row;
 }
 
@@ -851,9 +1052,209 @@ function bmDetectUrl(text) {
 
 // ── 右键菜单：派给 / 收回待定 / 删除 ──────────────────────
 
-function bmShowCtxMenu(record, groupKey, anchor) {
+function bmFillTaskList(list, records, groupKey) {
+  const draft = bmInsertDraft && bmInsertDraft.groupKey === groupKey ? bmInsertDraft : null;
+  const anchored = Boolean(draft && draft.anchorId && records.some((record) => record.id === draft.anchorId));
+  if (draft && !anchored) list.appendChild(bmBuildInsertRow());
+  records.forEach((record, index) => {
+    if (draft && anchored && draft.anchorId === record.id && draft.place === "above") list.appendChild(bmBuildInsertRow());
+    list.appendChild(bmBuildTask(record, groupKey, index + 1));
+    if (draft && anchored && draft.anchorId === record.id && draft.place === "below") list.appendChild(bmBuildInsertRow());
+  });
+}
+
+function bmFitTextarea(input) {
+  input.style.height = "auto";
+  input.style.height = Math.max(input.scrollHeight, 22) + "px";
+}
+
+function bmBeginInsert(groupKey, anchorId, place, kind) {
+  if (bmCollapsed.has(groupKey)) {
+    bmCollapsed.delete(groupKey);
+    bmSaveCollapsed();
+  }
+  bmInsertDraft = {
+    groupKey,
+    anchorId: anchorId || null,
+    place: place === "below" ? "below" : "above",
+    id: null,
+    text: "",
+    kind: kind || (groupKey === BM_HANDOFF_ZONE_KEY ? "handoff" : "note"),
+  };
+  bmEditingId = null;
+  bmRenderCurrent();
+  window.requestAnimationFrame(() => {
+    const input = document.querySelector(".insert-row textarea");
+    if (!input) return;
+    input.focus();
+    bmFitTextarea(input);
+  });
+}
+
+function bmBuildInsertRow() {
+  const item = document.createElement("li");
+  item.className = "task insert-row";
+  const input = document.createElement("textarea");
+  input.rows = 1;
+  input.placeholder = "写在这，写了就存";
+  input.value = bmInsertDraft ? bmInsertDraft.text : "";
+  input.addEventListener("input", () => {
+    if (!bmInsertDraft) return;
+    bmInsertDraft.text = input.value;
+    bmFitTextarea(input);
+    if (input.isComposing) return;
+    bmScheduleInsertSave(input);
+  });
+  input.addEventListener("compositionend", () => bmScheduleInsertSave(input));
+  input.addEventListener("blur", () => { void bmInsertCommit({ close: true, input }); });
+  input.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void bmInsertCommit({ close: true, input });
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void bmInsertCommit({ close: true, input });
+    }
+  });
+  item.appendChild(input);
+  return item;
+}
+
+function bmScheduleInsertSave(input) {
+  if (bmInsertSaveTimer) window.clearTimeout(bmInsertSaveTimer);
+  bmInsertSaveTimer = window.setTimeout(() => {
+    bmInsertSaveTimer = null;
+    void bmInsertCommit({ input });
+  }, 400);
+}
+
+async function bmInsertCommit(opts = {}) {
+  const draft = bmInsertDraft;
+  if (!draft) return;
+  if (bmInsertSaveTimer) {
+    window.clearTimeout(bmInsertSaveTimer);
+    bmInsertSaveTimer = null;
+  }
+  const text = String(draft.text ?? "").trim();
+  const hadFocus = Boolean(opts.input && document.activeElement === opts.input);
+  const caret = hadFocus && opts.input ? opts.input.selectionStart : null;
+  try {
+    if (!text) {
+      if (draft.id) await window.bookmark.remove(draft.id);
+      draft.id = null;
+    } else if (draft.id) {
+      const url = bmDetectUrl(text);
+      const body = url ? (text.replace(url, "").trim() || url) : text;
+      await window.bookmark.updateText(draft.id, body, url);
+    } else {
+      const url = bmDetectUrl(text);
+      const body = url ? (text.replace(url, "").trim() || url) : text;
+      const assignee = draft.groupKey === BM_INBOX_KEY || draft.groupKey === BM_HANDOFF_ZONE_KEY
+        ? null
+        : (bmAgents.find((name) => name === draft.groupKey) ?? null);
+      const record = await window.bookmark.insertBeside({
+        anchorId: draft.anchorId,
+        place: draft.place,
+        text: body,
+        url,
+        assignee,
+        kind: draft.kind,
+      });
+      draft.id = record.id;
+    }
+  } catch (error) {
+    bmShowError("自动存档失败： " + bmErrorText(error));
+    return;
+  }
+  if (opts.close) {
+    bmInsertDraft = null;
+    await bmRefresh();
+    return;
+  }
+  await bmRefresh();
+  if (!hadFocus) return;
+  const input = document.querySelector(".insert-row textarea");
+  if (!input) return;
+  input.focus();
+  const at = typeof caret === "number" ? caret : input.value.length;
+  input.setSelectionRange(at, at);
+  bmFitTextarea(input);
+}
+
+function bmBeginEdit(id) {
+  bmEditingId = id;
+  bmInsertDraft = null;
+  bmRenderCurrent();
+  window.requestAnimationFrame(() => {
+    const input = document.querySelector(".task-edit");
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    bmFitTextarea(input);
+  });
+}
+
+function bmScheduleEditSave(id, input) {
+  if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
+  bmEditSaveTimer = window.setTimeout(() => {
+    bmEditSaveTimer = null;
+    void bmEditCommit(id, input, false);
+  }, 400);
+}
+
+async function bmEditCommit(id, input, close) {
+  if (bmEditingId !== id && close) return;
+  if (bmEditSaveTimer) {
+    window.clearTimeout(bmEditSaveTimer);
+    bmEditSaveTimer = null;
+  }
+  const text = String(input?.value ?? "").trim();
+  const hadFocus = document.activeElement === input;
+  const caret = hadFocus ? input.selectionStart : null;
+  try {
+    if (!text) await window.bookmark.remove(id);
+    else {
+      const url = bmDetectUrl(text);
+      const body = url ? (text.replace(url, "").trim() || url) : text;
+      await window.bookmark.updateText(id, body, url);
+    }
+  } catch (error) {
+    bmShowError("自动存档失败： " + bmErrorText(error));
+    return;
+  }
+  if (close || !text) {
+    if (bmEditingId === id) bmEditingId = null;
+    await bmRefresh();
+    return;
+  }
+  await bmRefresh();
+  if (!hadFocus) return;
+  const next = document.querySelector(".task-edit");
+  if (!next) return;
+  next.focus();
+  const at = typeof caret === "number" ? caret : next.value.length;
+  next.setSelectionRange(at, at);
+  bmFitTextarea(next);
+}
+
+function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   const menu = document.getElementById("ctx-menu");
   menu.textContent = "";
+
+  if (insertPlace) {
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "ctx-item";
+    create.textContent = "新建";
+    create.addEventListener("click", () => {
+      bmHideCtxMenu();
+      const kind = groupKey === BM_HANDOFF_ZONE_KEY ? "handoff" : "note";
+      bmBeginInsert(groupKey, record.id, insertPlace, kind);
+    });
+    menu.appendChild(create);
+  }
 
   const title = document.createElement("div");
   title.className = "ctx-title";

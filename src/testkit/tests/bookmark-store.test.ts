@@ -29,6 +29,41 @@ test("bookmark add/list is newest first and rejects empty text", () => {
   }
 });
 
+test("bookmark insertBeside puts a note above or below the anchor", () => {
+  const { store, root } = tempStore();
+  try {
+    const first = store.add({ text: "第一条" });
+    const third = store.add({ text: "第三条" });
+    const below = store.insertBeside(third.id, "below", { text: "插在下面" });
+    const above = store.insertBeside(third.id, "above", { text: "插在上面" });
+    assert.deepEqual(store.list().map((record) => record.text), ["插在上面", "第三条", "插在下面", "第一条"]);
+    assert.equal(below.id !== above.id, true);
+    assert.equal(store.insertBeside("missing", "above", { text: "没锚点就放最前" }).text, "没锚点就放最前");
+    assert.equal(store.list()[0].text, "没锚点就放最前");
+    assert.throws(() => store.insertBeside(first.id, "above", { text: "  " }), /内容不能为空/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bookmark move puts one note above or below another and keeps it after reload", () => {
+  const { store, path, root } = tempStore();
+  try {
+    const first = store.add({ text: "第一条" });
+    const second = store.add({ text: "第二条" });
+    const third = store.add({ text: "第三条" });
+    store.move(first.id, third.id, "above");
+    assert.deepEqual(store.list().map((record) => record.text), ["第一条", "第三条", "第二条"]);
+    store.move(second.id, first.id, "below");
+    assert.deepEqual(store.list().map((record) => record.text), ["第一条", "第二条", "第三条"]);
+    assert.equal(store.move(first.id, first.id, "below")?.text, "第一条");
+    const reloaded = new BookmarkStore(path);
+    assert.deepEqual(reloaded.list().map((record) => record.text), ["第一条", "第二条", "第三条"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bookmark dedupeKey swallows duplicate deliveries (手机离线重发不重复入库)", () => {
   const { store, root } = tempStore();
   try {

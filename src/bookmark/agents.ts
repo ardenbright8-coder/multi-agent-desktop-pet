@@ -47,6 +47,21 @@ export class AgentRoster {
     return { list: [...this.agents], existed: false };
   }
 
+  /** 把一个分组挪到另一个分组的上面或下面。名单顺序就是板上的顺序。 */
+  move(rawName: string, anchorRaw: string, place: "above" | "below"): string[] {
+    this.ensureLoaded();
+    const name = this.find(rawName);
+    const anchor = this.find(anchorRaw);
+    if (!name || !anchor || name === anchor) return this.list();
+    const next = this.agents.filter((item) => item !== name);
+    let index = next.indexOf(anchor);
+    if (place === "below") index += 1;
+    next.splice(index, 0, name);
+    this.agents = next;
+    this.save();
+    return this.list();
+  }
+
   /** 移除分组（大小写不敏感）。名下条目的改派由调用方处理，这里只管名单。 */
   remove(rawName: string): boolean {
     this.ensureLoaded();

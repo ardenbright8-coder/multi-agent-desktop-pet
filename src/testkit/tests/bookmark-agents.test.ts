@@ -25,6 +25,19 @@ test("agent roster defaults to the four groups and persists additions", () => {
   }
 });
 
+test("agent roster move reorders groups and persists", () => {
+  const { roster, path, root } = tempRoster();
+  try {
+    roster.move("Hermes", "Claude", "above");
+    assert.deepEqual(roster.list(), ["Hermes", "Claude", "ChatGPT", "Pi Agent"]);
+    roster.move("Pi Agent", "Claude", "below");
+    assert.deepEqual(roster.list(), ["Hermes", "Claude", "Pi Agent", "ChatGPT"]);
+    assert.deepEqual(new AgentRoster(path).list(), ["Hermes", "Claude", "Pi Agent", "ChatGPT"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("agent roster dedupes case-insensitively and rejects empty or oversized names", () => {
   const { roster, root } = tempRoster();
   try {

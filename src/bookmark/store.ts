@@ -79,6 +79,47 @@ export class BookmarkStore {
     return record;
   }
 
+  /** 插在某条的上面或下面。锚点没有就放到最前。右键白条上半/下半用这个，不总是堆到顶上。 */
+  insertBeside(anchorId: string | null, place: "above" | "below", input: BookmarkInput): BookmarkRecord {
+    this.ensureLoaded();
+    const text = String(input?.text ?? "").trim();
+    if (!text) throw new Error("书签内容不能为空");
+    const record: BookmarkRecord = {
+      id: `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
+      text,
+      url: input.url ? String(input.url) : null,
+      assignee: input.assignee ? String(input.assignee) : null,
+      dedupeKey: input.dedupeKey ? String(input.dedupeKey) : null,
+      detail: input.detail ? String(input.detail) : null,
+      kind: input.kind === "handoff" ? "handoff" : "note",
+      attachments: normalizeAttachmentNames(input.attachments),
+      createdAt: new Date().toISOString(),
+    };
+    const index = anchorId ? this.records.findIndex((item) => item.id === anchorId) : -1;
+    if (index < 0) this.records.unshift(record);
+    else if (place === "below") this.records.splice(index + 1, 0, record);
+    else this.records.splice(index, 0, record);
+    this.save();
+    return record;
+  }
+
+  /** 把一条挪到另一条的上面或下面。顺序就是数组顺序，刷新还在。锚点没有或挪到自己身上则不动。 */
+  move(id: string, anchorId: string, place: "above" | "below"): BookmarkRecord | null {
+    this.ensureLoaded();
+    const from = this.records.findIndex((item) => item.id === id);
+    if (from < 0 || id === anchorId) return this.records[from] ?? null;
+    const [item] = this.records.splice(from, 1);
+    let to = this.records.findIndex((record) => record.id === anchorId);
+    if (to < 0) {
+      this.records.splice(from, 0, item);
+      return item;
+    }
+    if (place === "below") to += 1;
+    this.records.splice(to, 0, item);
+    this.save();
+    return item;
+  }
+
   remove(id: string): boolean {
     this.ensureLoaded();
     const before = this.records.length;
