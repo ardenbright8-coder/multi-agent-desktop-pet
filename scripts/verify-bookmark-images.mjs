@@ -10,7 +10,7 @@ mkdirSync(join(root, ".runtime", "image-tests"), {recursive:true});
 const home = mkdtempSync(join(root, ".runtime", "image-tests", "run-"));
 let app;
 // 样图必须是校验和都对的真 PNG：Electron 解码器很严，坏校验和直接判「无法读取」（原来那张 1×1 的 IDAT 校验和是错的，看着能开其实不合格）
-const png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOsWBDFgA0wYRUdtBIAJWEBglqST8gAAAAASUVORK5CYII=";
+const png = "iVBORw0KGgoAAAANSUhEUgAAAMgAAAB4CAIAAAA48Cq8AAAA7UlEQVR42u3SQREAMAjAsDGZKEEOUvHA8Uwk9BrV+eDalwBjYSyMBcbCWBgLjIWxMBYYC2NhLDAWxsJYYCyMhbHAWBgLY4GxMBbGAmNhLIwFxsJYGAuMhbEwFhgLY2EsMBbGwlhgLIyFscBYGAtjgbEwFsYCY2EsjAXGwlgYC4yFsTAWGAtjYSwwFsbCWGAsjIWxwFgYC2OBsTAWxgJjYSyMBcbCWBgLjIWxMBYYC2NhLDAWxsJYGAuMhbEwFhgLY2EsMBbGwlhgLIyFscBYGAtjgbEwFsYCY2EsjAXGwlgYC4yFsTAWGAtjYSzYGHDGAmIcfrtIAAAAAElFTkSuQmCC"; // 200×120：够大，才验得出小图有没有缩到一行字高
 async function paste(page, image = png) {
   await page.evaluate((image) => {
     const bytes = Uint8Array.from(atob(image), (c) => c.charCodeAt(0));
@@ -49,8 +49,21 @@ try {
   await page.locator("#titlebar .title").click();
   await page.waitForSelector(".task-text .bm-inline-image");
   assert.equal(await page.locator(".task-text .bm-inline-image").count(),2);
+  // 小图跟一行字差不多高（2026-09-24 用户：小图太大把排版搞乱，像个图标嵌在字里就行）
+  const thumb = await page.evaluate(() => {
+    const img = document.querySelector(".task-text .bm-inline-image img");
+    const line = parseFloat(getComputedStyle(document.querySelector(".task-text")).lineHeight) || 22;
+    return { h: img.getBoundingClientRect().height, maxH: getComputedStyle(img).maxHeight, line };
+  });
+  assert.ok(thumb.h <= thumb.line + 2, `小图应不高于一行字：${JSON.stringify(thumb)}`);
   await page.locator(".task-text .bm-inline-image button").first().click();
   await page.waitForSelector("dialog[open] img");
+  // 大图关闭钮：一个 ×，而且不能落在「按住拖窗口」的区域里（落进去真鼠标点了是拖窗口，按钮收不到）
+  const closeBtn = await page.evaluate(() => {
+    const btn = document.querySelector("dialog[open] .bm-image-close");
+    return btn ? { text: btn.textContent, region: getComputedStyle(btn).getPropertyValue("-webkit-app-region"), dialog: getComputedStyle(btn.closest("dialog")).getPropertyValue("-webkit-app-region") } : null;
+  });
+  assert.ok(closeBtn && closeBtn.text === "×" && closeBtn.region === "no-drag" && closeBtn.dialog === "no-drag", `大图关闭钮：${JSON.stringify(closeBtn)}`);
   assert.equal(await page.locator(".task-edit").count(),0);
   await page.locator("dialog button").click();
   const prompt = await page.evaluate((id) => window.bookmark.copyForAgent(id,null), id);

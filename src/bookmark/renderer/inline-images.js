@@ -70,7 +70,7 @@ async function bmImageSource(name) {
 function bmShowImage(name) {
   const dialog = document.createElement("dialog");
   dialog.className = "bm-image-viewer";
-  const close = document.createElement("button"); close.textContent = "关闭"; close.type = "button";
+  const close = document.createElement("button"); close.textContent = "×"; close.type = "button"; close.className = "bm-image-close"; close.title = "关闭（也可以按 Esc 或点外面）";
   close.addEventListener("click", () => dialog.close());
   const img = document.createElement("img"); img.alt = "任务参考图";
   dialog.append(close, img); document.body.appendChild(dialog);

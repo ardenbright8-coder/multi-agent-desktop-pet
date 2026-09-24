@@ -6,11 +6,17 @@
 .bm-image-tools { display:flex; justify-content:flex-end; margin-top:3px; }
 .bm-image-tools button { border:0; background:transparent; color:#4d6b3a; font:inherit; font-size:12px; cursor:pointer; }
 .task .task-text.bm-has-images { display:block; -webkit-line-clamp:unset; overflow:visible; }
-.bm-inline-image { display:inline-flex; position:relative; vertical-align:middle; margin:4px 6px; max-width:100%; white-space:normal; }
-.bm-inline-image > button:first-child { padding:0; border:1px solid rgba(90,115,70,.3); border-radius:8px; background:rgba(255,255,255,.4); overflow:hidden; cursor:zoom-in; }
-.bm-inline-image img { display:block; max-width:min(260px,100%); max-height:160px; object-fit:contain; }
-.bm-inline-image .bm-image-remove { position:absolute; top:2px; right:2px; width:22px; height:22px; border:0; border-radius:50%; background:#fff; color:#6c4438; cursor:pointer; }
-.bm-image-viewer { max-width:90vw; max-height:90vh; padding:12px; border:0; border-radius:12px; background:#f4f6ef; }
+/* 小图跟一行字差不多高，像个图标嵌在字里（2026-09-24 用户：大了把排版搞乱）；点一下看大图 */
+.bm-inline-image { display:inline-flex; position:relative; vertical-align:-0.25em; margin:0 2px; max-width:100%; white-space:normal; }
+.bm-inline-image > button:first-child { padding:0; border:1px solid rgba(90,115,70,.35); border-radius:4px; background:rgba(255,255,255,.4); overflow:hidden; cursor:zoom-in; }
+.bm-inline-image img { display:block; height:1.2em; width:auto; max-width:3.2em; object-fit:cover; }
+/* 编辑时小图右上角的删除 ×：小一号，鼠标移到图上才露 */
+.bm-inline-image .bm-image-remove { position:absolute; top:-6px; right:-6px; width:14px; height:14px; padding:0; border:0; border-radius:50%; background:#fff; color:#6c4438; font-size:11px; line-height:14px; cursor:pointer; opacity:0; box-shadow:0 1px 3px rgba(0,0,0,.25); }
+.bm-inline-image:hover .bm-image-remove, .bm-inline-image .bm-image-remove:focus-visible { opacity:1; }
+/* 大图：整块不参与「按住拖窗口」，不然真鼠标点关闭是去拖窗口，按钮收不到（2026-09-24 用户：关闭不好使） */
+.bm-image-viewer { max-width:90vw; max-height:90vh; padding:12px; border:0; border-radius:12px; background:#f4f6ef; -webkit-app-region:no-drag; }
+.bm-image-viewer * { -webkit-app-region:no-drag; }
 .bm-image-viewer::backdrop { background:rgba(0,0,0,.5); }
-.bm-image-viewer > button { display:block; margin:0 0 8px auto; }
+.bm-image-viewer > .bm-image-close { position:absolute; top:6px; right:6px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:rgba(255,255,255,.9); color:#3d4a38; font-size:18px; line-height:28px; cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.25); }
+.bm-image-viewer > .bm-image-close:hover { background:#fff; }
 .bm-image-viewer img { display:block; max-width:85vw; max-height:80vh; object-fit:contain; }
