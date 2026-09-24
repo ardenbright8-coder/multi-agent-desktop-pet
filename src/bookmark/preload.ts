@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld("bookmark", {
   onLaunchPasted: (callback: (result: { label: string; ok: boolean; reason: string | null }) => void) => {
     ipcRenderer.on("bookmark:launch-pasted", (_event, result) => callback(result));
   },
+  // 两档（设定18）：日常档 / 睡觉档；切到睡觉档后开了哪几组的窗另发 bookmark:sleep-nudged。
+  getMode: () => ipcRenderer.invoke("bookmark:mode:get") as Promise<"day" | "sleep">,
+  setMode: (mode: "day" | "sleep") => ipcRenderer.invoke("bookmark:mode:set", mode) as Promise<"day" | "sleep">,
+  onSleepNudged: (callback: (groups: string[]) => void) => {
+    ipcRenderer.on("bookmark:sleep-nudged", (_event, groups) => callback(groups));
+  },
   agents: () => ipcRenderer.invoke("bookmark:agents"),
   moveAgent: (name: string, anchor: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:agents:move", { name, anchor, place }),
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),

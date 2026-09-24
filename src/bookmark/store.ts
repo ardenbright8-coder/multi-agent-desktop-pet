@@ -43,6 +43,10 @@ export interface BookmarkRecord {
   /** 谁领走了（看板开窗时起的窗口名，如 Claude-3）。null = 没人领。 */
   claimedBy: string | null;
   claimedAt: string | null;
+  /** 睡觉档（设定18）：AI 干完写的大白话报告，挂在条目下面等用户早上审；审过说可以才删。null = 还没报告。 */
+  report: string | null;
+  reportedBy: string | null;
+  reportedAt: string | null;
   createdAt: string;
 }
 
@@ -92,6 +96,9 @@ export class BookmarkStore {
       bundleId: null,
       claimedBy: null,
       claimedAt: null,
+      report: null,
+      reportedBy: null,
+      reportedAt: null,
       createdAt: new Date().toISOString(),
     };
     this.records.unshift(record);
@@ -116,6 +123,9 @@ export class BookmarkStore {
       bundleId: null,
       claimedBy: null,
       claimedAt: null,
+      report: null,
+      reportedBy: null,
+      reportedAt: null,
       createdAt: new Date().toISOString(),
     };
     const index = anchorId ? this.records.findIndex((item) => item.id === anchorId) : -1;
@@ -188,6 +198,22 @@ export class BookmarkStore {
     const inBundle = this.records.filter((r) => r.bundleId === target);
     const candidates = inBundle.length ? inBundle : this.records.filter((r) => r.id === target);
     if (!candidates.length) throw new Error(`找不到 ${target}（这一捆或这一条可能已经干完删掉了）`);
+    return this.claimFrom(candidates, who);
+  }
+
+  /** 按组领（睡觉档 `next --to 组名`）：这组从上到下第一条没人领、没报告过的；组名大小写不管。 */
+  claimInGroup(group: string, by: string): ClaimResult {
+    this.ensureLoaded();
+    const who = String(by ?? "").trim();
+    if (!who) throw new Error("缺窗口名（--by）");
+    const key = String(group ?? "").trim().toLowerCase();
+    if (!key) throw new Error("缺组名（--to）");
+    return this.claimFrom(this.records.filter((r) => (r.assignee ?? "").toLowerCase() === key), who);
+  }
+
+  /** 领活的共同规矩：报告过的不算活；自己手里有没干完的还给它那条；别人领走的跳过。 */
+  private claimFrom(all: BookmarkRecord[], who: string): ClaimResult {
+    const candidates = all.filter((r) => !r.report);
     const total = candidates.length;
     const mine = candidates.find((r) => r.claimedBy === who);
     const pick = mine ?? candidates.find((r) => !r.claimedBy) ?? null;
@@ -213,6 +239,24 @@ export class BookmarkStore {
     if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     if (!String(userOk ?? "").trim()) throw new Error("缺用户确认：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进 --ok");
     this.records = this.records.filter((r) => r.id !== id);
+    this.save();
+    return record;
+  }
+
+  /** 睡觉档干完（设定18）：领的人写大白话报告，条目标成干完待审、不删，领活标记清掉，早上用户看了说可以再删。 */
+  report(id: string, by: string, text: string): BookmarkRecord {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了）");
+    const who = String(by ?? "").trim();
+    if (record.claimedBy !== who) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
+    const words = String(text ?? "").trim();
+    if (!words) throw new Error("报告是空的：用大白话写做了啥、改了哪些、怎么验的、还有啥没弄完");
+    record.report = words;
+    record.reportedBy = who;
+    record.reportedAt = new Date().toISOString();
+    record.claimedBy = null;
+    record.claimedAt = null;
     this.save();
     return record;
   }
@@ -333,6 +377,9 @@ export class BookmarkStore {
           bundleId: typeof record.bundleId === "string" ? record.bundleId : null,
           claimedBy: typeof record.claimedBy === "string" ? record.claimedBy : null,
           claimedAt: typeof record.claimedAt === "string" ? record.claimedAt : null,
+          report: typeof record.report === "string" ? record.report : null,
+          reportedBy: typeof record.reportedBy === "string" ? record.reportedBy : null,
+          reportedAt: typeof record.reportedAt === "string" ? record.reportedAt : null,
         }));
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;

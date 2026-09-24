@@ -794,3 +794,15 @@ body {
   font-size: 12.5px;
   cursor: pointer;
 }
+
+/* 两档（设定18）：标题栏档位钮，睡觉档换夜色 */
+#mode-btn { -webkit-app-region: no-drag; flex: none; border: 1px solid rgba(122, 156, 94, 0.45); background: rgba(255, 255, 255, 0.45); color: #4d6b3a; border-radius: 10px; padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+#mode-btn:hover { background: rgba(122, 156, 94, 0.16); }
+#mode-btn.sleep { background: #2f3b52; border-color: #2f3b52; color: #f1e7c4; }
+/* 睡觉档干完待审：报告挂在条目下面，淡绿左边线 */
+.task-report { margin-top: 4px; padding: 4px 8px; border-left: 3px solid #7a9c5e; border-radius: 6px; background: rgba(122, 156, 94, 0.12); font-size: 13px; line-height: 1.4; cursor: default; }
+.task-report .report-head { font-weight: 600; color: #4d6b3a; }
+.task-report .report-text { white-space: pre-wrap; overflow-wrap: anywhere; color: #2f3e2c; }
+.task-report .report-ok { margin-top: 3px; border: 1px solid rgba(122, 156, 94, 0.55); border-radius: 6px; background: rgba(255, 255, 255, 0.6); color: #4d6b3a; font: inherit; font-size: 12px; padding: 1px 8px; cursor: pointer; }
+.task-report .report-ok:hover { background: rgba(122, 156, 94, 0.2); }
+

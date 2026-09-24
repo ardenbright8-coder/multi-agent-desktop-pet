@@ -27,6 +27,7 @@ import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listPro
 import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
+import { parseBoardMode, planNudges, type BoardMode } from "./sleep-mode";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -329,6 +330,14 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           return record;
         },
         release: (id) => requireStore().release(id),
+        // 睡觉档（设定18）：按组领、干完写大白话报告、告诉 AI 现在是哪一档。
+        claimInGroup: (group, by) => requireStore().claimInGroup(group, by),
+        report: (id, by, text) => {
+          const record = requireStore().report(id, by, text);
+          log.记(`${by} 睡觉档干完「${record.text.slice(0, 30)}」，报告挂上等用户审`, "cli");
+          return record;
+        },
+        mode: () => readBoardMode(),
         template: () => listTemplates(templatesDirectory()).find((t) => t.name === CODING_TEMPLATE)?.text ?? null,
       },
       onChanged: notifyInboxChanged,
@@ -336,6 +345,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   } catch (error) {
     log.出事("CLI 接入服务启动失败（看板仍可用，只是命令行连不上）", error, "cli");
   }
+  if (readBoardMode() === "sleep") startSleepTimer();
   log.记("书签台就绪（Agent 看板·常驻贴屏）", "init");
 }
 
@@ -729,6 +739,20 @@ function registerIpc(): void {
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
     return { line, label, ...(await openAgentShortcut(group, line, label)) };
   });
+  // 两档（设定18）：切到睡觉档马上看一眼、给有活没人干的组开好窗贴好领活那句（回车用户按），之后每半小时看一眼。
+  ipcMain.handle("bookmark:mode:get", () => readBoardMode());
+  ipcMain.handle("bookmark:mode:set", (_event, value: unknown) => {
+    const mode: BoardMode = value === "sleep" ? "sleep" : "day";
+    writeJsonAtomic(join(bookmarkDataDirectory(), MODE_FILE), { mode });
+    sleepNudged.clear();
+    log.记(`看板切到${mode === "sleep" ? "睡觉档" : "日常档"}`, "cli");
+    // 看一眼要等开窗贴字（每组十几秒），不让按钮等着：开了哪几组另发 bookmark:sleep-nudged。
+    if (mode === "sleep") {
+      startSleepTimer();
+      void runSleepCheck();
+    } else stopSleepTimer();
+    return mode;
+  });
   ipcMain.handle("bookmark:templates:open", async () => {
     const dir = templatesDirectory();
     mkdirSync(dir, { recursive: true });
@@ -790,7 +814,7 @@ interface LaunchOpenResult {
  * 返回 problem 让界面提示「自己开窗」。开完替用户贴启动句：命令窗口贴进新窗口，桌面程序先 Ctrl+N 新开对话再贴（设定15第四版）。
  * 自测、验证脚本（隔离数据夹）只报会怎么做、不真开；设了 BOOKMARK_AGENT_SHORTCUT_DIR（放假快捷方式的夹）才真开。
  */
-async function openAgentShortcut(group: string, line: string, label: string): Promise<LaunchOpenResult> {
+async function openAgentShortcut(group: string, line: string, label: string, waitPaste = false): Promise<LaunchOpenResult> {
   const spec = agentShortcutFor(group);
   if (!spec) return { opened: null, freshWindow: false, pasting: false, problem: null };
   const name = spec.shortcut.replace(/\.lnk$/i, "");
@@ -805,7 +829,10 @@ async function openAgentShortcut(group: string, line: string, label: string): Pr
     const before = win32 ? new Set(win32.windows()) : null;
     const errorMessage = await shell.openPath(path);
     if (errorMessage) throw new Error(errorMessage);
-    if (win32 && before) void pasteLaunchLine(win32, spec.app ?? null, before, line, label);
+    if (win32 && before) {
+      const pasting = pasteLaunchLine(win32, spec.app ?? null, before, line, label);
+      if (waitPaste) await pasting;
+    }
     return { opened: name, freshWindow: spec.freshWindow, pasting: Boolean(win32 && before), problem: null };
   } catch (error) {
     log.出事(`启动 Agent 开「${name}」失败（启动句已在剪贴板，用户可手动开）`, error, "cli");
@@ -851,6 +878,70 @@ async function pasteLaunchLine(
     if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:launch-pasted", { label, ...result });
   } catch {
     /* 面板不在就算了 */
+  }
+}
+
+const MODE_FILE = "mode.json";
+/** 睡觉档多久看一眼（用户：「半个小时试一次」）。 */
+const SLEEP_CHECK_MS = 30 * 60_000;
+let sleepTimer: NodeJS.Timeout | null = null;
+/** 开过窗、还没人来领的组：同一回卡住只开一次（planNudges 管）。 */
+const sleepNudged = new Set<string>();
+let sleepChecking = false;
+
+/** 现在是哪一档：mode.json 缺了、坏了一律日常档。 */
+function readBoardMode(): BoardMode {
+  try {
+    const path = join(bookmarkDataDirectory(), MODE_FILE);
+    return existsSync(path) ? parseBoardMode(readFileSync(path, "utf8")) : "day";
+  } catch {
+    return "day";
+  }
+}
+
+function startSleepTimer(): void {
+  if (sleepTimer) return;
+  sleepTimer = setInterval(() => void runSleepCheck(), SLEEP_CHECK_MS);
+  sleepTimer.unref?.();
+}
+
+function stopSleepTimer(): void {
+  if (sleepTimer) clearInterval(sleepTimer);
+  sleepTimer = null;
+}
+
+/**
+ * 睡觉档看一眼（设定18）：有活又没人在干的组，开这组的窗口、贴好「按组领活」那句。一组一组来，
+ * 等上一组贴完再开下一组（同时开几个会抢最前面）。🚨 只贴不回车：发不发还是用户的事。返回开了哪几组。
+ */
+async function runSleepCheck(): Promise<string[]> {
+  if (sleepChecking || readBoardMode() !== "sleep") return [];
+  sleepChecking = true;
+  try {
+    const groups = requireRoster().list().filter((g) => agentShortcutFor(g));
+    const plan = planNudges(requireStore().list(), groups, sleepNudged);
+    for (const g of plan.clear) sleepNudged.delete(g);
+    for (const group of plan.launch) {
+      sleepNudged.add(group);
+      const label = nextWindowLabel(group);
+      const line = `领看板的活：node "${bookmarkCliScriptPath()}" next --to "${group}" --by ${label}`;
+      clipboard.writeText(line);
+      log.记(`睡觉档：${group} 组有活没人干，开窗贴好领活那句（${label}，没按回车）`, "cli");
+      await openAgentShortcut(group, line, label, true);
+    }
+    if (plan.launch.length) {
+      try {
+        if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:sleep-nudged", plan.launch);
+      } catch {
+        /* 面板不在就算了 */
+      }
+    }
+    return plan.launch;
+  } catch (error) {
+    log.出事("睡觉档看一眼出错（下回再看）", error, "cli");
+    return [];
+  } finally {
+    sleepChecking = false;
   }
 }
 

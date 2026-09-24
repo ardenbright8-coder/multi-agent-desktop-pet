@@ -30,6 +30,8 @@ export interface CliRecord {
   /** 捆号 / 谁领走了（设定15）；老适配器可以不给。 */
   bundleId?: string | null;
   claimedBy?: string | null;
+  /** 睡觉档 AI 写的大白话报告（设定18）；老适配器可以不给。 */
+  report?: string | null;
 }
 
 /** 领活结果（store.claimNext 同形）：record 为 null = 没活可领，busy 是正在干的窗口名。 */
@@ -52,6 +54,10 @@ export interface CliStoreAdapter {
   claimNext?(target: string, by: string): CliClaim;
   done?(id: string, by: string, userOk: string): CliRecord;
   release?(id: string): CliRecord | null;
+  /** 睡觉档（设定18）：按组领 / 写大白话报告 / 看板现在是哪一档。 */
+  claimInGroup?(group: string, by: string): CliClaim;
+  report?(id: string, by: string, text: string): CliRecord;
+  mode?(): "day" | "sleep";
   /** 要求模板原文：coding = 「带编程」那份；没有返回 null。 */
   template?(name: "coding"): string | null;
 }
@@ -69,8 +75,8 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release";
-  /** next/done/release 的对象：捆号或条目 id。 */
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report";
+  /** next/done/release/report 的对象：捆号或条目 id（next --to 组名时没有）。 */
   target?: string;
   /** 看板开窗时起的窗口名（如 Claude-3）。 */
   by?: string;
@@ -92,12 +98,13 @@ export interface CliArgs {
 const CLI_USAGE =
   '用法：bookmark-cli add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | list [--to Agent名] [--handoff] [--json] | '
   + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id> | '
-  + 'next <捆号或条目id> --by 窗口名 [--coding] | done <条目id> --by 窗口名 --ok "用户原话" | release <条目id> --by 窗口名';
+  + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
+  + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名';
 
 /** 解析命令行参数。add/handoff 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
 export function parseCliArgs(argv: string[]): CliArgs {
   const command = argv[0];
-  if (command === "next" || command === "done" || command === "release") return parseClaimArgs(command, argv);
+  if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
   if (command !== "add" && command !== "list" && command !== "handoff" && command !== "remove") {
     throw new Error(CLI_USAGE);
   }
@@ -150,14 +157,18 @@ export function parseCliArgs(argv: string[]): CliArgs {
   return args;
 }
 
-/** 领活三件套的参数：一个位置参数（捆号或条目 id）+ --by（必填）+ done 的 --ok（必填，用户原话）+ next 的 --coding。 */
-function parseClaimArgs(command: "next" | "done" | "release", argv: string[]): CliArgs {
+/** 领活几件套的参数：一个位置参数（捆号或条目 id）+ --by（必填）+ done 的 --ok（必填，用户原话）+ next 的 --coding / --to 组名
+ *  + report 的 --text（必填，大白话报告）。--ok、--text 后面可以跟好几个词，拼成一句。 */
+function parseClaimArgs(command: "next" | "done" | "release" | "report", argv: string[]): CliArgs {
   let target: string | undefined;
   let by: string | undefined;
+  let to: string | undefined;
   let coding = false;
   let json = false;
   const okWords: string[] = [];
+  const textWords: string[] = [];
   let inOk = false;
+  let inText = false;
   for (let i = 1; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--by") {
@@ -165,8 +176,19 @@ function parseClaimArgs(command: "next" | "done" | "release", argv: string[]): C
       if (value == null) throw new Error("--by 后面要跟窗口名（启动那句话里给的，比如 Claude-3）");
       by = value;
       inOk = false;
+      inText = false;
+    } else if (flag === "--to" && command === "next") {
+      const value = argv[++i];
+      if (value == null) throw new Error("--to 后面要跟组名（比如 Claude、「Pi Agent」要带引号）");
+      to = value;
+      inOk = false;
+      inText = false;
     } else if (flag === "--ok") {
       inOk = true;
+      inText = false;
+    } else if (flag === "--text" && command === "report") {
+      inText = true;
+      inOk = false;
     } else if (flag === "--coding") {
       coding = true;
       inOk = false;
@@ -177,15 +199,22 @@ function parseClaimArgs(command: "next" | "done" | "release", argv: string[]): C
       throw new Error(`不认识的参数 ${flag}。${CLI_USAGE}`);
     } else if (inOk) {
       okWords.push(flag);
+    } else if (inText) {
+      textWords.push(flag);
     } else if (target == null) {
       target = flag;
     } else {
       throw new Error(`多了一个参数 ${flag}。${CLI_USAGE}`);
     }
   }
-  if (!target) throw new Error(`${command} 缺捆号或条目 id（启动那句话里有）。${CLI_USAGE}`);
+  if (!target && !to) throw new Error(`${command} 缺捆号或条目 id（启动那句话里有）。${CLI_USAGE}`);
   if (!by) throw new Error(`${command} 缺 --by 窗口名（启动那句话里有，比如 --by Claude-3）`);
-  const args: CliArgs = { command, target, by, coding, json, attach: [] };
+  const args: CliArgs = target ? { command, target, by, coding, json, attach: [] } : { command, to, by, coding, json, attach: [] };
+  if (command === "report") {
+    const text = textWords.join(" ").trim();
+    if (!text) throw new Error('report 缺 --text "大白话报告"：做了啥、改了哪些、怎么验的、还有啥没弄完');
+    args.text = text;
+  }
   if (command === "done") {
     const ok = okWords.join(" ").trim();
     if (!ok) throw new Error('done 缺 --ok "用户原话"：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进来');
@@ -196,28 +225,58 @@ function parseClaimArgs(command: "next" | "done" | "release", argv: string[]): C
 
 /** 领到活以后给 AI 看的整段话。🚨 所有 AI（Claude/Codex/Pi/Hermes）看到的都是这一份，规矩只在这里写一次。 */
 export function formatClaimMessage(
-  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[] },
-  ctx: { cli: string; target: string; by: string; coding: boolean },
+  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep" },
+  ctx: { cli: string; target?: string; group?: string; by: string; coding: boolean },
 ): string {
   const run = (rest: string) => `node "${ctx.cli}" ${rest}`;
+  const sleep = reply.mode === "sleep";
   if (!reply.item) {
     const busy = reply.busy.length ? `还有 ${reply.busy.join("、")} 在干。` : "";
-    return `【看板领活】${ctx.target} 没有可领的了。${busy}跟用户说一声这边的活领完了就行。`;
+    const what = ctx.group ? `${ctx.group} 组` : ctx.target;
+    return sleep
+      ? `【看板领活】${what} 没有可领的了。${busy}这边的活都领完了，停下就行（用户在睡觉，不用跟他说）。`
+      : `【看板领活】${what} 没有可领的了。${busy}跟用户说一声这边的活领完了就行。`;
   }
-  const where = reply.total > 1 ? `这一捆的第 ${reply.position}/${reply.total} 条` : "这一条";
   const id = reply.item.id;
+  // 睡觉档一律按组往下领（这组干完为止）；日常档用什么领的就接着用什么领。
+  const group = ctx.group ?? (sleep ? reply.item.assignee ?? "" : "");
+  const nextCmd = group ? `next --to "${group}" --by ${ctx.by}` : `next ${ctx.target} --by ${ctx.by}`;
+  const coding = ctx.coding ? " --coding" : "";
+  const where = group
+    ? `${group} 组的第 ${reply.position}/${reply.total} 条`
+    : reply.total > 1 ? `这一捆的第 ${reply.position}/${reply.total} 条` : "这一条";
+  if (sleep) {
+    return [
+      `【看板领活 · 🌙 睡觉档】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
+      "",
+      reply.prompt ?? "",
+      "",
+      "—— 干活规矩（睡觉档，所有 AI 都一样）——",
+      "用户在睡觉。你一条接一条往下干，他早上起来看你写的报告。",
+      "1. 一次只干这一条。",
+      "2. 不用等他说「可以」，也别删这条。干完用大白话写一段报告（做了啥、改了哪些、怎么验的、还有啥没弄完或要他拍板的），敲：",
+      `   ${run(`report ${id} --by ${ctx.by} --text "你的报告"`)}`,
+      "   这条会标成「✅ 干完待审」，报告挂在条目下面，他早上看了说可以才删。",
+      `3. 写完接着领 ${group} 组下一条，一直干到没有可领的：`,
+      `   ${run(`${nextCmd}${coding}`)}`,
+      "4. 额度快用完、或者上下文快满了：先写交接单（干到哪了、下一步干啥、新窗口要带哪些文件），再把手上这条放回去，然后停：",
+      `   ${run(`handoff "交接：一句话说清干到哪" --to "${group}" --detail "干到哪了、下一步、要带的文件"`)}`,
+      `   ${run(`release ${id} --by ${ctx.by}`)}`,
+      "5. 碰到要他拍板、有风险的事（删东西、动系统、花钱、发出去）：别干，写进报告等他早上定，接着领下一条。",
+    ].join(String.fromCharCode(10));
+  }
   return [
     `【看板领活】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
     "",
     reply.prompt ?? "",
     "",
     "—— 干活规矩（所有 AI 都一样）——",
-    "1. 一次只干这一条，这一捆里别的条先别碰。",
+    `1. 一次只干这一条，${group ? "这组" : "这一捆"}里别的条先别碰。`,
     "2. 干完先别删：把做了什么、改了哪些、怎么验，讲给用户听，请他自己验一下。",
     "3. 用户亲口说「可以」以后，把他的原话放进 --ok，敲：",
     `   ${run(`done ${id} --by ${ctx.by} --ok "他的原话"`)}`,
-    `4. 删完接着领下一条（这一捆还剩 ${reply.remaining} 条没人领）：`,
-    `   ${run(`next ${ctx.target} --by ${ctx.by}${ctx.coding ? " --coding" : ""}`)}`,
+    `4. 删完接着领下一条（${group ? `${group} 组` : "这一捆"}还剩 ${reply.remaining} 条没人领）：`,
+    `   ${run(`${nextCmd}${coding}`)}`,
     "5. 干不下去、要换人：",
     `   ${run(`release ${id} --by ${ctx.by}`)}`,
   ].join("\n");
@@ -333,10 +392,10 @@ export function handleCliRequest(
       .map(withAttachmentPaths);
     return { status: 200, body: { ok: true, items } };
   }
-  if (method === "POST" && (path === "/next" || path === "/done" || path === "/release")) {
+  if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report")) {
     return handleClaimRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
-  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /remove | /next | /done | /release | GET /list）" } };
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /remove | /next | /done | /release | /report | GET /list）" } };
 }
 
 /** 领活三件套。store 抛的错（不是你领的、缺用户原话、找不到）原样回给 AI，400。 */
@@ -355,10 +414,12 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
     if (path === "/next") {
       if (!store.claimNext) return { status: 500, body: { ok: false, error: "看板还不支持领活（主进程未接线）" } };
       const target = String(raw.target ?? "").trim();
-      if (!target) return { status: 400, body: { ok: false, error: "缺捆号或条目 id" } };
+      const group = String(raw.group ?? "").trim();
+      if (!target && !group) return { status: 400, body: { ok: false, error: "缺捆号或条目 id（或 --to 组名）" } };
+      if (group && !store.claimInGroup) return { status: 500, body: { ok: false, error: "看板还不支持按组领（主进程未接线）" } };
       const template = raw.coding ? store.template?.("coding") ?? null : null;
       if (raw.coding && !template) return { status: 400, body: { ok: false, error: "要求模板「带编程」找不到了（看板 ⚙ 设置里打开要求模板夹看看）" } };
-      const got = store.claimNext(target, by);
+      const got = group ? store.claimInGroup!(group, by) : store.claimNext(target, by);
       changed();
       return {
         status: 200,
@@ -370,11 +431,20 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
           total: got.total,
           remaining: got.remaining,
           busy: got.busy,
+          mode: store.mode?.() ?? "day",
         },
       };
     }
     const id = String(raw.id ?? "").trim();
     if (!id) return { status: 400, body: { ok: false, error: "缺条目 id" } };
+    if (path === "/report") {
+      if (!store.report) return { status: 500, body: { ok: false, error: "看板还不支持 report（主进程未接线）" } };
+      const text = String(raw.text ?? "").trim();
+      if (!text) return { status: 400, body: { ok: false, error: "报告是空的：用大白话写做了啥、改了哪些、怎么验的、还有啥没弄完" } };
+      store.report(id, by, text);
+      changed();
+      return { status: 200, body: { ok: true } };
+    }
     if (path === "/done") {
       if (!store.done) return { status: 500, body: { ok: false, error: "看板还不支持 done（主进程未接线）" } };
       const userOk = String(raw.ok ?? "").trim();

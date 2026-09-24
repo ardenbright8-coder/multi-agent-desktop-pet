@@ -169,6 +169,26 @@ function bmInit() {
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   window.bookmark.onInboxChanged?.(() => { void bmRefresh(); });
   // 启动 Agent 贴字结果（设定15第三版）：贴了就提醒看一眼再回车；没贴就说为什么、让用户自己贴。
+  // 两档（设定18）：☀️ 日常档 / 🌙 睡觉档，标题栏点一下切换。切到睡觉档，看板马上看一眼、有活没人干的组开好窗贴好领活那句。
+  const modeBtn = document.getElementById("mode-btn");
+  const paintMode = (mode) => {
+    modeBtn.textContent = mode === "sleep" ? "🌙 睡觉档" : "☀️ 日常档";
+    modeBtn.classList.toggle("sleep", mode === "sleep");
+  };
+  void window.bookmark.getMode?.().then(paintMode).catch(() => {});
+  modeBtn.addEventListener("click", async () => {
+    try {
+      const mode = await window.bookmark.setMode(modeBtn.classList.contains("sleep") ? "day" : "sleep");
+      paintMode(mode);
+      if (mode === "sleep") bmToast("已切到睡觉档：AI 干完一条写好大白话报告就接着领下一条，不等你说可以；每半小时看一眼有没有组有活没人干", 8000);
+      else bmToast("已切回日常档：AI 干完先给你验，你说可以再删", 5000);
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
+  });
+  window.bookmark.onSleepNudged?.((groups) => {
+    bmToast(`睡觉档：${groups.join("、")} 组有活没人干，开好窗、贴好领活那句了（没按回车，你按一下它就开干）`, 12000);
+  });
   window.bookmark.onLaunchPasted?.((r) => {
     if (r.ok) bmToast(`启动句已贴进 ${r.label} 窗口，没按回车：你看一眼再按回车`, 8000);
     else bmToast(`${r.reason}，没替你贴：点一下 ${r.label} 窗口，Ctrl+V 再回车`, 8000);
@@ -600,6 +620,34 @@ function bmBuildTask(record, groupKey, order) {
       else bmOpenDetails.add(record.id);
       fold.textContent = detail.hidden ? "▸ 详情" : "▾ 收起";
     });
+  }
+  // 睡觉档干完待审（设定18）：AI 的大白话报告挂在条目下面，用户早上看，点「可以，删掉」才删。
+  if (record.report) {
+    item.classList.add("reported");
+    const box = document.createElement("div");
+    box.className = "task-report";
+    const head = document.createElement("div");
+    head.className = "report-head";
+    head.textContent = `✅ 干完待审 · ${record.reportedBy ?? ""} · ${bmClock(Date.parse(record.reportedAt))}`;
+    const words = document.createElement("div");
+    words.className = "report-text";
+    words.textContent = record.report;
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "report-ok";
+    ok.textContent = "可以，删掉";
+    ok.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await window.bookmark.remove(record.id);
+        bmToast("审过了，这条删掉了");
+        void bmRefresh();
+      } catch (error) {
+        bmShowError(bmErrorText(error));
+      }
+    });
+    box.append(head, words, ok);
+    body.appendChild(box);
   }
   item.appendChild(body);
   // 在干标记（设定15）：哪个 AI 窗口领走了，一眼看到；别的窗口领不走。
