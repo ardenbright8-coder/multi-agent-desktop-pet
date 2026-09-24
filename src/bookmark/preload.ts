@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld("bookmark", {
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
   updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),
+  templates: () => ipcRenderer.invoke("bookmark:templates") as Promise<string[]>,
+  copyForAgent: (id: string, template: string | null) => ipcRenderer.invoke("bookmark:copy-for-agent", { id, template }) as Promise<string>,
+  openTemplates: () => ipcRenderer.invoke("bookmark:templates:open"),
   agents: () => ipcRenderer.invoke("bookmark:agents"),
   moveAgent: (name: string, anchor: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:agents:move", { name, anchor, place }),
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),

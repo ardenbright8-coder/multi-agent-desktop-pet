@@ -13,7 +13,7 @@
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
@@ -24,6 +24,7 @@ import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
 import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
+import { composeForAgent, listTemplates } from "./templates";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -568,6 +569,26 @@ function registerIpc(): void {
     if (errorMessage) throw new Error(`打不开：${errorMessage}`);
     return true;
   });
+  // 复制给 AI（2026-09-24）：模板夹一份 md = 气泡一项；拼好直接进剪贴板，用户自己粘、自己发（不替他开窗、不替他发）。
+  ipcMain.handle("bookmark:templates", () => listTemplates(templatesDirectory()).map((t) => t.name));
+  ipcMain.handle("bookmark:copy-for-agent", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { id?: unknown; template?: unknown };
+    const record = requireStore().list().find((r) => r.id === String(raw.id ?? ""));
+    if (!record) throw new Error("这条已经不在了");
+    const name = typeof raw.template === "string" ? raw.template : null;
+    const template = name ? listTemplates(templatesDirectory()).find((t) => t.name === name) : null;
+    if (name && !template) throw new Error(`要求模板「${name}」找不到了`);
+    const text = composeForAgent(template ? template.text : null, record);
+    clipboard.writeText(text);
+    return text;
+  });
+  ipcMain.handle("bookmark:templates:open", async () => {
+    const dir = templatesDirectory();
+    mkdirSync(dir, { recursive: true });
+    const errorMessage = await shell.openPath(dir);
+    if (errorMessage) throw new Error(`打不开：${errorMessage}`);
+    return true;
+  });
   ipcMain.handle("bookmark:agents:move", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { name?: unknown; anchor?: unknown; place?: unknown };
     const place = raw.place === "below" ? "below" : "above";
@@ -590,6 +611,10 @@ function registerIpc(): void {
       return requireRoster().list();
     },
   );
+}
+
+function templatesDirectory(): string {
+  return join(bookmarkDataDirectory(), "要求模板");
 }
 
 function requireRoster(): AgentRoster {

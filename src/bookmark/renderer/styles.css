@@ -174,22 +174,27 @@ body {
   padding: 0 7px;
 }
 
-.g-add, .g-fold {
-  border: 1px solid rgba(201, 165, 76, 0.55);
-  background: rgba(255, 255, 255, 0.5);
-  color: #8a6f2f;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+/* 组头的 ＋ / 收起：细线图标、不带圈，鼠标移上去才垫一层底（2026-09-24 用户拍板照 ChatGPT 那排按钮） */
+.g-add, .g-fold, .t-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: rgba(47, 62, 44, 0.55);
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
+  padding: 0;
   flex: none;
 }
 
-.g-add:hover, .g-fold:hover { background: rgba(201, 165, 76, 0.18); }
+.g-add:hover, .g-fold:hover, .t-copy:hover { background: rgba(47, 62, 44, 0.08); color: rgba(47, 62, 44, 0.85); }
 
-.g-fold { border-color: rgba(47, 62, 44, 0.25); color: rgba(47, 62, 44, 0.65); }
+/* 条目行尾复制钮：平时藏着，鼠标移到这一行才露（不占眼） */
+.t-copy { opacity: 0; align-self: center; }
+.task:hover .t-copy, .t-copy:focus-visible { opacity: 1; }
 
 .g-add { margin-left: auto; }
 
@@ -533,6 +538,36 @@ body {
 .ctx-item.danger:hover { background: rgba(176, 82, 79, 0.12); }
 
 .ctx-none { font-size: 12.5px; color: rgba(47, 62, 44, 0.45); padding: 2px 8px 4px; }
+
+/* 复制给 AI 的小气泡：跟右键菜单同一个样子 */
+#copy-pop {
+  position: fixed;
+  z-index: 50;
+  min-width: 150px;
+  background: rgba(250, 252, 246, 0.97);
+  border: 1px solid rgba(201, 165, 76, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(47, 62, 44, 0.22);
+  padding: 6px;
+}
+
+#copy-pop[hidden] { display: none; }
+
+.copy-pop-foot {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-top: 1px solid rgba(47, 62, 44, 0.1);
+  margin-top: 4px;
+  background: transparent;
+  color: rgba(47, 62, 44, 0.5);
+  font-size: 12px;
+  padding: 5px 8px 2px;
+  cursor: pointer;
+}
+
+.copy-pop-foot:hover { color: rgba(47, 62, 44, 0.85); }
 
 ::-webkit-scrollbar { width: 8px; }
 

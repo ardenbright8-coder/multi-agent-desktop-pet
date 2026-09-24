@@ -52,6 +52,16 @@ function bmToast(msg, ms) {
   clearTimeout(bmToastTimer);
   bmToastTimer = setTimeout(() => { el.hidden = true; }, ms || 2000);
 }
+// 细线图标（2026-09-24 用户拍板：照 ChatGPT 那排按钮，细线、小、不带圈，比字符和 emoji 清爽）。
+const BM_ICONS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  right: '<path d="M9 6l6 6-6 6"/>',
+  copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2.5 2.5 0 0 0-2.5-2.5H6.5A2.5 2.5 0 0 0 4 6.5V13a2.5 2.5 0 0 0 2.5 2.5h2"/>',
+};
+function bmIcon(name) {
+  return `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${BM_ICONS[name]}</svg>`;
+}
 function bmClock(ms) {
   const d = new Date(Number(ms) || 0);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -153,6 +163,8 @@ function bmInit() {
     // 点菜单外面收起右键菜单。
     const menu = document.getElementById("ctx-menu");
     if (!menu.hidden && !menu.contains(event.target)) bmHideCtxMenu();
+    const copyPop = document.getElementById("copy-pop");
+    if (copyPop && !copyPop.hidden && !copyPop.contains(event.target)) bmHideCopyPop();
     // 点浮层外面收起设置浮层（浮层内部点击已 stopPropagation）。
     const pop = document.getElementById("settings-popover");
     if (pop && !pop.hidden && !pop.contains(event.target)) pop.hidden = true;
@@ -430,7 +442,7 @@ function bmBuildGroup(key, displayName, records) {
   addBtn.type = "button";
   addBtn.className = "g-add";
   addBtn.title = key === BM_INBOX_KEY ? "记一条到待定区" : `给 ${displayName} 记一条`;
-  addBtn.textContent = "＋";
+  addBtn.innerHTML = bmIcon("plus");
   addBtn.addEventListener("click", () => bmBeginInsert(key, null, "above"));
   head.appendChild(addBtn);
 
@@ -438,7 +450,7 @@ function bmBuildGroup(key, displayName, records) {
   fold.type = "button";
   fold.className = "g-fold";
   fold.title = "收起 / 展开";
-  fold.textContent = bmCollapsed.has(key) ? "›" : "⌄";
+  fold.innerHTML = bmIcon(bmCollapsed.has(key) ? "right" : "down");
   fold.addEventListener("click", () => {
     if (bmCollapsed.has(key)) bmCollapsed.delete(key);
     else bmCollapsed.add(key);
@@ -489,7 +501,7 @@ function bmBuildTask(record, groupKey, order) {
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "handle";
-  handle.title = "点开：派给 / 删除";
+  handle.title = "点开菜单";
   handle.textContent = "⠿";
   handle.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -578,6 +590,17 @@ function bmBuildTask(record, groupKey, order) {
     });
   }
   item.appendChild(body);
+  // 复制给 AI（2026-09-24 用户拍板）：行尾细线复制钮，鼠标移上来才露；点开气泡选带哪套要求。
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "t-copy";
+  copy.title = "复制给 AI";
+  copy.innerHTML = bmIcon("copy");
+  copy.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void bmShowCopyPop(record, copy);
+  });
+  item.appendChild(copy);
   bmBindDrag({
     handle: item,
     row: item,
@@ -638,7 +661,7 @@ function bmBuildHandoffZone(records) {
   fold.type = "button";
   fold.className = "g-fold";
   fold.title = "收起 / 展开";
-  fold.textContent = bmCollapsed.has(BM_HANDOFF_ZONE_KEY) ? "›" : "⌄";
+  fold.innerHTML = bmIcon(bmCollapsed.has(BM_HANDOFF_ZONE_KEY) ? "right" : "down");
   fold.addEventListener("click", () => {
     if (bmCollapsed.has(BM_HANDOFF_ZONE_KEY)) bmCollapsed.delete(BM_HANDOFF_ZONE_KEY);
     else bmCollapsed.add(BM_HANDOFF_ZONE_KEY);
@@ -1255,6 +1278,7 @@ async function bmEditCommit(id, input, close) {
 }
 
 function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
+  bmHideCopyPop();
   const menu = document.getElementById("ctx-menu");
   menu.textContent = "";
 
@@ -1271,17 +1295,20 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
     menu.appendChild(create);
   }
 
-  const title = document.createElement("div");
-  title.className = "ctx-title";
-  title.textContent = "派给 →";
-  menu.appendChild(title);
-
-  const targets = bmAgents.filter((name) => name.toLowerCase() !== groupKey.toLowerCase());
-  if (!targets.length) {
-    const none = document.createElement("div");
-    none.className = "ctx-none";
-    none.textContent = "（还没有其他分组）";
-    menu.appendChild(none);
+  // 「派给 →」只在待定页给（2026-09-24 用户拍板：分组页拖到组头就是派给谁，菜单再列一遍是重复）。
+  // 待定页跟分组不在同一页、拖不过去，只能靠这里；「收回」也拖不回去（待定、专区都不是拖放目标），下面留着。
+  const targets = groupKey === BM_INBOX_KEY ? bmAgents : [];
+  if (groupKey === BM_INBOX_KEY) {
+    const title = document.createElement("div");
+    title.className = "ctx-title";
+    title.textContent = "派给 →";
+    menu.appendChild(title);
+    if (!targets.length) {
+      const none = document.createElement("div");
+      none.className = "ctx-none";
+      none.textContent = "（还没有分组）";
+      menu.appendChild(none);
+    }
   }
   for (const name of targets) {
     const item = document.createElement("button");
@@ -1321,6 +1348,74 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   if (top + menuHeightEstimate > panelRect.height) top = Math.max(8, panelRect.height - menuHeightEstimate - 8);
   menu.style.left = `${Math.max(6, left)}px`;
   menu.style.top = `${Math.max(6, top)}px`;
+}
+
+// ── 复制给 AI 的小气泡（2026-09-24 用户拍板）──────────────────────────
+// 模板夹（数据夹下 bookmark/要求模板/）里一份 md 一项 + 固定一项「只复制这条」；选完进剪贴板，
+// 用户自己粘进 AI 窗口、自己按回车（不替他开窗、不替他发，防被当成自动化）。
+async function bmShowCopyPop(record, anchor) {
+  bmHideCtxMenu();
+  let pop = document.getElementById("copy-pop");
+  if (!pop) {
+    pop = document.createElement("div");
+    pop.id = "copy-pop";
+    pop.hidden = true;
+    document.getElementById("app").appendChild(pop);
+  }
+  if (!pop.hidden && pop.dataset.id === record.id) {
+    bmHideCopyPop();
+    return;
+  }
+  let names = [];
+  try {
+    names = await window.bookmark.templates();
+  } catch (error) {
+    bmShowError(bmErrorText(error));
+  }
+  pop.textContent = "";
+  pop.dataset.id = record.id;
+  const options = [...names.map((name) => ({ label: name, template: name })), { label: "只复制这条", template: null }];
+  for (const opt of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ctx-item";
+    btn.textContent = opt.label;
+    btn.addEventListener("click", async () => {
+      bmHideCopyPop();
+      try {
+        await window.bookmark.copyForAgent(record.id, opt.template);
+        bmToast(opt.template ? `已复制（带「${opt.label}」），去 AI 窗口 Ctrl+V` : "已复制这条，去 AI 窗口 Ctrl+V");
+      } catch (error) {
+        bmShowError(bmErrorText(error));
+      }
+    });
+    pop.appendChild(btn);
+  }
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "copy-pop-foot";
+  edit.textContent = "改要求…";
+  edit.title = "打开要求模板夹：一份 md 就是气泡里一项，文件名就是名字";
+  edit.addEventListener("click", () => {
+    bmHideCopyPop();
+    window.bookmark.openTemplates().catch((error) => bmShowError(bmErrorText(error)));
+  });
+  pop.appendChild(edit);
+  pop.hidden = false;
+  // 右边对齐复制钮、贴在下面；下面放不下就翻到上面。
+  const panelRect = document.getElementById("app").getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  const popRect = pop.getBoundingClientRect();
+  const left = rect.right - panelRect.left - popRect.width;
+  let top = rect.bottom - panelRect.top + 4;
+  if (top + popRect.height > panelRect.height - 6) top = rect.top - panelRect.top - popRect.height - 4;
+  pop.style.left = `${Math.max(6, left)}px`;
+  pop.style.top = `${Math.max(6, top)}px`;
+}
+
+function bmHideCopyPop() {
+  const pop = document.getElementById("copy-pop");
+  if (pop) pop.hidden = true;
 }
 
 function bmHideCtxMenu() {

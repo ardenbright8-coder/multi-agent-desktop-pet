@@ -17,10 +17,11 @@
 | `cli-server.ts` | CLI 接入服务：主进程内 127.0.0.1 小服务（端口+token 写 cli-port.json），agent 命令行读写看板（add/list/handoff/remove）；数据只走 panel-window 注入的适配器，绝不直写 bookmarks.json（主进程内存会覆盖直写） |
 | `inbox.ts` | 收信+回执接线（2026-09-10 接通）：连邮局收手机消息→入 store→发「已收录」回执→通知面板刷新；断线指数退避重连+lastId 续读补收；配置读 `<appDataRoot>\bookmark\ntfy.json`（缺文件/坏档不启动不炸）；逻辑移植自通道夹 receiver.js，一切异常内部消化 |
 | `dock.ts` | 纯函数：贴右缘几何（宽=工作区1/3顶到底）+ Win32 沉底常量；零依赖好单测 |
+| `templates.ts` | 复制给 AI 的要求模板（2026-09-24 设定12）：列模板夹 `<appDataRoot>\bookmark\要求模板\` 里的 md（一份一项、文件名＝名字）、拼复制文字（模板＋「## 这次的事」＋这条）；纯函数＋只读，剪贴板在 panel-window 写 |
 | `agents.ts` | Agent 看板分组清单（默认四组 Claude/ChatGPT/Pi Agent/Hermes + 自定义无限加），独立存 `agents.json`；坏档回落默认组 |
 | `panel-window.ts` | 面板窗口（Win11 毛玻璃）+ **常驻贴屏/总在其他窗口之下**（koffi 调 user32 SetWindowPos HWND_BOTTOM；失焦即沉底、聚焦不压、2秒兑底）+ **F1 置顶/沉底开关**（2026-09-11 改版三：旧 F3 显示/收起已撤，看板永远常驻显示；F1 提顶 HWND_TOPMOST↔沉回最底，纯函数 pinToggleSteps 在 dock.ts）、本块专属 IPC（bookmark:*，含 agents:*） |
 | `preload.ts` | 本块渲染层专属桥（`window.bookmark`），跟 `channel\preload` 互不相干 |
-| `renderer\` | 界面三件套（index.html / bookmark.js / styles.css）——**Agent 看板**：💭待定区置顶 + 各 agent 分组任务行，⊕无限加，行尾无确认钮（自动同步），右键/点手柄改派；组内输入行**边写边自动存**（2026-09-11 改版三：防抖 400ms 落库+失焦必落盘，无「记下来/取消」钮）；分组页最底部有 **📋交接单专区**（AI 未派发交接单默认落这，拖组头=派给谁）；独立窗口自含，**不经 shell.js 调度** |
+| `renderer\` | 界面三件套（index.html / bookmark.js / styles.css）——**Agent 看板**：💭待定区置顶 + 各 agent 分组任务行，⊕无限加，行尾无确认钮（自动同步）；分组页拖到组头改派，右键「派给」只在待定页（设定12）；行尾细线复制钮→气泡选带哪套要求→进剪贴板（设定12）；组内输入行**边写边自动存**（2026-09-11 改版三：防抖 400ms 落库+失焦必落盘，无「记下来/取消」钮）；分组页最底部有 **📋交接单专区**（AI 未派发交接单默认落这，拖组头=派给谁）；独立窗口自含，**不经 shell.js 调度** |
 
 ## 对外露出什么
 
@@ -69,5 +70,6 @@ BookmarkStore（testkit 单测用）
 2. `npm test` 过（含 `testkit\tests\bookmark-store.test.ts`）
 3. `node 检查边界.mjs` 过（bookmark 只认 shared，零越界）
 4. `node scripts/verify-bookmark-handoff.mjs` 过（交接单专区后台驱动验证：落位/📋标记/详情展开/拖拽派活/收回/自删）
-5. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点）
-6. 上机人工验：F1 置顶/沉回最底、毛玻璃质感、记一条（不点钮、边写边自己现身）/删一条/改交给谁、托盘「书签台（随手记）」入口（=置顶开关）；真机看板里 Ctrl+R 应编译并整程序重开（版本戳变，可出现「🌲 已换新」）
+5. `node scripts/verify-bookmark-copy.mjs` 过（复制钮藏/露、气泡选项、剪贴板内容、右键精简、组头细线图标；会动系统剪贴板，脚本自己存了还原）
+6. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点）
+7. 上机人工验：F1 置顶/沉回最底、毛玻璃质感、记一条（不点钮、边写边自己现身）/删一条/改交给谁、托盘「书签台（随手记）」入口（=置顶开关）；真机看板里 Ctrl+R 应编译并整程序重开（版本戳变，可出现「🌲 已换新」）
