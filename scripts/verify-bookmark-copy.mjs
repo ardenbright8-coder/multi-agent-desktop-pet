@@ -136,18 +136,17 @@ try {
     JSON.stringify(inboxMenu));
   await panel.locator("#titlebar .title").click();
 
-  // ⑦ 组头细线图标
+  // ⑦ 组头细线图标（2026-09-24 折叠钮已撤，组头只剩小加号）
   await panel.locator("#tab-groups").click();
   const head = await panel.locator('#board .group[data-group="Claude"] .group-head').evaluate((el) => {
     const add = el.querySelector(".g-add");
-    const fold = el.querySelector(".g-fold");
     return {
-      svg: !!add?.querySelector("svg") && !!fold?.querySelector("svg"),
-      text: (add?.textContent ?? "") + (fold?.textContent ?? ""),
-      size: Math.max(add?.getBoundingClientRect().width ?? 99, fold?.getBoundingClientRect().width ?? 99),
+      svg: !!add?.querySelector("svg"),
+      text: add?.textContent ?? "",
+      size: add?.getBoundingClientRect().width ?? 99,
     };
   });
-  check("⑦ 组头 ＋ / 收起是细线图标、不大于 22 像素", head.svg && head.text.trim() === "" && head.size <= 22,
+  check("⑦ 组头 ＋ 是细线图标、不大于 22 像素", head.svg && head.text.trim() === "" && head.size <= 22,
     JSON.stringify(head));
 } catch (error) {
   failures.push(`脚本异常：${error?.message ?? error}`);

@@ -6,36 +6,16 @@
 const BM_INBOX_KEY = "__inbox__"; // 💭 待定（想想区）：assignee 为空的普通条目都归这（交接单归专区，见下）
 const BM_HANDOFF_ZONE_KEY = "__handoff_zone__"; // 📋 交接单专区：AI 写的未派发交接单默认落这（Agent分组页最底部·＋加Agent按钮上方，用户拍板位置别挪）
 const BM_DEFAULT_ASSIGNEES = ["Claude", "ChatGPT", "Pi Agent", "Hermes"]; // 仅渲染兜底用，真名单以主进程为准
-const BM_COLLAPSE_STORAGE_KEY = "bm-collapsed-groups";
 const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "#b9a0c9", "#c9b47f", "#9fb8c9"];
 const bmOpenDetails = new Set(); // 点开过详情的条目 id：输入行自动存档会触发重画，别把人手点开的详情洗掉
 
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
-let bmCollapsed = bmLoadCollapsed();
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
 let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组 / projects = 📁 项目（2026-09-11 加第三页）
 let bmInsertDraft = null; // 右键插进来、还在写的那一行：{ groupKey, anchorId, place, id, text, kind }
 let bmEditingId = null; // 点白条正在改的那条
 let bmInsertSaveTimer = null;
 let bmEditSaveTimer = null;
-
-function bmLoadCollapsed() {
-  try {
-    const raw = window.localStorage.getItem(BM_COLLAPSE_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function bmSaveCollapsed() {
-  try {
-    window.localStorage.setItem(BM_COLLAPSE_STORAGE_KEY, JSON.stringify([...bmCollapsed]));
-  } catch {
-    // 存不了就算了，折叠状态是记忆便利不是数据。
-  }
-}
 
 function bmDotColor(name) {
   let hash = 0;
@@ -433,11 +413,7 @@ function bmBuildGroup(key, displayName, records) {
   name.textContent = displayName;
   head.appendChild(name);
 
-  const count = document.createElement("span");
-  count.className = "group-count";
-  count.textContent = String(records.length);
-  head.appendChild(count);
-
+  // 组名后面不放条数、不放折叠钮（2026-09-24 用户：条数没用，组高度跟着内容自己撑开缩回）；小加号紧跟组名，点一下就新加一条。
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.className = "g-add";
@@ -446,43 +422,14 @@ function bmBuildGroup(key, displayName, records) {
   addBtn.addEventListener("click", () => bmBeginInsert(key, null, "above"));
   head.appendChild(addBtn);
 
-  const fold = document.createElement("button");
-  fold.type = "button";
-  fold.className = "g-fold";
-  fold.title = "收起 / 展开";
-  fold.innerHTML = bmIcon(bmCollapsed.has(key) ? "right" : "down");
-  fold.addEventListener("click", () => {
-    if (bmCollapsed.has(key)) bmCollapsed.delete(key);
-    else bmCollapsed.add(key);
-    bmSaveCollapsed();
-    bmRenderCurrent();
-  });
-  head.appendChild(fold);
-
   group.appendChild(head);
 
   if (bmOpenComposerGroup === key) group.appendChild(bmBuildComposer(key, displayName));
 
-  if (!bmCollapsed.has(key)) {
-    const list = document.createElement("ul");
-    list.className = "task-list";
-    bmFillTaskList(list, records, key);
-    if (list.childElementCount) group.appendChild(list);
-  }
-  if (key !== BM_INBOX_KEY) {
-    bmBindDrag({
-      handle: head,
-      row: group,
-      list: () => document.getElementById("board"),
-      accept: (el) => el.classList.contains("group") && !el.classList.contains("handoff-zone"),
-      idOf: (el) => el.dataset.group || "",
-      onDrop: async (hit) => {
-        if (!hit.anchorId || hit.anchorId === hit.id) return;
-        await window.bookmark.moveAgent(hit.id, hit.anchorId, hit.place);
-        await bmRefresh();
-      },
-    });
-  }
+  const list = document.createElement("ul");
+  list.className = "task-list";
+  bmFillTaskList(list, records, key);
+  if (list.childElementCount) group.appendChild(list);
   return group;
 }
 
@@ -624,7 +571,7 @@ function bmBuildTask(record, groupKey, order) {
 }
 
 function bmRenderCurrent() {
-  // 折叠/展开只重排当前 DOM，不重新拉库（快速且不掉输入焦点）。
+  // 重画当前页（重新拉库；拖动中会被 bmDragActive 压住，松手补画）。
   void bmRefresh();
 }
 
@@ -652,36 +599,16 @@ function bmBuildHandoffZone(records) {
   name.textContent = "交接单（AI 干完活留下的）";
   head.appendChild(name);
 
-  const count = document.createElement("span");
-  count.className = "group-count";
-  count.textContent = String(records.length);
-  head.appendChild(count);
-
-  const fold = document.createElement("button");
-  fold.type = "button";
-  fold.className = "g-fold";
-  fold.title = "收起 / 展开";
-  fold.innerHTML = bmIcon(bmCollapsed.has(BM_HANDOFF_ZONE_KEY) ? "right" : "down");
-  fold.addEventListener("click", () => {
-    if (bmCollapsed.has(BM_HANDOFF_ZONE_KEY)) bmCollapsed.delete(BM_HANDOFF_ZONE_KEY);
-    else bmCollapsed.add(BM_HANDOFF_ZONE_KEY);
-    bmSaveCollapsed();
-    bmRenderCurrent();
-  });
-  head.appendChild(fold);
-
   head.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     bmBeginInsert(BM_HANDOFF_ZONE_KEY, null, "above", "handoff");
   });
   group.appendChild(head);
 
-  if (!bmCollapsed.has(BM_HANDOFF_ZONE_KEY)) {
-    const list = document.createElement("ul");
-    list.className = "task-list";
-    bmFillTaskList(list, records, BM_HANDOFF_ZONE_KEY);
-    if (list.childElementCount) group.appendChild(list);
-  }
+  const list = document.createElement("ul");
+  list.className = "task-list";
+  bmFillTaskList(list, records, BM_HANDOFF_ZONE_KEY);
+  if (list.childElementCount) group.appendChild(list);
   return group;
 }
 
@@ -1107,10 +1034,6 @@ function bmFitTextarea(input) {
 }
 
 function bmBeginInsert(groupKey, anchorId, place, kind) {
-  if (bmCollapsed.has(groupKey)) {
-    bmCollapsed.delete(groupKey);
-    bmSaveCollapsed();
-  }
   bmInsertDraft = {
     groupKey,
     anchorId: anchorId || null,

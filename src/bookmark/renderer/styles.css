@@ -134,19 +134,12 @@ body {
   border-color: rgba(201, 165, 76, 0.35);
 }
 
-/* 交接单专区（Agent分组页最底部）：跟交接单条目同款淡黄调，一眼认出这是 AI 交接的地方 */
-.group.handoff-zone {
-  background: rgba(250, 242, 214, 0.5);
-  border-color: rgba(201, 165, 76, 0.45);
-}
-
+/* 交接单专区（Agent分组页最底部）：跟别的组同一个底和边框，只靠 📋 标记区分（2026-09-24 用户：统一风格上再差异化，别整块换色） */
 .handoff-zone-mark {
   font-size: 17px;
   line-height: 1;
   flex: none;
 }
-
-.group.handoff-zone .group-name { color: #6b5a26; }
 
 .group-head {
   display: flex;
@@ -165,17 +158,8 @@ body {
 
 .group-name { font-weight: 600; font-size: 15px; color: #2f3e2c; }
 
-.group-count {
-  margin-left: 2px;
-  font-size: 12px;
-  color: rgba(47, 62, 44, 0.55);
-  background: rgba(47, 62, 44, 0.07);
-  border-radius: 999px;
-  padding: 0 7px;
-}
-
-/* 组头的 ＋ / 收起：细线图标、不带圈，鼠标移上去才垫一层底（2026-09-24 用户拍板照 ChatGPT 那排按钮） */
-.g-add, .g-fold, .t-copy {
+/* 组头的 ＋ / 行尾复制：细线图标、不带圈，鼠标移上去才垫一层底（2026-09-24 用户拍板照 ChatGPT 那排按钮） */
+.g-add, .t-copy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -190,13 +174,15 @@ body {
   flex: none;
 }
 
-.g-add:hover, .g-fold:hover, .t-copy:hover { background: rgba(47, 62, 44, 0.08); color: rgba(47, 62, 44, 0.85); }
+.g-add:hover, .t-copy:hover { background: rgba(47, 62, 44, 0.08); color: rgba(47, 62, 44, 0.85); }
 
 /* 条目行尾复制钮：平时藏着，鼠标移到这一行才露（不占眼） */
 .t-copy { opacity: 0; align-self: center; }
 .task:hover .t-copy, .t-copy:focus-visible { opacity: 1; }
 
-.g-add { margin-left: auto; }
+/* 小加号紧跟组名：更小更淡，清爽不抢眼（2026-09-24 用户：别那么重口味，放左边顺手） */
+.g-add { width: 18px; height: 18px; margin-left: -2px; color: rgba(47, 62, 44, 0.38); }
+.g-add svg { width: 13px; height: 13px; }
 
 /* ── 组内输入行（⊕ 展开） ─────────────────────────── */
 
@@ -322,11 +308,11 @@ body {
 
 .task .task-url:hover { text-decoration: underline; }
 
-/* ── 交接单（显眼：📋 标记 + 淡黄底描边，跟普通条目一眼区分） ── */
+/* ── 交接单（📋 标记认人，底色只比普通条目暖一点点，别整块换色） ── */
 
 .task.handoff {
-  background: rgba(250, 242, 214, 0.85);
-  border: 1px solid rgba(201, 165, 76, 0.55);
+  background: rgba(250, 244, 226, 0.7);
+  border: 1px solid rgba(201, 165, 76, 0.28);
 }
 
 .task.handoff .handle { color: rgba(138, 111, 47, 0.55); }

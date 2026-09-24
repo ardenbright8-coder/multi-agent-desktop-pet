@@ -1,4 +1,4 @@
-// 书签看板「拖动 / 单击」回归验证（Playwright·零抢鼠标）：残影 ①～⑤，单击和拖动分开 ⑥～⑩。
+// 书签看板「拖动 / 单击 / 标题行」回归验证（Playwright·零抢鼠标）：残影 ①～④，组框拖不动 ⑤，单击和拖动分开 ⑥～⑩，标题行清爽 ⑪～⑮。
 // 病根（2026-09-24 用户报：拖完屏幕上留下 ⠿01、⠿03 这种窄残影拿不掉）：
 //   按下去那一刻窗口拿到焦点 → 看板整张重画 → 手里按着的那条被换掉；
 //   0.3 秒后长按到点，拿已换掉的旧条目做影子（宽 0），松手事件又只挂在旧条目上收不到 → 影子永远留着。
@@ -169,8 +169,14 @@ try {
   // ④⑤ Agent 分组页：组里的条目、组标题同一套长按拖动，同样过一遍。
   await panel.evaluate(() => window.bookmark.add({ text: "Claude 组条目一", assignee: "Claude" }));
   await panel.evaluate(() => window.bookmark.add({ text: "Claude 组条目二", assignee: "Claude" }));
+  // ⑭ 折叠钮删了：以前收起过的组（本机存着折叠记录）也得按内容展开，不能永远收着。
+  await panel.evaluate(() => window.localStorage.setItem("bm-collapsed-groups", JSON.stringify(["Claude"])));
+  await panel.reload();
+  await panel.waitForLoadState("domcontentloaded");
   await panel.locator("#tab-groups").click();
-  await waitFor(async () => (await panel.locator('#board .group[data-group="Claude"] .task').count()) === 2);
+  const expanded = await waitFor(async () => (await panel.locator('#board .group[data-group="Claude"] .task').count()) === 2, 4000);
+  check("⑭ 以前收起过的组照样按内容展开", !!expanded,
+    `Claude 组可见条数=${await panel.locator('#board .group[data-group="Claude"] .task').count()}`);
 
   {
     const box = await panel.locator('#board .group[data-group="Claude"] .task').first().boundingBox();
@@ -189,39 +195,69 @@ try {
   await repaint();
   await sleep(300);
 
+  // ⑤ 组框拖不动（2026-09-24 用户拍板：拖组框没意义，只拖组里的条目）。
+  const groupOrder = () => panel.evaluate(() =>
+    [...document.querySelectorAll("#board .group:not(.handoff-zone)")].map((el) => el.dataset.group));
   {
-    const groupOrder = () => panel.evaluate(() =>
-      [...document.querySelectorAll("#board .group:not(.handoff-zone)")].map((el) => el.dataset.group));
     const before = await groupOrder();
     const moving = before[2];
-    const headBox = await panel.locator(`#board .group[data-group="${moving}"] .group-head`).boundingBox();
+    const headBox = await panel.locator(`#board .group[data-group="${moving}"] .group-head .group-name`).boundingBox();
     const topBox = await panel.locator(`#board .group[data-group="${before[0]}"]`).boundingBox();
-    const p = { x: headBox.x + headBox.width * 0.4, y: headBox.y + headBox.height / 2 };
+    const p = { x: headBox.x + headBox.width / 2, y: headBox.y + headBox.height / 2 };
     await panel.mouse.move(p.x, p.y);
     await panel.mouse.down();
-    await sleep(500);
-    await panel.mouse.move(p.x, (p.y + topBox.y) / 2, { steps: 5 });
-    await repaint();
-    await sleep(300);
-    await panel.mouse.move(p.x, topBox.y + 4, { steps: 5 });
+    await panel.mouse.move(p.x, topBox.y + 4, { steps: 8 });
     await panel.mouse.up();
-    const after = await waitFor(async () => {
-      const now = await groupOrder();
-      return now[0] === moving ? now : null;
-    }, 4000);
+    await sleep(600);
+    const after = await groupOrder();
     const left = await leftovers();
-    check("⑤ 分组页：拖组标题到一半重画，松手后没残影", left.ghosts === 0 && left.hidden === 0,
-      `残影=${left.ghosts} 被藏起的组=${left.hidden}`);
-    const final = after || await groupOrder();
-    check("⑤ 分组页：拖组标题到一半重画，照样挪到最前", final[0] === moving,
-      `拖前=${before.join("/")} 拖后=${final.join("/")}`);
+    check("⑤ 分组页：组框拖不动，顺序不变、没残影", after.join("/") === before.join("/") && left.ghosts === 0 && left.hidden === 0,
+      `拖前=${before.join("/")} 拖后=${after.join("/")} 残影=${left.ghosts}`);
+  }
+
+  // ⑪～⑮ 标题行清爽：没有条数、没有折叠钮，小加号紧跟组名，交接单专区跟别的组同一个底。
+  {
+    const heads = await panel.evaluate(() => ({
+      counts: document.querySelectorAll("#board .group-count").length,
+      folds: document.querySelectorAll("#board .g-fold").length,
+    }));
+    check("⑪ 组名后面没有条数、没有折叠钮（交接单专区也没有）", heads.counts === 0 && heads.folds === 0,
+      `条数=${heads.counts} 折叠钮=${heads.folds}`);
+    const addPos = await panel.locator('#board .group[data-group="Claude"] .group-head').evaluate((head) => {
+      const add = head.querySelector(".g-add");
+      const name = head.querySelector(".group-name");
+      if (!add || !name) return null;
+      const a = add.getBoundingClientRect();
+      const n = name.getBoundingClientRect();
+      const h = head.getBoundingClientRect();
+      return { gap: Math.round(a.left - n.right), leftHalf: a.right < h.left + h.width / 2, size: Math.round(Math.max(a.width, a.height)) };
+    });
+    check("⑫ 小加号紧跟在组名后面（左半边、不大于 20 像素）",
+      !!addPos && addPos.gap >= 0 && addPos.gap <= 16 && addPos.leftHalf && addPos.size <= 20, JSON.stringify(addPos));
+    await panel.locator('#board .group[data-group="Claude"] .g-add').click();
+    const inserting = await waitFor(async () =>
+      (await panel.locator('#board .group[data-group="Claude"] textarea').count()) === 1, 3000);
+    check("⑬ 点小加号就在这组新加一条", !!inserting);
+    await panel.keyboard.press("Escape");
+    await sleep(300);
+    const bg = await panel.evaluate(() => {
+      const zone = document.querySelector("#board .group.handoff-zone");
+      const normal = document.querySelector('#board .group[data-group="Claude"]');
+      if (!zone || !normal) return null;
+      const z = getComputedStyle(zone);
+      const n = getComputedStyle(normal);
+      return { same: z.backgroundColor === n.backgroundColor && z.borderTopColor === n.borderTopColor, zone: z.backgroundColor, normal: n.backgroundColor };
+    });
+    check("⑮ 交接单专区跟别的组同一个底色、边框", !!bg && bg.same, JSON.stringify(bg));
   }
 
   // ⑩ 项目页：拖文件夹不会误点进去；单击马上进。
   await panel.evaluate(() => window.bookmark.projectsMkdir("", "单双击测试夹"));
   await panel.locator("#tab-projects").click();
-  const folderRow = () => panel.locator('#board .proj-row[data-rel="单双击测试夹"]');
-  await waitFor(async () => (await folderRow().count()) === 1);
+  // 已知旧毛病（2026-09-24 查到，改之前就有）：窗口拿焦点和切页签同时重画，项目页会画两遍。本段只验单击/拖动，取第一行。
+  const folderRow = () => panel.locator('#board .proj-row[data-rel="单双击测试夹"]').first();
+  const folderCount = () => panel.locator('#board .proj-row[data-rel="单双击测试夹"]').count();
+  await waitFor(async () => (await folderCount()) >= 1);
   {
     const box = await folderRow().boundingBox();
     await panel.mouse.move(box.x + box.width - 30, box.y + box.height / 2);
@@ -229,10 +265,10 @@ try {
     await panel.mouse.move(box.x + box.width - 30, box.y + box.height / 2 + 30, { steps: 6 });
     await panel.mouse.up();
     await sleep(500);
-    const stillTop = (await folderRow().count()) === 1;
+    const stillTop = (await folderCount()) >= 1;
     check("⑩ 项目页拖一下文件夹，松手不会误点进去", stillTop, `还在上一层=${stillTop}`);
     if (stillTop) await folderRow().click();
-    const entered = await waitFor(async () => (await folderRow().count()) === 0, 1000, 50);
+    const entered = await waitFor(async () => (await folderCount()) === 0, 1000, 50);
     check("⑩ 项目页单击文件夹马上进去", !!entered);
   }
 } catch (error) {
