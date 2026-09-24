@@ -148,6 +148,34 @@ try {
   });
   check("⑦ 组头 ＋ 是细线图标、不大于 22 像素", head.svg && head.text.trim() === "" && head.size <= 22,
     JSON.stringify(head));
+
+  // ⑧ 组名前是官方标志（2026-09-24 用户拍板）：四个默认组各有标志，自己加的组照旧叶形圆点
+  await panel.evaluate(() => window.bookmark.addAgent("我的新组"));
+  await panel.evaluate(() => bmRefresh());
+  await panel.locator('#board .group[data-group="我的新组"]').waitFor({ state: "visible", timeout: 3000 });
+  const marks = await panel.evaluate(() => Object.fromEntries(
+    [...document.querySelectorAll("#board .group[data-group]")].map((g) => {
+      const dot = g.querySelector(".group-head .dot");
+      return [g.dataset.group, dot ? (dot.dataset.logo || "圆点") : "无"];
+    }),
+  ));
+  check("⑧ 组名前：Claude/ChatGPT/Pi/Hermes 是官方标志，自加的组是圆点",
+    marks.Claude === "claude" && marks.ChatGPT === "openai" && marks["Pi Agent"] === "pi" && marks.Hermes === "hermes"
+      && marks["我的新组"] === "圆点",
+    JSON.stringify(marks));
+
+  // ⑨ 左边六个点点开的菜单里能复制（跟行尾复制钮同一套）
+  await row.locator(".handle").click();
+  await menu.waitFor({ state: "visible", timeout: 3000 });
+  const handleMenu = await menu.locator(".ctx-item").allTextContents();
+  const withTpl = menu.locator(".ctx-item", { hasText: "带编程那套" });
+  const hasBoth = handleMenu.some((t) => t.includes("带编程那套")) && handleMenu.some((t) => t.includes("只这条"));
+  if (hasBoth) await withTpl.click();
+  const fromMenu = hasBoth
+    ? await waitFor(async () => ((await readClipboard()) === expectedFull ? "ok" : null), 3000, 50)
+    : null;
+  check("⑨ 六个点菜单有「带编程那套」「只这条」，点了剪贴板对", hasBoth && fromMenu === "ok",
+    `菜单=${JSON.stringify(handleMenu)}`);
 } catch (error) {
   failures.push(`脚本异常：${error?.message ?? error}`);
   console.error("脚本异常：", error);

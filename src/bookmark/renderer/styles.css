@@ -750,3 +750,17 @@ body {
 
 .proj-new-btn, .proj-new-cancel { border-color: rgba(122, 156, 94, 0.45); }
 .proj-pop-title { border-bottom-color: rgba(122, 156, 94, 0.3); }
+
+/* 组名前的官方标志（2026-09-24）：替掉叶形圆点，只有认得出的四家才换 */
+.dot.logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  display: inline-flex;
+}
+.dot.logo svg { width: 100%; height: 100%; display: block; }
+
+/* 六个点菜单里「复制」和其余项之间的细分隔线 */
+.ctx-sep { height: 1px; margin: 4px 6px; background: rgba(122, 156, 94, 0.25); }
