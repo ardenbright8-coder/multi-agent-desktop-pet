@@ -1426,7 +1426,8 @@ function bmLaunchOptions(target, groupKey) {
       try {
         const res = await window.bookmark.launchLine(target, groupKey, opt.coding);
         if (res.opened && res.pasting) {
-          bmToast(`已打开「${res.opened}」（${res.label}）：等它启动好，看板替你把启动句贴进去，你看一眼再按回车`, 8000);
+          const how = res.freshWindow ? "把启动句贴进去" : "新开一个对话、把启动句贴进去";
+          bmToast(`已打开「${res.opened}」（${res.label}）：等它启动好，看板替你${how}，你看一眼再按回车`, 8000);
         } else if (res.opened) {
           const where = res.freshWindow ? "等新窗口出来" : "在里面新开一个对话";
           bmToast(`已打开「${res.opened}」，启动句已复制（${res.label}）：${where}，Ctrl+V 再回车`, 6000);

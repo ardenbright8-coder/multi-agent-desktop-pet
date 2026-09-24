@@ -25,7 +25,7 @@ import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
-import { agentShortcutFor, pasteIntoNewWindow } from "./launch";
+import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 
 const log = createLogger("bookmark");
@@ -138,7 +138,11 @@ function loadSink(): SetWindowPosFn | null {
 interface LaunchWin32 {
   windows(): bigint[];
   foreground(): bigint;
+  /** 这个窗口是哪个程序（完整路径，问不出给空串）——认 Codex、Hermes 用。 */
+  processOf(hwnd: bigint): string;
   pressCtrlV(): void;
+  /** Codex、Hermes 的「新开对话」。 */
+  pressCtrlN(): void;
 }
 let launchWin32: LaunchWin32 | null | undefined;
 
@@ -158,9 +162,31 @@ function loadLaunchWin32(): LaunchWin32 | null {
     const keybdEvent = user32.func(
       "void __stdcall keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)",
     ) as unknown as (vk: number, scan: number, flags: number, extra: number) => void;
+    const getWindowPid = user32.func("uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hwnd, _Out_ uint32_t *pid)") as unknown as (
+      hwnd: bigint,
+      pid: number[],
+    ) => number;
+    const kernel32 = koffi.load("kernel32.dll");
+    const openProcess = kernel32.func("uintptr_t __stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)") as unknown as (
+      access: number,
+      inherit: boolean,
+      pid: number,
+    ) => number | bigint;
+    const queryImageName = kernel32.func(
+      "bool __stdcall QueryFullProcessImageNameW(uintptr_t process, uint32_t flags, _Out_ uint16_t *name, _Inout_ uint32_t *size)",
+    ) as unknown as (process: number | bigint, flags: number, name: Uint16Array, size: number[]) => boolean;
+    const closeHandle = kernel32.func("bool __stdcall CloseHandle(uintptr_t handle)") as unknown as (handle: number | bigint) => boolean;
+    const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     const VK_CONTROL = 0x11;
     const VK_V = 0x56;
+    const VK_N = 0x4e;
     const KEYEVENTF_KEYUP = 0x0002;
+    const pressCtrl = (vk: number) => {
+      keybdEvent(VK_CONTROL, 0, 0, 0);
+      keybdEvent(vk, 0, 0, 0);
+      keybdEvent(vk, 0, KEYEVENTF_KEYUP, 0);
+      keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+    };
     launchWin32 = {
       windows: () => {
         const list: bigint[] = [];
@@ -171,13 +197,23 @@ function loadLaunchWin32(): LaunchWin32 | null {
         return list;
       },
       foreground: () => BigInt(getForeground()),
-      // 🚨 只有 Ctrl+V 这一组按下/松开，没有回车。
-      pressCtrlV: () => {
-        keybdEvent(VK_CONTROL, 0, 0, 0);
-        keybdEvent(VK_V, 0, 0, 0);
-        keybdEvent(VK_V, 0, KEYEVENTF_KEYUP, 0);
-        keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+      processOf: (hwnd) => {
+        const pid = [0];
+        getWindowPid(hwnd, pid);
+        if (!pid[0]) return "";
+        const process = openProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid[0]);
+        if (!process) return "";
+        try {
+          const name = new Uint16Array(1024);
+          const size = [name.length];
+          return queryImageName(process, 0, name, size) ? String.fromCharCode(...name.subarray(0, size[0])) : "";
+        } finally {
+          closeHandle(process);
+        }
       },
+      // 🚨 只有 Ctrl+V / Ctrl+N 这两组按下/松开，没有回车。
+      pressCtrlV: () => pressCtrl(VK_V),
+      pressCtrlN: () => pressCtrl(VK_N),
     };
   } catch (error) {
     launchWin32 = null;
@@ -738,6 +774,8 @@ function bookmarkCliScriptPath(): string {
 
 /** 贴字时机：每 200ms 看一眼谁在最前面，新窗口最多等 15 秒出来，出来后再等 4 秒让 AI 程序启动好。 */
 const LAUNCH_PASTE_TIMING = { pollMs: 200, appearTimeoutMs: 15_000, settleMs: 4_000 };
+/** 桌面程序：冷启动慢，最多等 30 秒跑到前面，再等 5 秒启动好；Ctrl+N 后等 1.5 秒新对话出来再贴。 */
+const APP_PASTE_TIMING = { pollMs: 200, appearTimeoutMs: 30_000, settleMs: 5_000, newChatMs: 1_500 };
 
 interface LaunchOpenResult {
   opened: string | null;
@@ -749,7 +787,7 @@ interface LaunchOpenResult {
 
 /**
  * 打开这个组对应的桌面快捷方式（设定15第三版）。认不出的组、桌面没这个快捷方式、打开失败 → 不开，
- * 返回 problem 让界面提示「自己开窗」。命令窗口类（freshWindow）开完替用户贴启动句，桌面程序不贴。
+ * 返回 problem 让界面提示「自己开窗」。开完替用户贴启动句：命令窗口贴进新窗口，桌面程序先 Ctrl+N 新开对话再贴（设定15第四版）。
  * 自测、验证脚本（隔离数据夹）只报会怎么做、不真开；设了 BOOKMARK_AGENT_SHORTCUT_DIR（放假快捷方式的夹）才真开。
  */
 async function openAgentShortcut(group: string, line: string, label: string): Promise<LaunchOpenResult> {
@@ -759,14 +797,15 @@ async function openAgentShortcut(group: string, line: string, label: string): Pr
   const fakeDir = process.env.BOOKMARK_AGENT_SHORTCUT_DIR;
   const path = join(fakeDir || app.getPath("desktop"), spec.shortcut);
   if (!existsSync(path)) return { opened: null, freshWindow: false, pasting: false, problem: `桌面上没找到「${name}」快捷方式` };
-  if (!openAgents && !fakeDir) return { opened: name, freshWindow: spec.freshWindow, pasting: spec.freshWindow, problem: null };
+  if (!openAgents && !fakeDir) return { opened: name, freshWindow: spec.freshWindow, pasting: true, problem: null };
   try {
-    const win32 = spec.freshWindow ? loadLaunchWin32() : null;
-    // 开窗前先记下已有的全部窗口：之后跑到最前面的只有不在这里面的才算新窗口，绝不往旧窗口里贴。
+    const win32 = loadLaunchWin32();
+    // 命令窗口：开窗前先记下已有的全部窗口，之后跑到最前面的只有不在这里面的才算新窗口，绝不往旧窗口里贴。
+    // 桌面程序（Codex、Hermes）：按程序名认，旧窗口切到前面也算，贴之前先 Ctrl+N 新开对话。
     const before = win32 ? new Set(win32.windows()) : null;
     const errorMessage = await shell.openPath(path);
     if (errorMessage) throw new Error(errorMessage);
-    if (win32 && before) void pasteLaunchLine(win32, before, line, label);
+    if (win32 && before) void pasteLaunchLine(win32, spec.app ?? null, before, line, label);
     return { opened: name, freshWindow: spec.freshWindow, pasting: Boolean(win32 && before), problem: null };
   } catch (error) {
     log.出事(`启动 Agent 开「${name}」失败（启动句已在剪贴板，用户可手动开）`, error, "cli");
@@ -775,22 +814,34 @@ async function openAgentShortcut(group: string, line: string, label: string): Pr
 }
 
 /** 等新窗口启动好替用户按 Ctrl+V，结果告诉看板。🚨 只按 Ctrl+V 不按回车；出任何错都只是「没贴」，不连坐。 */
-async function pasteLaunchLine(win32: LaunchWin32, before: Set<bigint>, line: string, label: string): Promise<void> {
+async function pasteLaunchLine(
+  win32: LaunchWin32,
+  appExe: string | null,
+  before: Set<bigint>,
+  line: string,
+  label: string,
+): Promise<void> {
   let result: { ok: boolean; reason: string | null };
   try {
-    result = await pasteIntoNewWindow(
-      before,
-      {
-        foreground: () => win32.foreground(),
-        // 按之前再放一次启动句：等的这几秒里用户可能复制了别的
-        pressCtrlV: () => {
-          clipboard.writeText(line);
-          win32.pressCtrlV();
-        },
-        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    const deps = {
+      foreground: () => win32.foreground(),
+      processOf: (hwnd: bigint) => win32.processOf(hwnd),
+      // 启动句在 Ctrl+N 时就放进剪贴板：写剪贴板那一刻截图、剪贴板工具会去读它、占住一小会儿，
+      // 紧跟着 Ctrl+V 会贴空（2026-09-24 实测）。所以提前 1.5 秒写好，贴时剪贴板没被换掉就不再写。
+      pressCtrlN: () => {
+        clipboard.writeText(line);
+        win32.pressCtrlN();
       },
-      LAUNCH_PASTE_TIMING,
-    );
+      // 等的这几秒里用户可能复制了别的：不是启动句了才再放一次
+      pressCtrlV: () => {
+        if (clipboard.readText() !== line) clipboard.writeText(line);
+        win32.pressCtrlV();
+      },
+      sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    };
+    result = appExe
+      ? await pasteIntoAppWindow(appExe, deps, APP_PASTE_TIMING)
+      : await pasteIntoNewWindow(before, deps, LAUNCH_PASTE_TIMING);
   } catch (error) {
     log.出事("启动 Agent 贴字出错（用户自己贴）", error, "cli");
     result = { ok: false, reason: "贴字出错" };
