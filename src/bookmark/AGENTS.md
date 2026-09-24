@@ -48,7 +48,7 @@ BookmarkStore（testkit 单测用）
 - 🚨 **组标题行只放颜色点 / 📋 + 组名 + 小加号（设定13，2026-09-24）**：不放条数、不放折叠钮，组高度跟内容走；组框不能拖（只拖组里条目，拖到别组标题=改派）。折叠记录 `bm-collapsed-groups` 已不读不写，别加回来——加回来会让以前收起过的组永远收着。页签上的待定数字另算，保留。
 - 🚨 **拖动期间不许重画看板**（2026-09-24 修残影）：窗口拿焦点、手机来消息都会 `bmRefresh` 整张重画，按着的那条被换掉 → 影子宽 0 且收不回，留成 `⠿01` 窄残影。现在靠 `bmDragActive` 从按下到松手压住重画、松手补画；松手监听挂 `window` 不挂单条；开拖时发现条目已被换掉就作废。新加任何会重画看板的入口，一律走 `bmRefresh`，别绕过它直接 `bmRenderBoard`。
 - 🚨 **输入行自动存档的落库纪律（改版三 2026-09-11，用户原话：写了就是写了）**：一份草稿只对应一条——首笔 `add`，之后 `updateText` 改同一条（IPC `bookmark:update-text`），别一份草稿存出好几条；打字防抖 400ms，失焦/回车/⊕收起必落盘；框清空=把存出来的那条删掉；落库后重画要把草稿文字+焦点还回去，别把人正在打的字冲掉。
-- 🚨 **毛玻璃常亮（2026-09-24 设定13）**：失焦/亮窗后 `keepAcrylicLit` 补发 `WM_NCACTIVATE(TRUE)`，不然 Win11 失焦就把毛玻璃换成死灰。只管外观不抢焦点；别删、别换成 focus/setAlwaysOnTop。颜色在 `styles.css` 末尾「草木皮肤」一整段。
+- 🚨 **毛玻璃常亮（2026-09-24 设定14）**：失焦/亮窗后 `keepAcrylicLit` 补发 `WM_NCACTIVATE(TRUE)`，不然 Win11 失焦就把毛玻璃换成死灰。只管外观不抢焦点；别删、别换成 focus/setAlwaysOnTop。颜色在 `styles.css` 末尾「草木皮肤」一整段。
 - `backgroundMaterial: "acrylic"` 只有 Win11 有效，构造时 try/catch 回落无材质版本；窗口背景色 `#00000000` + CSS 半透明底，两层一起兜。
 - 渲染层保持 sandbox 默认隔离，别图省事开 nodeIntegration。
 - 面板里的链接一律走 `setWindowOpenHandler` → `shell.openExternal`，别让网页在面板里开。
