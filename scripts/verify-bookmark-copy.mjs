@@ -59,6 +59,12 @@ function runCli(args) {
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
+/** 现在跑着的 Claude Code 程序编号（claude.exe）。 */
+function claudePids() {
+  const r = spawnSync("tasklist", ["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"], { encoding: "utf8" });
+  return [...(r.stdout ?? "").matchAll(/"claude\.exe","(\d+)"/gi)].map((m) => m[1]);
+}
+
 let electronApp;
 let savedClipboard = null;
 try {
@@ -123,6 +129,7 @@ try {
     JSON.stringify(groupMenu));
 
   // ⑤ 启动 Agent · 带编程 → 启动句
+  const claudeBefore = claudePids();
   await menu.locator(".ctx-item", { hasText: "启动 Agent · 带编程" }).click();
   const line = await waitFor(async () => {
     const text = await readClipboard();
@@ -137,8 +144,13 @@ try {
   check("⑤ 启动 Agent · 带编程：剪贴板是领活那一句（窗口名 Claude-1）", line === expectLine && (toast ?? "").includes("Claude-1"),
     `剪贴板=${JSON.stringify(line)} 提示=${toast}`);
   // 测试模式只报开哪个、不真开（app.ts 传 openAgents: !testMode），免得测一次弹一个真 Claude 窗口
-  check("⑤b 启动 Agent 开的是桌面「Claude Code 一」快捷方式，提示用户自己 Ctrl+V 回车",
-    (toast ?? "").includes("Claude Code 一") && (toast ?? "").includes("Ctrl+V"), `提示=${toast}`);
+  // 真开窗、真贴字另有 verify-bookmark-launch-paste.mjs（假快捷方式＋假 AI 程序）
+  check("⑤b 启动 Agent 开的是桌面「Claude Code 一」快捷方式，提示看板会替他贴、回车他自己按",
+    (toast ?? "").includes("Claude Code 一") && (toast ?? "").includes("贴进去") && (toast ?? "").includes("回车"), `提示=${toast}`);
+  // 2026-09-24 踩过：测试实例把用户桌面上真的「Claude Code 一」打开了，跑一次多一个空 Claude 窗口
+  await new Promise((r) => setTimeout(r, 4000));
+  const strayClaude = claudePids().filter((pid) => !claudeBefore.includes(pid));
+  check("⑤c 测试实例不许打开真的 Claude 窗口", strayClaude.length === 0, `新冒出的 Claude 程序=${strayClaude.join(",")}`);
 
   // ④ 待定页六个点
   await closeMenu();

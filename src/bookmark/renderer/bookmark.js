@@ -167,6 +167,11 @@ function bmInit() {
   window.addEventListener("focus", () => { void bmRefresh(); });
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   window.bookmark.onInboxChanged?.(() => { void bmRefresh(); });
+  // 启动 Agent 贴字结果（设定15第三版）：贴了就提醒看一眼再回车；没贴就说为什么、让用户自己贴。
+  window.bookmark.onLaunchPasted?.((r) => {
+    if (r.ok) bmToast(`启动句已贴进 ${r.label} 窗口，没按回车：你看一眼再按回车`, 8000);
+    else bmToast(`${r.reason}，没替你贴：点一下 ${r.label} 窗口，Ctrl+V 再回车`, 8000);
+  });
   void bmRefresh();
 }
 
@@ -1401,7 +1406,9 @@ function bmLaunchOptions(target, groupKey) {
       bmHideCtxMenu();
       try {
         const res = await window.bookmark.launchLine(target, groupKey, opt.coding);
-        if (res.opened) {
+        if (res.opened && res.pasting) {
+          bmToast(`已打开「${res.opened}」（${res.label}）：等它启动好，看板替你把启动句贴进去，你看一眼再按回车`, 8000);
+        } else if (res.opened) {
           const where = res.freshWindow ? "等新窗口出来" : "在里面新开一个对话";
           bmToast(`已打开「${res.opened}」，启动句已复制（${res.label}）：${where}，Ctrl+V 再回车`, 6000);
         } else {

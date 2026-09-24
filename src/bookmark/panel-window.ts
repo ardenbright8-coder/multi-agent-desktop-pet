@@ -25,7 +25,7 @@ import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
-import { agentShortcutFor } from "./launch";
+import { agentShortcutFor, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 
 const log = createLogger("bookmark");
@@ -134,6 +134,58 @@ function loadSink(): SetWindowPosFn | null {
   }
 }
 
+/** 启动 Agent 贴字用的 Windows 能力（设定15第三版）：列出全部顶层窗口、看谁在最前面、按一次 Ctrl+V。 */
+interface LaunchWin32 {
+  windows(): bigint[];
+  foreground(): bigint;
+  pressCtrlV(): void;
+}
+let launchWin32: LaunchWin32 | null | undefined;
+
+/** 惰性加载；失败只记一次日志，启动 Agent 退回「只开窗、用户自己贴」。 */
+function loadLaunchWin32(): LaunchWin32 | null {
+  if (launchWin32 !== undefined) return launchWin32;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const koffi = require("koffi") as typeof import("koffi");
+    const user32 = koffi.load("user32.dll");
+    koffi.proto("bool __stdcall BmEnumWindowsProc(uintptr_t hwnd, intptr_t lParam)");
+    const enumWindows = user32.func("bool __stdcall EnumWindows(BmEnumWindowsProc *cb, intptr_t lParam)") as unknown as (
+      cb: (hwnd: number | bigint) => boolean,
+      lParam: number,
+    ) => boolean;
+    const getForeground = user32.func("uintptr_t __stdcall GetForegroundWindow()") as unknown as () => number | bigint;
+    const keybdEvent = user32.func(
+      "void __stdcall keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)",
+    ) as unknown as (vk: number, scan: number, flags: number, extra: number) => void;
+    const VK_CONTROL = 0x11;
+    const VK_V = 0x56;
+    const KEYEVENTF_KEYUP = 0x0002;
+    launchWin32 = {
+      windows: () => {
+        const list: bigint[] = [];
+        enumWindows((hwnd) => {
+          list.push(BigInt(hwnd));
+          return true;
+        }, 0);
+        return list;
+      },
+      foreground: () => BigInt(getForeground()),
+      // 🚨 只有 Ctrl+V 这一组按下/松开，没有回车。
+      pressCtrlV: () => {
+        keybdEvent(VK_CONTROL, 0, 0, 0);
+        keybdEvent(VK_V, 0, 0, 0);
+        keybdEvent(VK_V, 0, KEYEVENTF_KEYUP, 0);
+        keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+      },
+    };
+  } catch (error) {
+    launchWin32 = null;
+    log.出事("启动 Agent 贴字用的 Windows 接口加载失败（只开窗，用户自己贴）", error, "cli");
+  }
+  return launchWin32;
+}
+
 /** 把面板压到 Z 序最底（HWND_BOTTOM）。失败静默——沉不了底也只是不好看，不是故障。 */
 function sinkToBottom(win: BrowserWindow): void {
   try {
@@ -204,8 +256,9 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   store = new BookmarkStore();
   roster = new AgentRoster();
   liveRestart = Boolean(options?.liveRestart);
-  // 启动 Agent 真打开桌面快捷方式只在真机（常驻＝真机）；自测只报开哪个，别测一次弹一个真 AI 窗口。
-  openAgents = Boolean(options?.resident);
+  // 启动 Agent 真打开桌面快捷方式只在真机。验证脚本不带自测开关（照样常驻），但都用隔离数据夹 AGENT_PET_HUB_HOME，
+  // 真机入口从不设它（同 pet/focus-agent 的判法）。2026-09-24 踩过：只看常驻，验证脚本跑一次开一个真 Claude 窗口。
+  openAgents = Boolean(options?.resident) && !process.env.AGENT_PET_HUB_HOME;
   registerIpc();
   if (options?.hotkey) registerHotkey();
   if (options?.inbox) {
@@ -627,8 +680,8 @@ function registerIpc(): void {
   });
   ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => requireStore().unbundle(String(bundleId ?? "")));
   ipcMain.handle("bookmark:release", (_event, id: unknown) => requireStore().release(String(id ?? "")));
-  // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式；
-  // 用户在新窗口里自己 Ctrl+V。🚨 绝不替他贴、绝不替他按回车。开不了窗只提示，照旧能手动开。
+  // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式，
+  // 新窗口启动好后替用户按一次 Ctrl+V。🚨 绝不替他按回车。开不了窗、贴不了只提示，照旧能手动来。
   ipcMain.handle("bookmark:launch-line", async (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { target?: unknown; group?: unknown; coding?: unknown };
     const target = String(raw.target ?? "").trim();
@@ -638,7 +691,7 @@ function registerIpc(): void {
     const line = `领看板的活：node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
     clipboard.writeText(line);
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
-    return { line, label, ...(await openAgentShortcut(group)) };
+    return { line, label, ...(await openAgentShortcut(group, line, label)) };
   });
   ipcMain.handle("bookmark:templates:open", async () => {
     const dir = templatesDirectory();
@@ -683,24 +736,70 @@ function bookmarkCliScriptPath(): string {
   return join(__dirname, "..", "..", "scripts", "bookmark-cli.mjs").split(String.fromCharCode(92)).join("/");
 }
 
+/** 贴字时机：每 200ms 看一眼谁在最前面，新窗口最多等 15 秒出来，出来后再等 4 秒让 AI 程序启动好。 */
+const LAUNCH_PASTE_TIMING = { pollMs: 200, appearTimeoutMs: 15_000, settleMs: 4_000 };
+
+interface LaunchOpenResult {
+  opened: string | null;
+  freshWindow: boolean;
+  /** true＝看板会等新窗口启动好替用户按 Ctrl+V，结果另发 bookmark:launch-pasted。 */
+  pasting: boolean;
+  problem: string | null;
+}
+
 /**
- * 打开这个组对应的桌面快捷方式（设定15第二版）。认不出的组、桌面没这个快捷方式、打开失败 → 不开，
- * 返回 problem 让界面提示「自己开窗」。自测模式（不常驻）只报开哪个、不真开。
+ * 打开这个组对应的桌面快捷方式（设定15第三版）。认不出的组、桌面没这个快捷方式、打开失败 → 不开，
+ * 返回 problem 让界面提示「自己开窗」。命令窗口类（freshWindow）开完替用户贴启动句，桌面程序不贴。
+ * 自测、验证脚本（隔离数据夹）只报会怎么做、不真开；设了 BOOKMARK_AGENT_SHORTCUT_DIR（放假快捷方式的夹）才真开。
  */
-async function openAgentShortcut(group: string): Promise<{ opened: string | null; freshWindow: boolean; problem: string | null }> {
+async function openAgentShortcut(group: string, line: string, label: string): Promise<LaunchOpenResult> {
   const spec = agentShortcutFor(group);
-  if (!spec) return { opened: null, freshWindow: false, problem: null };
+  if (!spec) return { opened: null, freshWindow: false, pasting: false, problem: null };
   const name = spec.shortcut.replace(/\.lnk$/i, "");
-  const path = join(app.getPath("desktop"), spec.shortcut);
-  if (!existsSync(path)) return { opened: null, freshWindow: false, problem: `桌面上没找到「${name}」快捷方式` };
-  if (!openAgents) return { opened: name, freshWindow: spec.freshWindow, problem: null };
+  const fakeDir = process.env.BOOKMARK_AGENT_SHORTCUT_DIR;
+  const path = join(fakeDir || app.getPath("desktop"), spec.shortcut);
+  if (!existsSync(path)) return { opened: null, freshWindow: false, pasting: false, problem: `桌面上没找到「${name}」快捷方式` };
+  if (!openAgents && !fakeDir) return { opened: name, freshWindow: spec.freshWindow, pasting: spec.freshWindow, problem: null };
   try {
+    const win32 = spec.freshWindow ? loadLaunchWin32() : null;
+    // 开窗前先记下已有的全部窗口：之后跑到最前面的只有不在这里面的才算新窗口，绝不往旧窗口里贴。
+    const before = win32 ? new Set(win32.windows()) : null;
     const errorMessage = await shell.openPath(path);
     if (errorMessage) throw new Error(errorMessage);
-    return { opened: name, freshWindow: spec.freshWindow, problem: null };
+    if (win32 && before) void pasteLaunchLine(win32, before, line, label);
+    return { opened: name, freshWindow: spec.freshWindow, pasting: Boolean(win32 && before), problem: null };
   } catch (error) {
     log.出事(`启动 Agent 开「${name}」失败（启动句已在剪贴板，用户可手动开）`, error, "cli");
-    return { opened: null, freshWindow: false, problem: `「${name}」没打开` };
+    return { opened: null, freshWindow: false, pasting: false, problem: `「${name}」没打开` };
+  }
+}
+
+/** 等新窗口启动好替用户按 Ctrl+V，结果告诉看板。🚨 只按 Ctrl+V 不按回车；出任何错都只是「没贴」，不连坐。 */
+async function pasteLaunchLine(win32: LaunchWin32, before: Set<bigint>, line: string, label: string): Promise<void> {
+  let result: { ok: boolean; reason: string | null };
+  try {
+    result = await pasteIntoNewWindow(
+      before,
+      {
+        foreground: () => win32.foreground(),
+        // 按之前再放一次启动句：等的这几秒里用户可能复制了别的
+        pressCtrlV: () => {
+          clipboard.writeText(line);
+          win32.pressCtrlV();
+        },
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      },
+      LAUNCH_PASTE_TIMING,
+    );
+  } catch (error) {
+    log.出事("启动 Agent 贴字出错（用户自己贴）", error, "cli");
+    result = { ok: false, reason: "贴字出错" };
+  }
+  log.记(`启动 Agent：${label} ${result.ok ? "已贴启动句（没按回车）" : `没贴：${result.reason}`}`, "cli");
+  try {
+    if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:launch-pasted", { label, ...result });
+  } catch {
+    /* 面板不在就算了 */
   }
 }
 

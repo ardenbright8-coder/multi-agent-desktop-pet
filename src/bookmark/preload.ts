@@ -20,7 +20,11 @@ contextBridge.exposeInMainWorld("bookmark", {
   unbundle: (bundleId: string) => ipcRenderer.invoke("bookmark:unbundle", bundleId),
   release: (id: string) => ipcRenderer.invoke("bookmark:release", id),
   launchLine: (target: string, group: string, coding: boolean) =>
-    ipcRenderer.invoke("bookmark:launch-line", { target, group, coding }) as Promise<{ line: string; label: string; opened: string | null; freshWindow: boolean; problem: string | null }>,
+    ipcRenderer.invoke("bookmark:launch-line", { target, group, coding }) as Promise<{ line: string; label: string; opened: string | null; freshWindow: boolean; pasting: boolean; problem: string | null }>,
+  // 启动 Agent 替用户贴完启动句（或没贴成）的结果。
+  onLaunchPasted: (callback: (result: { label: string; ok: boolean; reason: string | null }) => void) => {
+    ipcRenderer.on("bookmark:launch-pasted", (_event, result) => callback(result));
+  },
   agents: () => ipcRenderer.invoke("bookmark:agents"),
   moveAgent: (name: string, anchor: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:agents:move", { name, anchor, place }),
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),
