@@ -164,7 +164,25 @@ async function bmRefresh() {
       bmRefreshPending = true;
       return;
     }
-    bmRenderBoard(Array.isArray(records) ? records : []);
+    // 正在输入行 / 改字框里打字时重画：画完把光标放回去，不然框收不起来、字也接不上。
+    const active = document.activeElement;
+    const typing = active && active.matches && active.matches(".insert-row textarea, .task-edit")
+      ? { sel: active.matches(".task-edit") ? ".task-edit" : ".insert-row textarea", caret: active.selectionStart }
+      : null;
+    bmRepainting = true;
+    try {
+      bmRenderBoard(Array.isArray(records) ? records : []);
+    } finally {
+      bmRepainting = false;
+    }
+    if (typing) {
+      const input = document.querySelector(typing.sel);
+      if (input && document.activeElement !== input) {
+        input.focus();
+        input.setSelectionRange(typing.caret, typing.caret);
+        bmFitTextarea(input);
+      }
+    }
   } catch (error) {
     bmShowError("看板读不出来： " + bmErrorText(error));
   }
@@ -238,6 +256,7 @@ function bmSwitchPage(page) {
 const BM_DRAG_SLOP = 5;
 let bmDragActive = false; // 从按下到松手都算，期间 bmRefresh 只记账不重画
 let bmRefreshPending = false;
+let bmRepainting = false; // 重画拔掉正在打字的框时浏览器会报「失焦」，那不是人点了别处，输入框别当真收起
 
 /** 左键按下直接挪就是拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
 function bmBindDrag(opts) {
@@ -400,7 +419,7 @@ function bmBuildGroup(key, displayName, records) {
   head.addEventListener("dropend", () => { head.classList.remove("drag-target"); });
   head.addEventListener("contextmenu", (event) => {
     event.preventDefault();
-    bmBeginInsert(key, null, "above");
+    void bmBeginInsert(key, null, "above");
   });
 
   const dot = document.createElement("span");
@@ -419,7 +438,7 @@ function bmBuildGroup(key, displayName, records) {
   addBtn.className = "g-add";
   addBtn.title = key === BM_INBOX_KEY ? "记一条到待定区" : `给 ${displayName} 记一条`;
   addBtn.innerHTML = bmIcon("plus");
-  addBtn.addEventListener("click", () => bmBeginInsert(key, null, "above"));
+  addBtn.addEventListener("click", () => { void bmBeginInsert(key, null, "above"); });
   head.appendChild(addBtn);
 
   group.appendChild(head);
@@ -482,7 +501,7 @@ function bmBuildTask(record, groupKey, order) {
       bmScheduleEditSave(record.id, input);
     });
     input.addEventListener("compositionend", () => bmScheduleEditSave(record.id, input));
-    input.addEventListener("blur", () => { void bmEditCommit(record.id, input, true); });
+    input.addEventListener("blur", () => { if (!bmRepainting) void bmEditCommit(record.id, input, true); });
     input.addEventListener("keydown", (event) => {
       if (event.isComposing) return;
       if (event.key === "Enter" && !event.shiftKey) {
@@ -504,7 +523,7 @@ function bmBuildTask(record, groupKey, order) {
     // 单击就改字；按下挪了算拖（bmBindDrag），拖完那一下点击会被吞掉，不会误进改字。
     text.addEventListener("click", (event) => {
       event.stopPropagation();
-      bmBeginEdit(record.id);
+      void bmBeginEdit(record.id);
     });
     body.appendChild(text);
   }
@@ -599,9 +618,18 @@ function bmBuildHandoffZone(records) {
   name.textContent = "交接单（AI 干完活留下的）";
   head.appendChild(name);
 
+  // 同款小加号：自己也能手写一张交接单（2026-09-24 用户要）
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "g-add";
+  addBtn.title = "手写一张交接单";
+  addBtn.innerHTML = bmIcon("plus");
+  addBtn.addEventListener("click", () => { void bmBeginInsert(BM_HANDOFF_ZONE_KEY, null, "above", "handoff"); });
+  head.appendChild(addBtn);
+
   head.addEventListener("contextmenu", (event) => {
     event.preventDefault();
-    bmBeginInsert(BM_HANDOFF_ZONE_KEY, null, "above", "handoff");
+    void bmBeginInsert(BM_HANDOFF_ZONE_KEY, null, "above", "handoff");
   });
   group.appendChild(head);
 
@@ -1033,7 +1061,7 @@ function bmFitTextarea(input) {
   input.style.height = Math.max(input.scrollHeight, 22) + "px";
 }
 
-function bmBeginInsert(groupKey, anchorId, place, kind) {
+async function bmBeginInsert(groupKey, anchorId, place, kind) {
   bmInsertDraft = {
     groupKey,
     anchorId: anchorId || null,
@@ -1043,13 +1071,12 @@ function bmBeginInsert(groupKey, anchorId, place, kind) {
     kind: kind || (groupKey === BM_HANDOFF_ZONE_KEY ? "handoff" : "note"),
   };
   bmEditingId = null;
-  bmRenderCurrent();
-  window.requestAnimationFrame(() => {
-    const input = document.querySelector(".insert-row textarea");
-    if (!input) return;
-    input.focus();
-    bmFitTextarea(input);
-  });
+  // 等框画出来再放光标：光标不在框里，点别处就没有「离开」这回事，框收不起来（2026-09-24 修）。
+  await bmRefresh();
+  const input = document.querySelector(".insert-row textarea");
+  if (!input) return;
+  input.focus();
+  bmFitTextarea(input);
 }
 
 function bmBuildInsertRow() {
@@ -1067,7 +1094,7 @@ function bmBuildInsertRow() {
     bmScheduleInsertSave(input);
   });
   input.addEventListener("compositionend", () => bmScheduleInsertSave(input));
-  input.addEventListener("blur", () => { void bmInsertCommit({ close: true, input }); });
+  input.addEventListener("blur", () => { if (!bmRepainting) void bmInsertCommit({ close: true, input }); });
   input.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
@@ -1144,17 +1171,15 @@ async function bmInsertCommit(opts = {}) {
   bmFitTextarea(input);
 }
 
-function bmBeginEdit(id) {
+async function bmBeginEdit(id) {
   bmEditingId = id;
   bmInsertDraft = null;
-  bmRenderCurrent();
-  window.requestAnimationFrame(() => {
-    const input = document.querySelector(".task-edit");
-    if (!input) return;
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-    bmFitTextarea(input);
-  });
+  await bmRefresh(); // 同 bmBeginInsert：等框画出来再放光标
+  const input = document.querySelector(".task-edit");
+  if (!input) return;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  bmFitTextarea(input);
 }
 
 function bmScheduleEditSave(id, input) {
@@ -1213,7 +1238,7 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
     create.addEventListener("click", () => {
       bmHideCtxMenu();
       const kind = groupKey === BM_HANDOFF_ZONE_KEY ? "handoff" : "note";
-      bmBeginInsert(groupKey, record.id, insertPlace, kind);
+      void bmBeginInsert(groupKey, record.id, insertPlace, kind);
     });
     menu.appendChild(create);
   }
