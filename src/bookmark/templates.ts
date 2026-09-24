@@ -4,6 +4,8 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { imagesForAgent, inlineImageNames } from "./inline-images";
+import { attachmentsRoot } from "../shared/paths";
 
 export interface RequirementTemplate {
   name: string;
@@ -25,8 +27,10 @@ export function listTemplates(dir: string): RequirementTemplate[] {
 /** 拼出复制出去的文字：不带要求＝只有这条；带要求＝要求在前、「这次的事」在后。 */
 export function composeForAgent(
   template: string | null,
-  record: { text: string; url: string | null; detail: string | null },
+  record: { text: string; url: string | null; detail: string | null; attachments?: string[] },
 ): string {
-  const task = [record.text, record.url, record.detail].filter((part) => part && part.trim()).join("\n");
+  const used = new Set(inlineImageNames(record.text));
+  const extras = (record.attachments ?? []).filter((name) => !used.has(name)).map((name) => `图片文件（本条附件，请用读图工具打开）：${join(attachmentsRoot(), basename(name))}`);
+  const task = [imagesForAgent(record.text), record.url, record.detail, ...extras].filter((part) => part && part.trim()).join("\n");
   return template ? `${template}\n\n## 这次的事\n\n${task}` : task;
 }

@@ -1,0 +1,16 @@
+/* 图文编辑与缩略图：沿用看板字号和颜色，图片不参与任务拖动。 */
+.bm-image-editor { width: 100%; min-width: 0; flex: 1; }
+.bm-image-editor textarea[hidden] { display: none; }
+.bm-rich-input { min-height: 28px; padding: 4px 6px; border: 1px dashed rgba(122,156,94,.45); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; outline-color: #7a9c5e; }
+.bm-rich-input:focus { background: rgba(255,255,255,.3); }
+.bm-image-tools { display:flex; justify-content:flex-end; margin-top:3px; }
+.bm-image-tools button { border:0; background:transparent; color:#4d6b3a; font:inherit; font-size:12px; cursor:pointer; }
+.task .task-text.bm-has-images { display:block; -webkit-line-clamp:unset; overflow:visible; }
+.bm-inline-image { display:inline-flex; position:relative; vertical-align:middle; margin:4px 6px; max-width:100%; white-space:normal; }
+.bm-inline-image > button:first-child { padding:0; border:1px solid rgba(90,115,70,.3); border-radius:8px; background:rgba(255,255,255,.4); overflow:hidden; cursor:zoom-in; }
+.bm-inline-image img { display:block; max-width:min(260px,100%); max-height:160px; object-fit:contain; }
+.bm-inline-image .bm-image-remove { position:absolute; top:2px; right:2px; width:22px; height:22px; border:0; border-radius:50%; background:#fff; color:#6c4438; cursor:pointer; }
+.bm-image-viewer { max-width:90vw; max-height:90vh; padding:12px; border:0; border-radius:12px; background:#f4f6ef; }
+.bm-image-viewer::backdrop { background:rgba(0,0,0,.5); }
+.bm-image-viewer > button { display:block; margin:0 0 8px auto; }
+.bm-image-viewer img { display:block; max-width:85vw; max-height:80vh; object-fit:contain; }

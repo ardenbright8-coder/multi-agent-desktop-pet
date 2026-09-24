@@ -25,6 +25,7 @@ import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
+import { registerBookmarkImageIpc } from "./image-ipc";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -519,6 +520,7 @@ ${result.stdout || ""}`.trim();
 }
 
 function registerIpc(): void {
+  registerBookmarkImageIpc((sender) => Boolean(panel && !panel.isDestroyed() && sender === panel.webContents));
   ipcMain.handle("bookmark:list", () => requireStore().list());
   ipcMain.handle("bookmark:add", (_event, input: unknown) => requireStore().add(normalizeInput(input)));
   ipcMain.handle("bookmark:insert-beside", (_event, payload: unknown) => {

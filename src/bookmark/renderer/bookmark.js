@@ -175,15 +175,19 @@ async function bmRefresh() {
     const [agents, records] = await Promise.all([window.bookmark.agents(), window.bookmark.list()]);
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
     // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
-    if (bmDragActive) {
+    if (bmDragActive || bmImagesBusy) {
       bmRefreshPending = true;
       return;
     }
     // 正在输入行 / 改字框里打字时重画：画完把光标放回去，不然框收不起来、字也接不上。
-    const active = document.activeElement;
+    const active = bmActiveImageInput();
     const typing = active && active.matches && active.matches(".insert-row textarea, .task-edit")
-      ? { sel: active.matches(".task-edit") ? ".task-edit" : ".insert-row textarea", caret: active.selectionStart }
+      ? { sel: active.matches(".task-edit") ? ".task-edit" : ".insert-row textarea", caret: active.selectionStart, end: active.selectionEnd, text: active.value }
       : null;
+    if (typing && bmEditingId) {
+      const current = records.find((record) => record.id === bmEditingId);
+      if (current) current.text = typing.text;
+    }
     bmRepainting = true;
     try {
       bmRenderBoard(Array.isArray(records) ? records : []);
@@ -194,7 +198,7 @@ async function bmRefresh() {
       const input = document.querySelector(typing.sel);
       if (input && document.activeElement !== input) {
         input.focus();
-        input.setSelectionRange(typing.caret, typing.caret);
+        input.setSelectionRange(typing.caret, typing.end);
         bmFitTextarea(input);
       }
     }
@@ -255,6 +259,7 @@ function bmRenderBoard(records) {
 
 /** 切页签：改 active 态、重画 board、加Agent 按钮跟页走（待定页没它的事）。 */
 function bmSwitchPage(page) {
+  if (bmImagesBusy) return;
   if (page !== "inbox" && page !== "groups" && page !== "projects") return;
   if (page === bmCurrentPage) return;
   bmCurrentPage = page;
@@ -279,7 +284,7 @@ function bmBindDrag(opts) {
   const row = opts.row;
   handle.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
-    if (event.target instanceof Element && event.target.closest("button, textarea, input, a, .handle")) return;
+    if (event.target instanceof Element && event.target.closest("button, textarea, input, a, .handle, .bm-rich-input")) return;
     const startX = event.clientX;
     const startY = event.clientY;
     const pointerId = event.pointerId;
@@ -534,7 +539,7 @@ function bmBuildTask(record, groupKey, order) {
       bmScheduleEditSave(record.id, input);
     });
     input.addEventListener("compositionend", () => bmScheduleEditSave(record.id, input));
-    input.addEventListener("blur", () => { if (!bmRepainting) void bmEditCommit(record.id, input, true); });
+    input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy) void bmEditCommit(record.id, input, true); });
     input.addEventListener("keydown", (event) => {
       if (event.isComposing) return;
       if (event.key === "Enter" && !event.shiftKey) {
@@ -549,10 +554,11 @@ function bmBuildTask(record, groupKey, order) {
       }
     });
     body.appendChild(input);
+    bmBindImageEditor(input);
   } else {
     const text = document.createElement("div");
     text.className = "task-text";
-    text.textContent = record.text;
+    bmRenderImages(text, record.text, false, record.attachments || []);
     // 单击就改字；按下挪了算拖（bmBindDrag），拖完那一下点击会被吞掉，不会误进改字。
     text.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -975,7 +981,7 @@ async function bmComposerCommitNow(groupKey, opts = {}) {
     }
     return;
   }
-  const hadFocus = opts.input ? document.activeElement === opts.input : false;
+  const hadFocus = opts.input ? bmEditorHasFocus(opts.input) : false;
   const caret = hadFocus && opts.input ? opts.input.selectionStart : null;
   const text = String(draft.text ?? "").trim();
   try {
@@ -1128,6 +1134,7 @@ function bmFitTextarea(input) {
 }
 
 async function bmBeginInsert(groupKey, anchorId, place, kind) {
+  if (bmImagesBusy) return;
   bmInsertDraft = {
     groupKey,
     anchorId: anchorId || null,
@@ -1160,7 +1167,7 @@ function bmBuildInsertRow() {
     bmScheduleInsertSave(input);
   });
   input.addEventListener("compositionend", () => bmScheduleInsertSave(input));
-  input.addEventListener("blur", () => { if (!bmRepainting) void bmInsertCommit({ close: true, input }); });
+  input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy) void bmInsertCommit({ close: true, input }); });
   input.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
@@ -1173,6 +1180,7 @@ function bmBuildInsertRow() {
     }
   });
   item.appendChild(input);
+  bmBindImageEditor(input);
   return item;
 }
 
@@ -1185,6 +1193,7 @@ function bmScheduleInsertSave(input) {
 }
 
 async function bmInsertCommit(opts = {}) {
+  if (bmImagesBusy) return;
   const draft = bmInsertDraft;
   if (!draft) return;
   if (bmInsertSaveTimer) {
@@ -1192,7 +1201,7 @@ async function bmInsertCommit(opts = {}) {
     bmInsertSaveTimer = null;
   }
   const text = String(draft.text ?? "").trim();
-  const hadFocus = Boolean(opts.input && document.activeElement === opts.input);
+  const hadFocus = Boolean(opts.input && bmEditorHasFocus(opts.input));
   const caret = hadFocus && opts.input ? opts.input.selectionStart : null;
   try {
     if (!text) {
@@ -1238,6 +1247,7 @@ async function bmInsertCommit(opts = {}) {
 }
 
 async function bmBeginEdit(id) {
+  if (bmImagesBusy) return;
   bmEditingId = id;
   bmInsertDraft = null;
   await bmRefresh(); // 同 bmBeginInsert：等框画出来再放光标
@@ -1257,13 +1267,14 @@ function bmScheduleEditSave(id, input) {
 }
 
 async function bmEditCommit(id, input, close) {
+  if (bmImagesBusy) return;
   if (bmEditingId !== id && close) return;
   if (bmEditSaveTimer) {
     window.clearTimeout(bmEditSaveTimer);
     bmEditSaveTimer = null;
   }
   const text = String(input?.value ?? "").trim();
-  const hadFocus = document.activeElement === input;
+  const hadFocus = bmEditorHasFocus(input);
   const caret = hadFocus ? input.selectionStart : null;
   try {
     if (!text) await window.bookmark.remove(id);

@@ -5,6 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
   <title>Agent 看板</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="inline-images.css" />
 </head>
 <body>
   <div id="app">
@@ -13,6 +14,7 @@
       <span class="title">Agent 看板</span>
       <span class="title-version" id="title-version" title="看板版本（git短hash·启动时间）；Ctrl+R 整程序重开才变"></span>
       <span class="hint">F1 置顶</span>
+      <button id="settings-btn" type="button" title="设置">⚙</button>
     </header>
 
     <!-- 页签栏：待定 / Agent 分组 两页切换（2026-09-10 用户拍板：上下分层改左右两页，每页占满面板能多放条目） -->
@@ -22,14 +24,13 @@
       </button>
       <button id="tab-groups" type="button" class="page-tab" data-page="groups">🤖 Agent 分组</button>
       <button id="tab-projects" type="button" class="page-tab" data-page="projects">📁 项目</button>
+      <button id="add-agent-btn" type="button" title="加一个分组" hidden>＋组</button>
     </nav>
 
     <!-- 看板：分组全部由 bookmark.js 渲染（按当前页签只画待定区或 agent 分组） -->
     <main id="board"></main>
 
     <footer id="board-foot">
-      <button id="settings-btn" type="button" title="设置">⚙</button>
-      <button id="add-agent-btn" type="button" title="加一个 Agent 分组" hidden>＋ 加Agent</button>
       <span id="board-error" role="alert"></span>
     </footer>
 
@@ -59,6 +60,7 @@
     <!-- 跟脑图同一套：开起来 / Ctrl+R 必须弹一句，不弹他分不清是最新还是没生效 -->
     <div id="bm-toast" class="bm-toast" hidden></div>
   </div>
+  <script src="inline-images.js"></script>
   <script src="bookmark.js"></script>
 </body>
 </html>

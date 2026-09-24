@@ -8,6 +8,8 @@ import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { attachmentsRoot, bookmarksDataPath } from "../shared/paths";
 
+import { reconcileImages } from "./inline-images";
+
 const log = createLogger("bookmark");
 
 export interface BookmarkInput {
@@ -86,7 +88,7 @@ export class BookmarkStore {
       dedupeKey,
       detail: input.detail ? String(input.detail) : null,
       kind: input.kind === "handoff" ? "handoff" : "note",
-      attachments: normalizeAttachmentNames(input.attachments),
+      attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
       claimedAt: null,
@@ -110,7 +112,7 @@ export class BookmarkStore {
       dedupeKey: input.dedupeKey ? String(input.dedupeKey) : null,
       detail: input.detail ? String(input.detail) : null,
       kind: input.kind === "handoff" ? "handoff" : "note",
-      attachments: normalizeAttachmentNames(input.attachments),
+      attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
       claimedAt: null,
@@ -297,6 +299,7 @@ export class BookmarkStore {
     if (!record) return null;
     const next = String(text ?? "").trim();
     if (!next) throw new Error("书签内容不能为空");
+    record.attachments = reconcileImages(record.attachments, record.text, next);
     record.text = next;
     record.url = url ? String(url) : null;
     this.save();
@@ -326,7 +329,7 @@ export class BookmarkStore {
           ...record,
           detail: typeof record.detail === "string" ? record.detail : null,
           kind: record.kind === "handoff" ? "handoff" : "note",
-          attachments: normalizeAttachmentNames(record.attachments),
+          attachments: reconcileImages(normalizeAttachmentNames(record.attachments), "", record.text),
           bundleId: typeof record.bundleId === "string" ? record.bundleId : null,
           claimedBy: typeof record.claimedBy === "string" ? record.claimedBy : null,
           claimedAt: typeof record.claimedAt === "string" ? record.claimedAt : null,

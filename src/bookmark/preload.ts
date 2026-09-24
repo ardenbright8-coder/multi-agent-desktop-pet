@@ -3,6 +3,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("bookmark", {
+  saveImage: (bytes: Uint8Array) => ipcRenderer.invoke("bookmark:image:save", bytes) as Promise<string>,
+  readImage: (name: string) => ipcRenderer.invoke("bookmark:image:read", name) as Promise<string>,
   list: () => ipcRenderer.invoke("bookmark:list"),
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   insertBeside: (input: unknown) => ipcRenderer.invoke("bookmark:insert-beside", input),
