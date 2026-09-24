@@ -9,12 +9,16 @@ export interface AgentShortcut {
   freshWindow: boolean;
   /** 桌面程序的程序文件名（小写）：按它认「最前面是不是这个程序」，已开着的旧窗口也认。 */
   app?: string;
+  /** 开出来后多等几毫秒再贴（默认用看板的统一时长）：启动慢、要先登录的程序在这里加长。 */
+  settleMs?: number;
 }
 
 const SHORTCUTS: Record<string, AgentShortcut> = {
   claude: { shortcut: "Claude Code 一.lnk", freshWindow: true },
   chatgpt: { shortcut: "Codex.lnk", freshWindow: false, app: "chatgpt.exe" }, // Codex 桌面版的程序文件叫 ChatGPT.exe
   piagent: { shortcut: "Pi 编程智能体.lnk", freshWindow: true },
+  // 反重力命令行开窗后先登录好几秒，登录没完就贴会丢（2026-09-24 实测），多等一会儿
+  antigravity: { shortcut: "Antigravity 反重力CLI.lnk", freshWindow: true, settleMs: 12_000 },
   hermes: { shortcut: "Hermes.lnk", freshWindow: false, app: "hermes.exe" },
 };
 

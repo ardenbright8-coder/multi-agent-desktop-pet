@@ -12,6 +12,9 @@ test("agentShortcutFor：四个默认组各对上桌面那个快捷方式，大�
   assert.deepEqual(agentShortcutFor("Hermes"), { shortcut: "Hermes.lnk", freshWindow: false, app: "hermes.exe" });
   assert.deepEqual(agentShortcutFor(" claude "), { shortcut: "Claude Code 一.lnk", freshWindow: true });
   assert.deepEqual(agentShortcutFor("piagent"), { shortcut: "Pi 编程智能体.lnk", freshWindow: true });
+  // 2026-09-24 加的第五家：开「Antigravity 反重力CLI」（命令窗口，跟 Pi 一样每点一次开一个新的）
+  // 它开窗后要先登录好几秒，登录没完就贴会丢（2026-09-24 实测），所以多等：12 秒
+  assert.deepEqual(agentShortcutFor("Antigravity"), { shortcut: "Antigravity 反重力CLI.lnk", freshWindow: true, settleMs: 12_000 });
 });
 
 test("agentShortcutFor：用户自己加的组认不出是谁，返回 null（只复制不开窗）", () => {

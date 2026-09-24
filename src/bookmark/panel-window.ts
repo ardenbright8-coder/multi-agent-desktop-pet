@@ -830,7 +830,7 @@ async function openAgentShortcut(group: string, line: string, label: string, wai
     const errorMessage = await shell.openPath(path);
     if (errorMessage) throw new Error(errorMessage);
     if (win32 && before) {
-      const pasting = pasteLaunchLine(win32, spec.app ?? null, before, line, label);
+      const pasting = pasteLaunchLine(win32, spec.app ?? null, before, line, label, spec.settleMs);
       if (waitPaste) await pasting;
     }
     return { opened: name, freshWindow: spec.freshWindow, pasting: Boolean(win32 && before), problem: null };
@@ -847,6 +847,7 @@ async function pasteLaunchLine(
   before: Set<bigint>,
   line: string,
   label: string,
+  settleMs?: number,
 ): Promise<void> {
   let result: { ok: boolean; reason: string | null };
   try {
@@ -866,9 +867,10 @@ async function pasteLaunchLine(
       },
       sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     };
+    const slow = settleMs ? { settleMs } : {};
     result = appExe
-      ? await pasteIntoAppWindow(appExe, deps, APP_PASTE_TIMING)
-      : await pasteIntoNewWindow(before, deps, LAUNCH_PASTE_TIMING);
+      ? await pasteIntoAppWindow(appExe, deps, { ...APP_PASTE_TIMING, ...slow })
+      : await pasteIntoNewWindow(before, deps, { ...LAUNCH_PASTE_TIMING, ...slow });
   } catch (error) {
     log.出事("启动 Agent 贴字出错（用户自己贴）", error, "cli");
     result = { ok: false, reason: "贴字出错" };

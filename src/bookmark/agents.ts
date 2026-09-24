@@ -1,15 +1,18 @@
-// Agent 看板的分组清单（看板改版 2026-09-10）：默认四组 + 用户自定义，无限加。
+// Agent 看板的分组清单（看板改版 2026-09-10）：默认五组 + 用户自定义，无限加。
 // 🚨 隔离铁律照旧：只认 shared，坏档挪 .corrupt-<时间戳> 存证后用默认组重来，不连坐任何人。
 
 import { existsSync, readFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { bookmarkDataDirectory } from "../shared/paths";
 
 const log = createLogger("bookmark");
 
-export const AGENT_DEFAULTS = ["Claude", "ChatGPT", "Pi Agent", "Hermes"];
+// 2026-09-24 加 Antigravity（谷歌反重力），放 Hermes 上面（用户：「多加一个 Agent 放到 Hermes 上面」）。
+export const AGENT_DEFAULTS = ["Claude", "ChatGPT", "Pi Agent", "Antigravity", "Hermes"];
+/** 加 Antigravity 之前的默认四组：老名单旁边没有 agents-seen.json，就当这四个已经给过。 */
+const LEGACY_DEFAULTS = ["Claude", "ChatGPT", "Pi Agent", "Hermes"];
 
 const MAX_AGENTS = 32;
 const MAX_NAME_LENGTH = 24;
@@ -23,10 +26,13 @@ export interface AgentAddResult {
 export class AgentRoster {
   private agents: string[] = [];
   private readonly path: string;
+  /** 给过哪些默认组（agents-seen.json）：新默认组只往老名单里补一次，用户删了就不再回来。 */
+  private readonly seenPath: string;
   private loaded = false;
 
   constructor(path?: string) {
     this.path = path ?? join(bookmarkDataDirectory(), "agents.json");
+    this.seenPath = join(dirname(this.path), "agents-seen.json");
   }
 
   list(): string[] {
@@ -102,7 +108,7 @@ export class AgentRoster {
         .filter(Boolean)
         .slice(0, MAX_AGENTS);
       if (!names.length) return [...AGENT_DEFAULTS];
-      return names;
+      return this.offerNewDefaults(names);
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;
       try {
@@ -115,7 +121,44 @@ export class AgentRoster {
     }
   }
 
+  /** 老名单里补上没给过的默认组：插在默认顺序里它后面那一家的上面（Antigravity → Hermes 上面），后面那几家都不在就放最后；
+   *  名单里已经有同名的（大小写不管）不重复。补完记进 agents-seen.json。 */
+  private offerNewDefaults(names: string[]): string[] {
+    const lower = (s: string) => s.toLowerCase();
+    const seen = new Set(this.readSeen().map(lower));
+    const fresh = AGENT_DEFAULTS.filter((name) => !seen.has(lower(name)));
+    if (!fresh.length) return names;
+    const out = [...names];
+    for (const name of fresh) {
+      if (out.some((item) => lower(item) === lower(name))) continue;
+      const after = AGENT_DEFAULTS.slice(AGENT_DEFAULTS.indexOf(name) + 1).map(lower);
+      const at = out.findIndex((item) => after.includes(lower(item)));
+      if (at < 0) out.push(name);
+      else out.splice(at, 0, name);
+      log.记(`分组名单补上新默认组「${name}」（只补这一次，删了不再回来）`, "load");
+    }
+    this.agents = out;
+    this.save();
+    return out;
+  }
+
+  private readSeen(): string[] {
+    try {
+      if (!existsSync(this.seenPath)) return LEGACY_DEFAULTS;
+      const parsed: unknown = JSON.parse(readFileSync(this.seenPath, "utf8"));
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : LEGACY_DEFAULTS;
+    } catch {
+      return LEGACY_DEFAULTS;
+    }
+  }
+
   private save(): void {
     writeJsonAtomic(this.path, this.agents);
+    // 这一版的默认组都算给过了：之后用户删了哪个，重开也不补回来。
+    try {
+      writeJsonAtomic(this.seenPath, [...new Set([...this.readSeen(), ...AGENT_DEFAULTS])]);
+    } catch (error) {
+      log.出事("agents-seen.json 写盘失败（最多下回重开再补一次新默认组）", error, "save");
+    }
   }
 }

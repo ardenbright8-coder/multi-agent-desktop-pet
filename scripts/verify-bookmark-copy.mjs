@@ -182,8 +182,8 @@ try {
       return [g.dataset.group, dot ? (dot.dataset.logo || "圆点") : "无"];
     }),
   ));
-  check("⑦ 组名前：四家官方标志，自加的组是圆点",
-    marks.Claude === "claude" && marks.ChatGPT === "openai" && marks["Pi Agent"] === "pi" && marks.Hermes === "hermes" && marks["我的新组"] === "圆点",
+  check("⑦ 组名前：五家官方标志（含 Antigravity），自加的组是圆点",
+    marks.Claude === "claude" && marks.ChatGPT === "openai" && marks["Pi Agent"] === "pi" && marks.Antigravity === "antigravity" && marks.Hermes === "hermes" && marks["我的新组"] === "圆点",
     JSON.stringify(marks));
 
   // ⑧ 捆一捆：按住「丙」拖到「甲」正中间
