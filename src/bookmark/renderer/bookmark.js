@@ -167,6 +167,11 @@ async function bmRefresh() {
   try {
     const [agents, records] = await Promise.all([window.bookmark.agents(), window.bookmark.list()]);
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
+    // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
+    if (bmDragActive) {
+      bmRefreshPending = true;
+      return;
+    }
     bmRenderBoard(Array.isArray(records) ? records : []);
   } catch (error) {
     bmShowError("看板读不出来： " + bmErrorText(error));
@@ -239,6 +244,8 @@ function bmSwitchPage(page) {
 
 const BM_LONG_MS = 320;
 const BM_DRAG_SLOP = 8;
+let bmDragActive = false; // 从按下到松手都算，期间 bmRefresh 只记账不重画
+let bmRefreshPending = false;
 
 /** 左键按住气泡约三分之一秒再拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
 function bmBindLongDrag(opts) {
@@ -257,6 +264,7 @@ function bmBindLongDrag(opts) {
     let lastX = startX;
     let lastY = startY;
     let hit = null;
+    bmDragActive = true;
 
     function cancelTimer() {
       if (timer) window.clearTimeout(timer);
@@ -271,17 +279,28 @@ function bmBindLongDrag(opts) {
       cancelTimer();
       if (scrollTimer) window.clearInterval(scrollTimer);
       clearMarks();
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", onUp);
-      handle.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
       if (ghost) ghost.remove();
       row.classList.remove("is-dragging");
-      if (!armed) return;
-      row.dataset.swallow = "1";
-      if (commit && hit && opts.onDrop) void opts.onDrop(hit);
+      bmDragActive = false;
+      const pending = bmRefreshPending;
+      bmRefreshPending = false;
+      if (armed) row.dataset.swallow = "1";
+      const drop = armed && commit && hit && opts.onDrop ? hit : null;
+      void (async () => {
+        if (drop) await opts.onDrop(drop);
+        if (pending) await bmRefresh();
+      })();
     }
     function arm() {
       timer = 0;
+      // 按下前一瞬的重画已经把这条换掉了：这次长按作废，别拿旧条目做影子。
+      if (!row.isConnected) {
+        finish(false);
+        return;
+      }
       armed = true;
       const rect = row.getBoundingClientRect();
       row.classList.add("is-dragging");
@@ -350,9 +369,10 @@ function bmBindLongDrag(opts) {
     }
     function onUp() { finish(true); }
     function onCancel() { finish(false); }
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", onUp);
-    handle.addEventListener("pointercancel", onCancel);
+    // 挂在整个窗口上：按着的那条哪怕被换掉，松手也收得到。
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   });
   handle.addEventListener("click", (event) => {
     if (row.dataset.swallow !== "1") return;
