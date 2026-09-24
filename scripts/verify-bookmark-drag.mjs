@@ -1,4 +1,4 @@
-// 书签看板「拖动 / 单击 / 双击」回归验证（Playwright·零抢鼠标）：残影 ①～⑤，单击和拖动分开 ⑥～⑩。
+// 书签看板「拖动 / 单击」回归验证（Playwright·零抢鼠标）：残影 ①～⑤，单击和拖动分开 ⑥～⑩。
 // 病根（2026-09-24 用户报：拖完屏幕上留下 ⠿01、⠿03 这种窄残影拿不掉）：
 //   按下去那一刻窗口拿到焦点 → 看板整张重画 → 手里按着的那条被换掉；
 //   0.3 秒后长按到点，拿已换掉的旧条目做影子（宽 0），松手事件又只挂在旧条目上收不到 → 影子永远留着。
@@ -126,7 +126,7 @@ try {
       `拖后=${after ? after.join("/") : "没等到 4 条"}`);
   }
 
-  // ⑥～⑨ 单击和拖动分开（2026-09-24 用户拍板）：按下直接挪就是拖，不用等；单击不进改字；双击才改字。
+  // ⑥～⑨ 单击和拖动分开（2026-09-24 用户拍板）：按下直接挪就是拖，不用等；没挪就松手是单击，松手马上改字。
   await repaint();
   await sleep(300);
   const editing = () => panel.locator("#board .task-edit").count();
@@ -149,13 +149,19 @@ try {
     check("⑨ 拖完松手不会误进改字", (await editing()) === 0, `改字框=${await editing()}`);
   }
   {
-    const text = panel.locator("#board .task .task-text").first();
-    await text.click();
-    await sleep(400);
-    check("⑦ 单击文字不进改字", (await editing()) === 0, `改字框=${await editing()}`);
-    await panel.locator("#board .task .task-text").first().dblclick();
-    const opened = await waitFor(async () => (await editing()) === 1, 3000);
-    check("⑧ 双击文字进改字", !!opened, `改字框=${await editing()}`);
+    await panel.locator("#board .task .task-text").first().click();
+    const quick = await waitFor(async () => (await editing()) === 1, 500, 50);
+    check("⑦ 单击文字，松手马上进改字（半秒内）", !!quick, `改字框=${await editing()}`);
+    await panel.keyboard.press("Escape");
+    await sleep(300);
+    // 用户原话：鼠标在那不动，单击点了半天没反应——按住不挪、停一会儿再松手，也得算单击。
+    const box = await panel.locator("#board .task .task-text").first().boundingBox();
+    await panel.mouse.move(box.x + 10, box.y + box.height / 2);
+    await panel.mouse.down();
+    await sleep(800);
+    await panel.mouse.up();
+    const slow = await waitFor(async () => (await editing()) === 1, 500, 50);
+    check("⑧ 按住不挪停一会儿再松手，也算单击进改字", !!slow, `改字框=${await editing()}`);
     await panel.keyboard.press("Escape");
     await sleep(300);
   }
@@ -211,19 +217,23 @@ try {
       `拖前=${before.join("/")} 拖后=${final.join("/")}`);
   }
 
-  // ⑩ 项目页跟 Windows 文件夹一样：单击不进，双击才进。
+  // ⑩ 项目页：拖文件夹不会误点进去；单击马上进。
   await panel.evaluate(() => window.bookmark.projectsMkdir("", "单双击测试夹"));
   await panel.locator("#tab-projects").click();
   const folderRow = () => panel.locator('#board .proj-row[data-rel="单双击测试夹"]');
   await waitFor(async () => (await folderRow().count()) === 1);
   {
-    await folderRow().click();
+    const box = await folderRow().boundingBox();
+    await panel.mouse.move(box.x + box.width - 30, box.y + box.height / 2);
+    await panel.mouse.down();
+    await panel.mouse.move(box.x + box.width - 30, box.y + box.height / 2 + 30, { steps: 6 });
+    await panel.mouse.up();
     await sleep(500);
     const stillTop = (await folderRow().count()) === 1;
-    check("⑩ 项目页单击文件夹不进去", stillTop, `还在上一层=${stillTop}`);
-    if (stillTop) await folderRow().dblclick();
-    const entered = await waitFor(async () => (await folderRow().count()) === 0, 3000);
-    check("⑩ 项目页双击文件夹进去", !!entered);
+    check("⑩ 项目页拖一下文件夹，松手不会误点进去", stillTop, `还在上一层=${stillTop}`);
+    if (stillTop) await folderRow().click();
+    const entered = await waitFor(async () => (await folderRow().count()) === 0, 1000, 50);
+    check("⑩ 项目页单击文件夹马上进去", !!entered);
   }
 } catch (error) {
   failures.push(`脚本异常：${error?.message ?? error}`);

@@ -542,8 +542,8 @@ function bmBuildTask(record, groupKey, order) {
     const text = document.createElement("div");
     text.className = "task-text";
     text.textContent = record.text;
-    // 单击不打扰（拖动、看都不该弹出改字框），双击才改字。
-    text.addEventListener("dblclick", (event) => {
+    // 单击就改字；按下挪了算拖（bmBindDrag），拖完那一下点击会被吞掉，不会误进改字。
+    text.addEventListener("click", (event) => {
       event.stopPropagation();
       bmBeginEdit(record.id);
     });
@@ -730,7 +730,7 @@ async function bmRenderProjects() {
   board.appendChild(list);
 }
 
-/** 单行：文件夹（双击进入+悬停自动弹目录预览）/ md（双击系统默认程序打开）；按下直接挪=拖动排序。 */
+/** 单行：文件夹（单击进入+悬停自动弹目录预览）/ md（单击系统默认程序打开）；按下直接挪=拖动排序。 */
 function bmBuildProjectRow(entry) {
   const row = document.createElement("li");
   row.className = "proj-row" + (entry.isDir ? " is-dir" : " is-file");
@@ -757,13 +757,12 @@ function bmBuildProjectRow(entry) {
       if (hoverTimer) window.clearTimeout(hoverTimer);
       bmHideProjPop();
     });
-    // 跟 Windows 文件夹一样：单击不进，双击才进/才打开，拖的时候不会一不小心点进去。
-    row.addEventListener("dblclick", () => {
+    row.addEventListener("click", () => {
       bmProjectsCwd = entry.relPath;
       void bmRenderProjects();
     });
   } else {
-    row.addEventListener("dblclick", () => { void window.bookmark.projectsOpen(entry.relPath); });
+    row.addEventListener("click", () => { void window.bookmark.projectsOpen(entry.relPath); });
   }
   bmBindDrag({
     handle: row,

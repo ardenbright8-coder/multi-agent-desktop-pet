@@ -89,7 +89,7 @@ try {
   check("③ 项目夹真实落盘（不是假数据）", dirOnDisk);
 
   // ⑤ 子夹里新建 md：自动补后缀 + 标题行。
-  await panel.locator('.proj-row.is-dir[data-rel="毕业旅行"]').dblclick(); // 设定11：双击才进夹
+  await panel.locator('.proj-row.is-dir[data-rel="毕业旅行"]').click();
   await waitFor(async () => {
     return panel.evaluate(() => (document.querySelector(".proj-crumbs")?.textContent ?? "").includes("毕业旅行"));
   });
