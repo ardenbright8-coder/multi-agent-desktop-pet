@@ -1401,7 +1401,13 @@ function bmLaunchOptions(target, groupKey) {
       bmHideCtxMenu();
       try {
         const res = await window.bookmark.launchLine(target, groupKey, opt.coding);
-        bmToast(`启动句已复制（${res.label}）：开一个新的 ${groupKey} 窗口，Ctrl+V 再回车`, 4500);
+        if (res.opened) {
+          const where = res.freshWindow ? "等新窗口出来" : "在里面新开一个对话";
+          bmToast(`已打开「${res.opened}」，启动句已复制（${res.label}）：${where}，Ctrl+V 再回车`, 6000);
+        } else {
+          const why = res.problem ? `${res.problem}。` : "";
+          bmToast(`${why}启动句已复制（${res.label}）：开一个新的 ${groupKey} 窗口，Ctrl+V 再回车`, 6000);
+        }
       } catch (error) {
         bmShowError(bmErrorText(error));
       }

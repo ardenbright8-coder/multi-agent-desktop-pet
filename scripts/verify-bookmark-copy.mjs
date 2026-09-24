@@ -129,9 +129,16 @@ try {
     return text.startsWith("领看板的活：") ? text : null;
   }, 3000, 50);
   const expectLine = `领看板的活：node "${cliScript.split("\\").join("/")}" next ${ids.甲} --by Claude-1 --coding`;
-  const toast = await panel.locator("#bm-toast").textContent();
+  // 剪贴板先写、查完快捷方式才弹提示，等提示换成这次的再读（别读到开机那句「代码是最新的」）
+  const toast = await waitFor(async () => {
+    const text = (await panel.locator("#bm-toast").textContent()) ?? "";
+    return text.includes("Claude-1") ? text : null;
+  }, 3000, 50);
   check("⑤ 启动 Agent · 带编程：剪贴板是领活那一句（窗口名 Claude-1）", line === expectLine && (toast ?? "").includes("Claude-1"),
     `剪贴板=${JSON.stringify(line)} 提示=${toast}`);
+  // 测试模式只报开哪个、不真开（app.ts 传 openAgents: !testMode），免得测一次弹一个真 Claude 窗口
+  check("⑤b 启动 Agent 开的是桌面「Claude Code 一」快捷方式，提示用户自己 Ctrl+V 回车",
+    (toast ?? "").includes("Claude Code 一") && (toast ?? "").includes("Ctrl+V"), `提示=${toast}`);
 
   // ④ 待定页六个点
   await closeMenu();

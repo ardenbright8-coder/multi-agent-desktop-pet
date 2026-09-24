@@ -25,6 +25,7 @@ import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
+import { agentShortcutFor } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 
 const log = createLogger("bookmark");
@@ -92,6 +93,7 @@ let roster: AgentRoster | null = null;
 let hotkeyRegistered = false;
 /** 真机 Ctrl+R 走编译+整程序重开；自测保持面板刷新。 */
 let liveRestart = false;
+let openAgents = false;
 let pendingShow = false;
 let rendererReady = false;
 let sinkTimer: NodeJS.Timeout | null = null;
@@ -202,6 +204,8 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   store = new BookmarkStore();
   roster = new AgentRoster();
   liveRestart = Boolean(options?.liveRestart);
+  // 启动 Agent 真打开桌面快捷方式只在真机（常驻＝真机）；自测只报开哪个，别测一次弹一个真 AI 窗口。
+  openAgents = Boolean(options?.resident);
   registerIpc();
   if (options?.hotkey) registerHotkey();
   if (options?.inbox) {
@@ -623,9 +627,9 @@ function registerIpc(): void {
   });
   ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => requireStore().unbundle(String(bundleId ?? "")));
   ipcMain.handle("bookmark:release", (_event, id: unknown) => requireStore().release(String(id ?? "")));
-  // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板。自动开窗填字另有任务书，
-  // 做好之前用户自己开窗 Ctrl+V。🚨 绝不替他按回车。
-  ipcMain.handle("bookmark:launch-line", (_event, payload: unknown) => {
+  // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式；
+  // 用户在新窗口里自己 Ctrl+V。🚨 绝不替他贴、绝不替他按回车。开不了窗只提示，照旧能手动开。
+  ipcMain.handle("bookmark:launch-line", async (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { target?: unknown; group?: unknown; coding?: unknown };
     const target = String(raw.target ?? "").trim();
     const group = String(raw.group ?? "").trim();
@@ -634,7 +638,7 @@ function registerIpc(): void {
     const line = `领看板的活：node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
     clipboard.writeText(line);
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
-    return { line, label };
+    return { line, label, ...(await openAgentShortcut(group)) };
   });
   ipcMain.handle("bookmark:templates:open", async () => {
     const dir = templatesDirectory();
@@ -677,6 +681,27 @@ const CODING_TEMPLATE = "带编程";
 /** 给 AI 用的命令脚本位置（正斜杠，哪种终端都能直接粘）。dist/bookmark/ → 仓库根/scripts/。 */
 function bookmarkCliScriptPath(): string {
   return join(__dirname, "..", "..", "scripts", "bookmark-cli.mjs").split(String.fromCharCode(92)).join("/");
+}
+
+/**
+ * 打开这个组对应的桌面快捷方式（设定15第二版）。认不出的组、桌面没这个快捷方式、打开失败 → 不开，
+ * 返回 problem 让界面提示「自己开窗」。自测模式（不常驻）只报开哪个、不真开。
+ */
+async function openAgentShortcut(group: string): Promise<{ opened: string | null; freshWindow: boolean; problem: string | null }> {
+  const spec = agentShortcutFor(group);
+  if (!spec) return { opened: null, freshWindow: false, problem: null };
+  const name = spec.shortcut.replace(/\.lnk$/i, "");
+  const path = join(app.getPath("desktop"), spec.shortcut);
+  if (!existsSync(path)) return { opened: null, freshWindow: false, problem: `桌面上没找到「${name}」快捷方式` };
+  if (!openAgents) return { opened: name, freshWindow: spec.freshWindow, problem: null };
+  try {
+    const errorMessage = await shell.openPath(path);
+    if (errorMessage) throw new Error(errorMessage);
+    return { opened: name, freshWindow: spec.freshWindow, problem: null };
+  } catch (error) {
+    log.出事(`启动 Agent 开「${name}」失败（启动句已在剪贴板，用户可手动开）`, error, "cli");
+    return { opened: null, freshWindow: false, problem: `「${name}」没打开` };
+  }
 }
 
 /** 窗口名：组名去空格 + 递增号（Claude-3、PiAgent-7）。号存在 launch-seq.json，重启接着数，免得跟还开着的旧窗口撞名。 */
