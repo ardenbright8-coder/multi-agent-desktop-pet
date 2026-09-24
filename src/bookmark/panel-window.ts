@@ -104,6 +104,10 @@ let pinnedTopmost = false;
 // HWND 传参用 uintptr_t + BigInt（实测 void* + Buffer 会静默失败返回 false）。
 type SetWindowPosFn = (hwnd: bigint, after: bigint, x: number, y: number, cx: number, cy: number, flags: number) => boolean;
 let setWindowPos: SetWindowPosFn | null = null;
+type SendMessageFn = (hwnd: bigint, msg: number, wParam: bigint, lParam: bigint) => bigint;
+let sendMessage: SendMessageFn | null = null;
+/** WM_NCACTIVATE：告诉 Windows「这个窗口的外观按『正在用』画」。只管外观，不抢焦点、不改 Z 序。 */
+const WM_NCACTIVATE = 0x0086;
 
 function loadSink(): SetWindowPosFn | null {
   if (setWindowPos) return setWindowPos;
@@ -115,6 +119,9 @@ function loadSink(): SetWindowPosFn | null {
     setWindowPos = user32.func(
       "bool __stdcall SetWindowPos(uintptr_t hWnd, uintptr_t hWndInsertAfter, int x, int y, int cx, int cy, uint32_t uFlags)",
     ) as unknown as SetWindowPosFn;
+    sendMessage = user32.func(
+      "intptr_t __stdcall SendMessageW(uintptr_t hWnd, uint32_t Msg, uintptr_t wParam, intptr_t lParam)",
+    ) as unknown as SendMessageFn;
     log.记("Win32 SetWindowPos 已就位（总在其他窗口之下）", "window");
     return setWindowPos;
   } catch (error) {
@@ -135,6 +142,19 @@ function sinkToBottom(win: BrowserWindow): void {
     if (!ok) log.出事("SetWindowPos 返回 false（沉底没生效）", undefined, "window");
   } catch (error) {
     log.出事("沉底失败（不影响使用）", error, "window");
+  }
+}
+
+/** 毛玻璃常亮（2026-09-24 用户拍板：「永远固定成鼠标点那个状态」）：Win11 的 acrylic 只在窗口「正在用」时画，
+ *  失焦就换成一块死灰。看板常驻沉底、大部分时间失焦 → 大部分时间是灰的。每次失焦/亮窗后补发一个
+ *  WM_NCACTIVATE(TRUE)，让 Windows 接着按「正在用」画毛玻璃。只管外观：键盘焦点、Z 序都不动。失败静默。 */
+function keepAcrylicLit(win: BrowserWindow): void {
+  try {
+    if (!loadSink() || !sendMessage || win.isDestroyed()) return;
+    const hwndBig = win.getNativeWindowHandle().readBigUInt64LE(0);
+    sendMessage(hwndBig, WM_NCACTIVATE, 1n, 0n);
+  } catch (error) {
+    log.出事("毛玻璃常亮失败（只是失焦会变灰，不影响使用）", error, "window");
   }
 }
 
@@ -330,7 +350,10 @@ function createPanel(): BrowserWindow {
   // 失焦即沉底：用户点去别的窗口，看板立刻退到所有窗口之下，绝不挡人。
   win.on("blur", () => {
     if (!win.isDestroyed() && win.isVisible()) sinkToBottom(win);
+    // 等 Windows 自己那一下「变灰」处理完再补发，不然会被它盖回去。
+    setTimeout(() => keepAcrylicLit(win), 0);
   });
+  win.on("show", () => setTimeout(() => keepAcrylicLit(win), 0));
   win.on("closed", () => {
     panel = null;
   });

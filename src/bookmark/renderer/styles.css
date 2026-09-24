@@ -707,3 +707,60 @@ body {
 .proj-pop-line { padding: 1px 0; color: rgba(47, 62, 44, 0.75); }
 
 .proj-pop-empty { color: rgba(47, 62, 44, 0.45); padding: 1px 0; }
+
+/* ══ 草木皮肤（2026-09-24 用户拍板：毛玻璃一直透、带一点草木味、别太重，清新）══════════════
+   只换颜色＋两处小装饰（标题前一片小叶子、右下角一枝很淡的叶子水印），不动布局、不动透明度滑条。
+   交接单条目那几处淡黄照旧（设定04：一眼认出）。整段删掉 = 回到原来的金色。 */
+
+#app {
+  border-color: rgba(122, 156, 94, 0.38);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%234d6b3a' stroke='%234d6b3a' fill-opacity='.1' stroke-opacity='.12'%3E%3Cpath d='M20 95 Q45 60 85 12' stroke-width='2.2' fill='none'/%3E%3Cpath d='M40 68 Q22 58 26 40 Q42 50 40 68Z M52 52 Q66 40 80 46 Q68 60 52 52Z M60 38 Q52 22 60 10 Q70 24 60 38Z M30 82 Q14 78 10 64 Q28 66 30 82Z' stroke='none'/%3E%3C/g%3E%3C/svg%3E")
+      no-repeat right -12px bottom -10px / 160px 160px,
+    linear-gradient(175deg, rgba(238, 244, 231, var(--bm-alpha, 0.6)) 0%, rgba(226, 236, 217, var(--bm-alpha, 0.6)) 100%);
+}
+
+#titlebar { border-bottom-color: rgba(122, 156, 94, 0.25); }
+
+/* 标题前的 ☀ 换成一片小叶子（字藏掉，画一片叶） */
+#titlebar .sun {
+  font-size: 0;
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  flex: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 20C5 10 11 4 20 4c0 9-6 15-15 16z' fill='%2387a86a'/%3E%3Cpath d='M5 20L15 9' stroke='%23fff' stroke-width='1.3' stroke-opacity='.75' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.bm-toast { border-color: rgba(122, 156, 94, 0.45); border-left-color: #87a86a; }
+
+.page-tab { border-color: rgba(122, 156, 94, 0.3); }
+.page-tab:hover { background: rgba(122, 156, 94, 0.12); }
+.page-tab.active { background: rgba(122, 156, 94, 0.2); border-color: rgba(122, 156, 94, 0.6); color: #3d5a2c; }
+.tab-count { color: #4d6b3a; }
+
+.group.inbox { background: rgba(238, 244, 229, 0.5); border-color: rgba(122, 156, 94, 0.3); }
+
+/* 组名前的圆点改成一片叶子的形状（颜色照旧按组名算） */
+.dot { width: 12px; height: 12px; border-radius: 60% 0 60% 0; }
+
+.group-composer textarea, .insert-row textarea, #new-agent-name, .proj-new-row input { border-color: rgba(122, 156, 94, 0.4); }
+.group-composer textarea:focus, #new-agent-name:focus, .proj-new-row input:focus { outline-color: rgba(122, 156, 94, 0.75); }
+
+.group-head.drag-target { outline-color: rgba(122, 156, 94, 0.85); background: rgba(122, 156, 94, 0.14); }
+
+#settings-btn { border-color: rgba(122, 156, 94, 0.45); color: #4d6b3a; }
+#settings-btn:hover { background: rgba(122, 156, 94, 0.15); }
+#settings-popover { border-color: rgba(122, 156, 94, 0.45); }
+.settings-value { color: #4d6b3a; }
+#opacity-slider { accent-color: #6f8f5f; }
+
+#add-agent-btn { border-color: rgba(122, 156, 94, 0.6); color: #4d6b3a; }
+#add-agent-btn:hover { background: rgba(122, 156, 94, 0.12); }
+#add-agent-row { border-top-color: rgba(122, 156, 94, 0.3); }
+
+#ctx-menu, #copy-pop, #proj-pop { border-color: rgba(122, 156, 94, 0.45); }
+.ctx-item.back:hover { background: rgba(122, 156, 94, 0.14); }
+
+.proj-new-btn, .proj-new-cancel { border-color: rgba(122, 156, 94, 0.45); }
+.proj-pop-title { border-bottom-color: rgba(122, 156, 94, 0.3); }
