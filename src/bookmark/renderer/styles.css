@@ -176,8 +176,8 @@ body {
 
 .g-add:hover, .t-copy:hover { background: rgba(47, 62, 44, 0.08); color: rgba(47, 62, 44, 0.85); }
 
-/* 条目行尾复制钮：平时藏着，鼠标移到这一行才露（不占眼） */
-.t-copy { opacity: 0; align-self: center; }
+/* 条目行尾复制钮（给用户自己用）：常显、平时淡一点，鼠标移到这一行变清楚（2026-09-24 用户：别全藏，藏久了看不见） */
+.t-copy { opacity: 0.35; align-self: center; }
 .task:hover .t-copy, .t-copy:focus-visible { opacity: 1; }
 
 /* 小加号紧跟组名：更小更淡，清爽不抢眼（2026-09-24 用户：别那么重口味，放左边顺手） */
@@ -525,36 +525,6 @@ body {
 
 .ctx-none { font-size: 12.5px; color: rgba(47, 62, 44, 0.45); padding: 2px 8px 4px; }
 
-/* 复制给 AI 的小气泡：跟右键菜单同一个样子 */
-#copy-pop {
-  position: fixed;
-  z-index: 50;
-  min-width: 150px;
-  background: rgba(250, 252, 246, 0.97);
-  border: 1px solid rgba(201, 165, 76, 0.5);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(47, 62, 44, 0.22);
-  padding: 6px;
-}
-
-#copy-pop[hidden] { display: none; }
-
-.copy-pop-foot {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  border-top: 1px solid rgba(47, 62, 44, 0.1);
-  margin-top: 4px;
-  background: transparent;
-  color: rgba(47, 62, 44, 0.5);
-  font-size: 12px;
-  padding: 5px 8px 2px;
-  cursor: pointer;
-}
-
-.copy-pop-foot:hover { color: rgba(47, 62, 44, 0.85); }
-
 ::-webkit-scrollbar { width: 8px; }
 
 ::-webkit-scrollbar-thumb { background: rgba(47, 62, 44, 0.22); border-radius: 4px; }
@@ -745,7 +715,7 @@ body {
 #add-agent-btn:hover { background: rgba(122, 156, 94, 0.12); }
 #add-agent-row { border-top-color: rgba(122, 156, 94, 0.3); }
 
-#ctx-menu, #copy-pop, #proj-pop { border-color: rgba(122, 156, 94, 0.45); }
+#ctx-menu, #proj-pop { border-color: rgba(122, 156, 94, 0.45); }
 .ctx-item.back:hover { background: rgba(122, 156, 94, 0.14); }
 
 .proj-new-btn, .proj-new-cancel { border-color: rgba(122, 156, 94, 0.45); }
@@ -764,3 +734,58 @@ body {
 
 /* 六个点菜单里「复制」和其余项之间的细分隔线 */
 .ctx-sep { height: 1px; margin: 4px 6px; background: rgba(122, 156, 94, 0.25); }
+
+/* ── 捆一捆 + 在干（2026-09-24 设定15）──────────────────── */
+
+/* 捆头：一捆最上面那行（六个点 + 名字 + 谁在干），跟下面几条合成一个淡虚线框 */
+.bundle-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border: 1px dashed rgba(122, 156, 94, 0.55);
+  border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  background: rgba(122, 156, 94, 0.08);
+  font-size: 12.5px;
+  color: rgba(47, 62, 44, 0.7);
+  list-style: none;
+}
+.bundle-head .bundle-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task.in-bundle {
+  margin-bottom: 0;
+  border-radius: 0;
+  border-left: 1px dashed rgba(122, 156, 94, 0.55);
+  border-right: 1px dashed rgba(122, 156, 94, 0.55);
+}
+.task.in-bundle.bundle-last {
+  margin-bottom: 4px;
+  border-bottom: 1px dashed rgba(122, 156, 94, 0.55);
+  border-radius: 0 0 9px 9px;
+}
+
+/* 拖着一条压在别条正中间：要捆上了 */
+.task.bundle-target { outline: 2px solid rgba(122, 156, 94, 0.8); background: rgba(122, 156, 94, 0.18); }
+
+/* 在干：哪个 AI 窗口领走了 */
+.claim {
+  flex: none;
+  align-self: center;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: #4d6b3a;
+  background: rgba(122, 156, 94, 0.14);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+
+.settings-open-btn {
+  border: 1px solid rgba(122, 156, 94, 0.45);
+  background: rgba(255, 255, 255, 0.6);
+  color: #4d6b3a;
+  border-radius: 8px;
+  padding: 2px 9px;
+  font-size: 12.5px;
+  cursor: pointer;
+}

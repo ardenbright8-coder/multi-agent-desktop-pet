@@ -36,7 +36,22 @@ export interface BookmarkRecord {
   kind: "note" | "handoff";
   /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
   attachments: string[];
+  /** 捆号（2026-09-24 设定15）：同组里挨着的几条捆成一捆，一捆交给一个 AI 窗口。null = 没捆。 */
+  bundleId: string | null;
+  /** 谁领走了（看板开窗时起的窗口名，如 Claude-3）。null = 没人领。 */
+  claimedBy: string | null;
+  claimedAt: string | null;
   createdAt: string;
+}
+
+/** 领活结果：record 为 null 表示没活可领（busy 是正在干的窗口名）。position/total 是这条在捆里第几条/共几条。 */
+export interface ClaimResult {
+  record: BookmarkRecord | null;
+  position: number;
+  total: number;
+  /** 领完这条后，这一捆还剩几条没人领。 */
+  remaining: number;
+  busy: string[];
 }
 
 export class BookmarkStore {
@@ -72,6 +87,9 @@ export class BookmarkStore {
       detail: input.detail ? String(input.detail) : null,
       kind: input.kind === "handoff" ? "handoff" : "note",
       attachments: normalizeAttachmentNames(input.attachments),
+      bundleId: null,
+      claimedBy: null,
+      claimedAt: null,
       createdAt: new Date().toISOString(),
     };
     this.records.unshift(record);
@@ -93,6 +111,9 @@ export class BookmarkStore {
       detail: input.detail ? String(input.detail) : null,
       kind: input.kind === "handoff" ? "handoff" : "note",
       attachments: normalizeAttachmentNames(input.attachments),
+      bundleId: null,
+      claimedBy: null,
+      claimedAt: null,
       createdAt: new Date().toISOString(),
     };
     const index = anchorId ? this.records.findIndex((item) => item.id === anchorId) : -1;
@@ -116,8 +137,112 @@ export class BookmarkStore {
     }
     if (place === "below") to += 1;
     this.records.splice(to, 0, item);
+    this.settleBundleAfterMove(item);
+    this.dissolveLoneBundles();
     this.save();
     return item;
+  }
+
+  /** 捆一捆：把 id 这条捆到 targetId 那条所在的捆（没捆就新起一捆），挪到那一捆的最后。只许同一组。 */
+  bundleWith(id: string, targetId: string): BookmarkRecord | null {
+    this.ensureLoaded();
+    if (id === targetId) return null;
+    const item = this.records.find((r) => r.id === id);
+    const target = this.records.find((r) => r.id === targetId);
+    if (!item || !target) return null;
+    if (groupKeyOf(item) !== groupKeyOf(target)) throw new Error("只能捆同一组的");
+    const bundle = target.bundleId ?? `b-${randomUUID().slice(0, 6)}`;
+    target.bundleId = bundle;
+    this.records.splice(this.records.indexOf(item), 1);
+    let last = -1;
+    this.records.forEach((r, i) => { if (r.bundleId === bundle) last = i; });
+    this.records.splice(last + 1, 0, item);
+    item.bundleId = bundle;
+    this.dissolveLoneBundles();
+    this.save();
+    return item;
+  }
+
+  /** 拆开一捆：里面每条都变回没捆。 */
+  unbundle(bundleId: string): number {
+    this.ensureLoaded();
+    let n = 0;
+    for (const r of this.records) {
+      if (r.bundleId === bundleId) {
+        r.bundleId = null;
+        n += 1;
+      }
+    }
+    if (n) this.save();
+    return n;
+  }
+
+  /** 领活：target 是捆号就在这一捆里按顺序领，是条目 id 就领这一条。
+   *  同一个窗口手里有没干完的，再领还给它那条（不多领）；别人领走的跳过。 */
+  claimNext(target: string, by: string): ClaimResult {
+    this.ensureLoaded();
+    const who = String(by ?? "").trim();
+    if (!who) throw new Error("缺窗口名（--by）");
+    const inBundle = this.records.filter((r) => r.bundleId === target);
+    const candidates = inBundle.length ? inBundle : this.records.filter((r) => r.id === target);
+    if (!candidates.length) throw new Error(`找不到 ${target}（这一捆或这一条可能已经干完删掉了）`);
+    const total = candidates.length;
+    const mine = candidates.find((r) => r.claimedBy === who);
+    const pick = mine ?? candidates.find((r) => !r.claimedBy) ?? null;
+    if (pick && !mine) {
+      pick.claimedBy = who;
+      pick.claimedAt = new Date().toISOString();
+      this.save();
+    }
+    return {
+      record: pick,
+      position: pick ? candidates.indexOf(pick) + 1 : 0,
+      total,
+      remaining: candidates.filter((r) => !r.claimedBy).length,
+      busy: [...new Set(candidates.filter((r) => r.claimedBy && r.claimedBy !== who).map((r) => r.claimedBy as string))],
+    };
+  }
+
+  /** 干完：只有领它的窗口能删，而且必须带上用户说「可以」的原话。删掉返回那条。 */
+  done(id: string, by: string, userOk: string): BookmarkRecord {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了）");
+    if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
+    if (!String(userOk ?? "").trim()) throw new Error("缺用户确认：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进 --ok");
+    this.records = this.records.filter((r) => r.id !== id);
+    this.save();
+    return record;
+  }
+
+  /** 放回去：清掉领活标记（窗口半路关了、或 AI 说干不了）。 */
+  release(id: string): BookmarkRecord | null {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) return null;
+    record.claimedBy = null;
+    record.claimedAt = null;
+    this.save();
+    return record;
+  }
+
+  /** 挪完之后定它在不在捆里：夹在同一捆两条中间＝进这捆；本来在捆里、挪到捆边上还挨着＝留下；别的都＝离开。 */
+  private settleBundleAfterMove(item: BookmarkRecord): void {
+    const key = groupKeyOf(item);
+    const same = this.records.filter((r) => groupKeyOf(r) === key);
+    const at = same.indexOf(item);
+    const prev = same[at - 1]?.bundleId ?? null;
+    const next = same[at + 1]?.bundleId ?? null;
+    if (prev && prev === next) item.bundleId = prev;
+    else if (item.bundleId && (prev === item.bundleId || next === item.bundleId)) return;
+    else item.bundleId = null;
+  }
+
+  /** 用户挪来挪去以后，只剩一条的捆就散了（AI 干完删条目不走这里：最后一条还要能按捆号领）。 */
+  private dissolveLoneBundles(): void {
+    const counts = new Map<string, number>();
+    for (const r of this.records) if (r.bundleId) counts.set(r.bundleId, (counts.get(r.bundleId) ?? 0) + 1);
+    for (const r of this.records) if (r.bundleId && (counts.get(r.bundleId) ?? 0) < 2) r.bundleId = null;
   }
 
   remove(id: string): boolean {
@@ -151,7 +276,15 @@ export class BookmarkStore {
     this.ensureLoaded();
     const record = this.records.find((item) => item.id === id);
     if (!record) return null;
+    const changed = (record.assignee ?? "").toLowerCase() !== (assignee ?? "").toLowerCase();
     record.assignee = assignee ? String(assignee) : null;
+    if (changed) {
+      // 换了组：离开原来的捆，领活标记也作废（换了人干）。
+      record.bundleId = null;
+      record.claimedBy = null;
+      record.claimedAt = null;
+      this.dissolveLoneBundles();
+    }
     this.save();
     return record;
   }
@@ -194,6 +327,9 @@ export class BookmarkStore {
           detail: typeof record.detail === "string" ? record.detail : null,
           kind: record.kind === "handoff" ? "handoff" : "note",
           attachments: normalizeAttachmentNames(record.attachments),
+          bundleId: typeof record.bundleId === "string" ? record.bundleId : null,
+          claimedBy: typeof record.claimedBy === "string" ? record.claimedBy : null,
+          claimedAt: typeof record.claimedAt === "string" ? record.claimedAt : null,
         }));
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;
@@ -211,6 +347,12 @@ export class BookmarkStore {
   private save(): void {
     writeJsonAtomic(this.path, this.records);
   }
+}
+
+/** 看板上在同一组的判据：派给谁（大小写不敏感）；没派的交接单一组、没派的普通条目一组。 */
+function groupKeyOf(record: BookmarkRecord): string {
+  if (record.assignee) return `a:${record.assignee.toLowerCase()}`;
+  return record.kind === "handoff" ? "handoff" : "inbox";
 }
 
 function isRecord(value: unknown): value is BookmarkRecord {

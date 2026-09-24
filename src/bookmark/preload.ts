@@ -14,6 +14,11 @@ contextBridge.exposeInMainWorld("bookmark", {
   templates: () => ipcRenderer.invoke("bookmark:templates") as Promise<string[]>,
   copyForAgent: (id: string, template: string | null) => ipcRenderer.invoke("bookmark:copy-for-agent", { id, template }) as Promise<string>,
   openTemplates: () => ipcRenderer.invoke("bookmark:templates:open"),
+  bundle: (id: string, targetId: string) => ipcRenderer.invoke("bookmark:bundle", { id, targetId }),
+  unbundle: (bundleId: string) => ipcRenderer.invoke("bookmark:unbundle", bundleId),
+  release: (id: string) => ipcRenderer.invoke("bookmark:release", id),
+  launchLine: (target: string, group: string, coding: boolean) =>
+    ipcRenderer.invoke("bookmark:launch-line", { target, group, coding }) as Promise<{ line: string; label: string }>,
   agents: () => ipcRenderer.invoke("bookmark:agents"),
   moveAgent: (name: string, anchor: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:agents:move", { name, anchor, place }),
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),

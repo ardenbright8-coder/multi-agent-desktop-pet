@@ -227,6 +227,15 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
         add: (input) => bookmarkCliAdd(input),
         list: () => bookmarkCliList(),
         remove: (id) => bookmarkCliRemove(id),
+        // 领活三件套（设定15）：跟看板同一个 store，AI 领了/干完看板马上刷新。
+        claimNext: (target, by) => requireStore().claimNext(target, by),
+        done: (id, by, userOk) => {
+          const record = requireStore().done(id, by, userOk);
+          log.记(`${by} 干完删掉「${record.text.slice(0, 30)}」（用户原话：${userOk.slice(0, 60)}）`, "cli");
+          return record;
+        },
+        release: (id) => requireStore().release(id),
+        template: () => listTemplates(templatesDirectory()).find((t) => t.name === CODING_TEMPLATE)?.text ?? null,
       },
       onChanged: notifyInboxChanged,
     });
@@ -605,6 +614,26 @@ function registerIpc(): void {
     clipboard.writeText(text);
     return text;
   });
+  // 捆一捆 / 拆开 / 放回去（设定15）
+  ipcMain.handle("bookmark:bundle", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { id?: unknown; targetId?: unknown };
+    return requireStore().bundleWith(String(raw.id ?? ""), String(raw.targetId ?? ""));
+  });
+  ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => requireStore().unbundle(String(bundleId ?? "")));
+  ipcMain.handle("bookmark:release", (_event, id: unknown) => requireStore().release(String(id ?? "")));
+  // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板。自动开窗填字另有任务书，
+  // 做好之前用户自己开窗 Ctrl+V。🚨 绝不替他按回车。
+  ipcMain.handle("bookmark:launch-line", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { target?: unknown; group?: unknown; coding?: unknown };
+    const target = String(raw.target ?? "").trim();
+    const group = String(raw.group ?? "").trim();
+    if (!target || !group) throw new Error("缺条目或组名");
+    const label = nextWindowLabel(group);
+    const line = `领看板的活：node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
+    clipboard.writeText(line);
+    log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
+    return { line, label };
+  });
   ipcMain.handle("bookmark:templates:open", async () => {
     const dir = templatesDirectory();
     mkdirSync(dir, { recursive: true });
@@ -638,6 +667,32 @@ function registerIpc(): void {
 
 function templatesDirectory(): string {
   return join(bookmarkDataDirectory(), "要求模板");
+}
+
+/** 「启动 Agent · 带编程」用的那份要求模板（要求模板夹里的 带编程.md）。 */
+const CODING_TEMPLATE = "带编程";
+
+/** 给 AI 用的命令脚本位置（正斜杠，哪种终端都能直接粘）。dist/bookmark/ → 仓库根/scripts/。 */
+function bookmarkCliScriptPath(): string {
+  return join(__dirname, "..", "..", "scripts", "bookmark-cli.mjs").split(String.fromCharCode(92)).join("/");
+}
+
+/** 窗口名：组名去空格 + 递增号（Claude-3、PiAgent-7）。号存在 launch-seq.json，重启接着数，免得跟还开着的旧窗口撞名。 */
+function nextWindowLabel(group: string): string {
+  const path = join(bookmarkDataDirectory(), "launch-seq.json");
+  let seq = 0;
+  try {
+    if (existsSync(path)) seq = Number(JSON.parse(readFileSync(path, "utf8")).seq) || 0;
+  } catch {
+    /* 坏档从 0 数，最多撞个旧名 */
+  }
+  seq += 1;
+  try {
+    writeJsonAtomic(path, { seq });
+  } catch (error) {
+    log.出事("launch-seq.json 写盘失败（窗口名可能重复，不影响使用）", error, "cli");
+  }
+  return `${group.replace(/\s+/g, "") || "Agent"}-${seq}`;
 }
 
 function requireRoster(): AgentRoster {

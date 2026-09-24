@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { handleCliRequest, parseCliArgs, type CliStoreAdapter, type CliRecord } from "../../bookmark/cli-server";
+import { formatClaimMessage, handleCliRequest, parseCliArgs, type CliStoreAdapter, type CliRecord } from "../../bookmark/cli-server";
 import { attachmentsRoot } from "../../shared/paths";
 
 function makeStore(): CliStoreAdapter & {
@@ -211,4 +211,97 @@ test("handleCliRequest：GET /list 输出 attachments 完整路径", () => {
     else process.env.AGENT_PET_HUB_HOME = prev;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ── 领活三件套（2026-09-24 设定15）：next 领下一条 / done 用户说可以才删 / release 放回去 ──
+
+test("parseCliArgs：next/done/release 的写法；缺 --by、done 缺 --ok 都报错", () => {
+  assert.deepEqual(parseCliArgs(["next", "b-12ab", "--by", "Claude-3", "--coding"]),
+    { command: "next", target: "b-12ab", by: "Claude-3", coding: true, json: false, attach: [] });
+  assert.deepEqual(parseCliArgs(["done", "id-1", "--by", "Claude-3", "--ok", "可以", "没问题"]),
+    { command: "done", target: "id-1", by: "Claude-3", ok: "可以 没问题", coding: false, json: false, attach: [] });
+  assert.deepEqual(parseCliArgs(["release", "id-1", "--by", "Claude-3"]),
+    { command: "release", target: "id-1", by: "Claude-3", coding: false, json: false, attach: [] });
+  assert.throws(() => parseCliArgs(["next", "b-12ab"]), /--by/);
+  assert.throws(() => parseCliArgs(["next", "--by", "Claude-3"]), /捆号或条目 id/);
+  assert.throws(() => parseCliArgs(["done", "id-1", "--by", "Claude-3"]), /--ok/);
+});
+
+function makeClaimCtx() {
+  const calls: string[] = [];
+  const record: CliRecord = {
+    id: "id-9", text: "搜索框看不见", url: null, assignee: "Claude", dedupeKey: null, detail: null,
+    kind: "note", attachments: [], createdAt: "2026-09-24T00:00:00.000Z", bundleId: "b-1", claimedBy: null,
+  };
+  const store: CliStoreAdapter = {
+    add: () => record,
+    list: () => [record],
+    remove: () => true,
+    claimNext(target, by) {
+      calls.push(`next ${target} ${by}`);
+      if (target === "b-空") return { record: null, position: 0, total: 2, remaining: 0, busy: ["Claude-1"] };
+      record.claimedBy = by;
+      return { record, position: 1, total: 2, remaining: 1, busy: [] };
+    },
+    done(id, by, ok) {
+      calls.push(`done ${id} ${by} ${ok}`);
+      if (by !== record.claimedBy) throw new Error("这条不是你领的");
+      return record;
+    },
+    release(id) {
+      calls.push(`release ${id}`);
+      record.claimedBy = null;
+      return record;
+    },
+    template: (name) => (name === "coding" ? "先读工作流" : null),
+  };
+  return { ctx: { token: "secret", store, onChanged: () => { calls.push("changed"); } }, calls, record };
+}
+
+test("handleCliRequest：POST /next 领到一条，带编程就把要求拼在前面；没活可领告诉谁在干", () => {
+  const { ctx, calls } = makeClaimCtx();
+  const got = handleCliRequest("POST", "/next", { target: "b-1", by: "Claude-3", coding: true }, "Bearer secret", ctx);
+  assert.equal(got.status, 200);
+  const body = got.body as { item: CliRecord; prompt: string; position: number; total: number; remaining: number };
+  assert.equal(body.item.id, "id-9");
+  assert.equal(body.prompt, "先读工作流\n\n## 这次的事\n\n搜索框看不见");
+  assert.deepEqual([body.position, body.total, body.remaining], [1, 2, 1]);
+  assert.ok(calls.includes("changed"));
+  const plain = handleCliRequest("POST", "/next", { target: "b-1", by: "Claude-3" }, "Bearer secret", ctx);
+  assert.equal((plain.body as { prompt: string }).prompt, "搜索框看不见");
+  const empty = handleCliRequest("POST", "/next", { target: "b-空", by: "Claude-3" }, "Bearer secret", ctx);
+  assert.deepEqual((empty.body as { item: unknown; busy: string[] }).busy, ["Claude-1"]);
+  assert.equal((empty.body as { item: unknown }).item, null);
+});
+
+test("handleCliRequest：/done 不是自己领的 400、缺用户原话 400；/release 只能放回自己领的", () => {
+  const { ctx } = makeClaimCtx();
+  handleCliRequest("POST", "/next", { target: "b-1", by: "Claude-3" }, "Bearer secret", ctx);
+  assert.equal(handleCliRequest("POST", "/done", { id: "id-9", by: "Claude-4", ok: "可以" }, "Bearer secret", ctx).status, 400);
+  assert.equal(handleCliRequest("POST", "/done", { id: "id-9", by: "Claude-3", ok: " " }, "Bearer secret", ctx).status, 400);
+  assert.equal(handleCliRequest("POST", "/release", { id: "id-9", by: "Claude-4" }, "Bearer secret", ctx).status, 400);
+  assert.equal(handleCliRequest("POST", "/release", { id: "id-9", by: "Claude-3" }, "Bearer secret", ctx).status, 200);
+  handleCliRequest("POST", "/next", { target: "b-1", by: "Claude-3" }, "Bearer secret", ctx);
+  assert.equal(handleCliRequest("POST", "/done", { id: "id-9", by: "Claude-3", ok: "可以，验过了" }, "Bearer secret", ctx).status, 200);
+});
+
+test("formatClaimMessage：所有 AI 看到同一套规矩——一次一条、先给用户验、带原话才 done、再 next", () => {
+  const msg = formatClaimMessage(
+    { item: { id: "id-9" } as CliRecord, prompt: "搜索框看不见", position: 1, total: 2, remaining: 1, busy: [] },
+    { cli: "X:/bookmark-cli.mjs", target: "b-1", by: "Claude-3", coding: true },
+  );
+  assert.match(msg, /你是 Claude-3/);
+  assert.match(msg, /第 1\/2 条/);
+  assert.match(msg, /搜索框看不见/);
+  assert.match(msg, /一次只干这一条/);
+  assert.match(msg, /用户.*说「可以」/);
+  assert.match(msg, /node "X:\/bookmark-cli\.mjs" done id-9 --by Claude-3 --ok "/);
+  assert.match(msg, /node "X:\/bookmark-cli\.mjs" next b-1 --by Claude-3 --coding/);
+  assert.match(msg, /release id-9 --by Claude-3/);
+  const none = formatClaimMessage(
+    { item: null, prompt: null, position: 0, total: 2, remaining: 0, busy: ["Claude-1"] },
+    { cli: "X:/bookmark-cli.mjs", target: "b-1", by: "Claude-3", coding: false },
+  );
+  assert.match(none, /没有可领的/);
+  assert.match(none, /Claude-1/);
 });

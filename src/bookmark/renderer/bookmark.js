@@ -10,7 +10,6 @@ const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "
 const bmOpenDetails = new Set(); // 点开过详情的条目 id：输入行自动存档会触发重画，别把人手点开的详情洗掉
 
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
-let bmTemplateNames = []; // 要求模板夹里的名字（六个点菜单用），跟 bmRefresh 一起拉
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
 let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组 / projects = 📁 项目（2026-09-11 加第三页）
 let bmInsertDraft = null; // 右键插进来、还在写的那一行：{ groupKey, anchorId, place, id, text, kind }
@@ -132,6 +131,7 @@ function bmInit() {
     event.stopPropagation();
     bmToggleSettings();
   });
+  bmAddTemplatesSettingRow();
   const slider = document.getElementById("opacity-slider");
   slider?.addEventListener("input", () => bmOnOpacityInput(Number(slider.value)));
   slider?.addEventListener("click", (event) => event.stopPropagation());
@@ -160,8 +160,6 @@ function bmInit() {
     // 点菜单外面收起右键菜单。
     const menu = document.getElementById("ctx-menu");
     if (!menu.hidden && !menu.contains(event.target)) bmHideCtxMenu();
-    const copyPop = document.getElementById("copy-pop");
-    if (copyPop && !copyPop.hidden && !copyPop.contains(event.target)) bmHideCopyPop();
     // 点浮层外面收起设置浮层（浮层内部点击已 stopPropagation）。
     const pop = document.getElementById("settings-popover");
     if (pop && !pop.hidden && !pop.contains(event.target)) pop.hidden = true;
@@ -175,7 +173,6 @@ function bmInit() {
 async function bmRefresh() {
   try {
     const [agents, records] = await Promise.all([window.bookmark.agents(), window.bookmark.list()]);
-    window.bookmark.templates().then((names) => { bmTemplateNames = Array.isArray(names) ? names : []; }).catch(() => {});
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
     // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
     if (bmDragActive) {
@@ -295,8 +292,8 @@ function bmBindDrag(opts) {
     bmDragActive = true;
 
     function clearMarks() {
-      document.querySelectorAll(".gap-above, .gap-below, .drag-target").forEach((el) => {
-        el.classList.remove("gap-above", "gap-below", "drag-target");
+      document.querySelectorAll(".gap-above, .gap-below, .drag-target, .bundle-target").forEach((el) => {
+        el.classList.remove("gap-above", "gap-below", "drag-target", "bundle-target");
       });
     }
     function finish(commit) {
@@ -358,6 +355,17 @@ function bmBindDrag(opts) {
       const list = opts.list();
       if (!list) return;
       const items = [...list.children].filter((el) => el !== row && opts.accept(el));
+      // 捆一捆（设定15）：压在别条的正中间（上下各留 30% 给插缝）＝捆上；学手机桌面把图标叠一起建文件夹。
+      if (opts.bundleable) {
+        for (const item of items) {
+          const r = item.getBoundingClientRect();
+          if (y > r.top + r.height * 0.3 && y < r.bottom - r.height * 0.3 && x >= r.left && x <= r.right) {
+            item.classList.add("bundle-target");
+            hit = { id: opts.idOf(row), bundleWith: opts.idOf(item) };
+            return;
+          }
+        }
+      }
       let anchor = null;
       let place = "below";
       for (const item of items) {
@@ -581,15 +589,28 @@ function bmBuildTask(record, groupKey, order) {
     });
   }
   item.appendChild(body);
-  // 复制给 AI（2026-09-24 用户拍板）：行尾细线复制钮，鼠标移上来才露；点开气泡选带哪套要求。
+  // 在干标记（设定15）：哪个 AI 窗口领走了，一眼看到；别的窗口领不走。
+  if (record.claimedBy) {
+    item.classList.add("claimed");
+    const claim = document.createElement("span");
+    claim.className = "claim";
+    claim.textContent = `🔄 ${record.claimedBy} 在干`;
+    item.appendChild(claim);
+  }
+  // 行尾复制（2026-09-24 用户拍板：给他自己用，拿去别处商量；常显、平时淡一点）：点一下就复制这条的文字。
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "t-copy";
-  copy.title = "复制给 AI";
+  copy.title = "复制这条";
   copy.innerHTML = bmIcon("copy");
-  copy.addEventListener("click", (event) => {
+  copy.addEventListener("click", async (event) => {
     event.stopPropagation();
-    void bmShowCopyPop(record, copy);
+    try {
+      await window.bookmark.copyForAgent(record.id, null);
+      bmToast("已复制这条");
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
   });
   item.appendChild(copy);
   bmBindDrag({
@@ -597,6 +618,7 @@ function bmBuildTask(record, groupKey, order) {
     row: item,
     selfGroup: groupKey,
     reassign: true,
+    bundleable: bmAgents.includes(groupKey),
     list: () => item.parentElement,
     accept: (el) => el.classList.contains("task"),
     idOf: (el) => el.dataset.id || "",
@@ -604,6 +626,15 @@ function bmBuildTask(record, groupKey, order) {
       if (hit.reassignGroup !== undefined) {
         const assignee = hit.reassignGroup === BM_INBOX_KEY ? null : hit.reassignGroup;
         await bmReassign(hit.id, assignee);
+        return;
+      }
+      if (hit.bundleWith) {
+        try {
+          await window.bookmark.bundle(hit.id, hit.bundleWith);
+        } catch (error) {
+          bmShowError(bmErrorText(error));
+        }
+        await bmRefresh();
         return;
       }
       if (!hit.anchorId || hit.anchorId === hit.id) return;
@@ -1075,8 +1106,18 @@ function bmFillTaskList(list, records, groupKey) {
   const anchored = Boolean(draft && draft.anchorId && records.some((record) => record.id === draft.anchorId));
   if (draft && !anchored) list.appendChild(bmBuildInsertRow());
   records.forEach((record, index) => {
+    const prevBundle = index > 0 ? records[index - 1].bundleId : null;
+    const nextBundle = index < records.length - 1 ? records[index + 1].bundleId : null;
+    if (record.bundleId && record.bundleId !== prevBundle) {
+      list.appendChild(bmBuildBundleHead(record.bundleId, records.filter((r) => r.bundleId === record.bundleId), groupKey));
+    }
     if (draft && anchored && draft.anchorId === record.id && draft.place === "above") list.appendChild(bmBuildInsertRow());
-    list.appendChild(bmBuildTask(record, groupKey, index + 1));
+    const task = bmBuildTask(record, groupKey, index + 1);
+    if (record.bundleId) {
+      task.classList.add("in-bundle");
+      if (record.bundleId !== nextBundle) task.classList.add("bundle-last");
+    }
+    list.appendChild(task);
     if (draft && anchored && draft.anchorId === record.id && draft.place === "below") list.appendChild(bmBuildInsertRow());
   });
 }
@@ -1251,31 +1292,18 @@ async function bmEditCommit(id, input, close) {
 }
 
 function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
-  bmHideCopyPop();
   const menu = document.getElementById("ctx-menu");
   menu.textContent = "";
 
-  // 复制给 AI（2026-09-24 用户拍板：左边六个点就是管「交给 AI」的，点开先是复制；以后「用 Agent 打开」也挂这里）。
-  const copyOptions = [...bmTemplateNames.map((name) => ({ label: `复制 · ${name}`, template: name })), { label: "复制 · 只这条", template: null }];
-  for (const opt of copyOptions) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "ctx-item";
-    item.textContent = opt.label;
-    item.addEventListener("click", async () => {
-      bmHideCtxMenu();
-      try {
-        await window.bookmark.copyForAgent(record.id, opt.template);
-        bmToast(opt.template ? `已复制（带「${opt.template}」），去 AI 窗口 Ctrl+V` : "已复制这条，去 AI 窗口 Ctrl+V");
-      } catch (error) {
-        bmShowError(bmErrorText(error));
-      }
-    });
-    menu.appendChild(item);
+  // 左边六个点管「交给 AI 干活」（2026-09-24 用户拍板）：只在 agent 组里出现；待定是还在商量，不启动。
+  const copyOptions = bmAgents.includes(groupKey) ? bmLaunchOptions(record.id, groupKey) : [];
+  for (const el of copyOptions) menu.appendChild(el);
+  if (record.claimedBy) menu.appendChild(bmReleaseItem(record));
+  if (copyOptions.length || record.claimedBy) {
+    const sep = document.createElement("div");
+    sep.className = "ctx-sep";
+    menu.appendChild(sep);
   }
-  const sep = document.createElement("div");
-  sep.className = "ctx-sep";
-  menu.appendChild(sep);
 
   if (insertPlace) {
     const create = document.createElement("button");
@@ -1345,72 +1373,127 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   menu.style.top = `${Math.max(6, top)}px`;
 }
 
-// ── 复制给 AI 的小气泡（2026-09-24 用户拍板）──────────────────────────
-// 模板夹（数据夹下 bookmark/要求模板/）里一份 md 一项 + 固定一项「只复制这条」；选完进剪贴板，
-// 用户自己粘进 AI 窗口、自己按回车（不替他开窗、不替他发，防被当成自动化）。
-async function bmShowCopyPop(record, anchor) {
-  bmHideCtxMenu();
-  let pop = document.getElementById("copy-pop");
-  if (!pop) {
-    pop = document.createElement("div");
-    pop.id = "copy-pop";
-    pop.hidden = true;
-    document.getElementById("app").appendChild(pop);
-  }
-  if (!pop.hidden && pop.dataset.id === record.id) {
-    bmHideCopyPop();
-    return;
-  }
-  let names = [];
-  try {
-    names = await window.bookmark.templates();
-  } catch (error) {
-    bmShowError(bmErrorText(error));
-  }
-  pop.textContent = "";
-  pop.dataset.id = record.id;
-  const options = [...names.map((name) => ({ label: name, template: name })), { label: "只复制这条", template: null }];
-  for (const opt of options) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "ctx-item";
-    btn.textContent = opt.label;
-    btn.addEventListener("click", async () => {
-      bmHideCopyPop();
+// ── 交给 AI 干活（2026-09-24 设定15）：启动 Agent / 放回去 / 捆头 ──────────────────
+// 启动 Agent：看板给这个窗口起名（Claude-3），把一句「领看板的活：node … next <捆或条> --by Claude-3」放进剪贴板，
+// 用户开窗 Ctrl+V、自己按回车；AI 敲了这句才算领走（看板上出「🔄 Claude-3 在干」）。🚨 看板绝不替他发。
+
+function bmLaunchOptions(target, groupKey) {
+  return [
+    { label: "启动 Agent · 带编程", coding: true },
+    { label: "启动 Agent · 普通", coding: false },
+  ].map((opt) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "ctx-item";
+    item.textContent = opt.label;
+    item.addEventListener("click", async () => {
+      bmHideCtxMenu();
       try {
-        await window.bookmark.copyForAgent(record.id, opt.template);
-        bmToast(opt.template ? `已复制（带「${opt.label}」），去 AI 窗口 Ctrl+V` : "已复制这条，去 AI 窗口 Ctrl+V");
+        const res = await window.bookmark.launchLine(target, groupKey, opt.coding);
+        bmToast(`启动句已复制（${res.label}）：开一个新的 ${groupKey} 窗口，Ctrl+V 再回车`, 4500);
       } catch (error) {
         bmShowError(bmErrorText(error));
       }
     });
-    pop.appendChild(btn);
-  }
-  const edit = document.createElement("button");
-  edit.type = "button";
-  edit.className = "copy-pop-foot";
-  edit.textContent = "改要求…";
-  edit.title = "打开要求模板夹：一份 md 就是气泡里一项，文件名就是名字";
-  edit.addEventListener("click", () => {
-    bmHideCopyPop();
-    window.bookmark.openTemplates().catch((error) => bmShowError(bmErrorText(error)));
+    return item;
   });
-  pop.appendChild(edit);
-  pop.hidden = false;
-  // 右边对齐复制钮、贴在下面；下面放不下就翻到上面。
-  const panelRect = document.getElementById("app").getBoundingClientRect();
-  const rect = anchor.getBoundingClientRect();
-  const popRect = pop.getBoundingClientRect();
-  const left = rect.right - panelRect.left - popRect.width;
-  let top = rect.bottom - panelRect.top + 4;
-  if (top + popRect.height > panelRect.height - 6) top = rect.top - panelRect.top - popRect.height - 4;
-  pop.style.left = `${Math.max(6, left)}px`;
-  pop.style.top = `${Math.max(6, top)}px`;
 }
 
-function bmHideCopyPop() {
-  const pop = document.getElementById("copy-pop");
-  if (pop) pop.hidden = true;
+function bmReleaseItem(record) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "ctx-item back";
+  item.textContent = `放回去（${record.claimedBy} 不干了）`;
+  item.addEventListener("click", async () => {
+    bmHideCtxMenu();
+    try {
+      await window.bookmark.release(record.id);
+      await bmRefresh();
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
+  });
+  return item;
+}
+
+/** 捆头：六个点（整捆启动 Agent / 拆开）+ 名字（第一条开头几个字）+ 谁在干。 */
+function bmBuildBundleHead(bundleId, members, groupKey) {
+  const head = document.createElement("li");
+  head.className = "bundle-head";
+  head.dataset.bundle = bundleId;
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "handle";
+  handle.title = "这一捆：启动 Agent / 拆开";
+  handle.textContent = "⠿";
+  const openMenu = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    bmShowBundleMenu(bundleId, groupKey, handle);
+  };
+  handle.addEventListener("click", openMenu);
+  head.addEventListener("contextmenu", openMenu);
+  head.appendChild(handle);
+  const name = document.createElement("span");
+  name.className = "bundle-name";
+  const first = members[0] ? members[0].text : "";
+  name.textContent = first.length > 16 ? `${first.slice(0, 16)}…` : first;
+  head.appendChild(name);
+  const busy = [...new Set(members.map((r) => r.claimedBy).filter(Boolean))];
+  if (busy.length) {
+    const claim = document.createElement("span");
+    claim.className = "claim";
+    claim.textContent = `🔄 ${busy.join("、")} 在干`;
+    head.appendChild(claim);
+  }
+  return head;
+}
+
+function bmShowBundleMenu(bundleId, groupKey, anchor) {
+  const menu = document.getElementById("ctx-menu");
+  menu.textContent = "";
+  for (const el of bmLaunchOptions(bundleId, groupKey)) menu.appendChild(el);
+  const sep = document.createElement("div");
+  sep.className = "ctx-sep";
+  menu.appendChild(sep);
+  const split = document.createElement("button");
+  split.type = "button";
+  split.className = "ctx-item";
+  split.textContent = "拆开这一捆";
+  split.addEventListener("click", async () => {
+    bmHideCtxMenu();
+    await window.bookmark.unbundle(bundleId);
+    await bmRefresh();
+  });
+  menu.appendChild(split);
+  menu.hidden = false;
+  const panelRect = document.getElementById("app").getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(rect.right - panelRect.left + 6, panelRect.width - 174))}px`;
+  menu.style.top = `${Math.max(6, Math.min(rect.top - panelRect.top, panelRect.height - 150))}px`;
+}
+
+/** 设置浮层加一行：要求模板（带编程.md 等）在哪改。 */
+function bmAddTemplatesSettingRow() {
+  const pop = document.getElementById("settings-popover");
+  if (!pop || pop.querySelector(".settings-templates")) return;
+  const row = document.createElement("div");
+  row.className = "settings-row settings-templates";
+  const label = document.createElement("span");
+  label.className = "settings-label";
+  label.textContent = "要求模板";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "settings-open-btn";
+  btn.textContent = "打开文件夹";
+  btn.title = "「启动 Agent · 带编程」用的是里面的 带编程.md，改这个文件就改了要求";
+  btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    window.bookmark.openTemplates().catch((error) => bmShowError(bmErrorText(error)));
+  });
+  row.appendChild(label);
+  row.appendChild(btn);
+  pop.appendChild(row);
 }
 
 function bmHideCtxMenu() {

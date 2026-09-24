@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import cli from "../dist/bookmark/cli-server.js";
 
 const appData = process.env.APPDATA || join(process.env.USERPROFILE ?? homedir(), "AppData", "Roaming");
@@ -62,6 +63,17 @@ try {
       body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null }),
       signal: AbortSignal.timeout(5_000),
     });
+  } else if (args.command === "next" || args.command === "done" || args.command === "release") {
+    // 领活三件套（设定15）：next 领下一条 / done 用户说可以才删 / release 放回去
+    const payload = args.command === "next"
+      ? { target: args.target, by: args.by, coding: args.coding }
+      : { id: args.target, by: args.by, ok: args.ok ?? "" };
+    res = await fetch(`${base}/${args.command}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    });
   } else if (args.command === "remove") {
     res = await fetch(`${base}/remove`, {
       method: "POST",
@@ -96,6 +108,14 @@ if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）；接手的 AI 接完活要用 remove 删掉它`);
 } else if (args.command === "remove") {
   console.log(args.json ? JSON.stringify(data) : "✅ 已删");
+} else if (args.command === "next") {
+  // 规矩原文在 cli-server 的 formatClaimMessage，所有 AI 看到同一份；命令里的脚本路径用正斜杠，哪种终端都能直接粘。
+  const self = fileURLToPath(import.meta.url).split(String.fromCharCode(92)).join("/");
+  console.log(args.json ? JSON.stringify(data) : cli.formatClaimMessage(data, { cli: self, target: args.target, by: args.by, coding: args.coding }));
+} else if (args.command === "done") {
+  console.log(args.json ? JSON.stringify(data) : "✅ 这条干完了，已从看板删掉。接着按上面第 4 步 next 领下一条。");
+} else if (args.command === "release") {
+  console.log(args.json ? JSON.stringify(data) : "↩️ 已放回去，别的窗口可以领了。");
 } else if (args.json) {
   console.log(JSON.stringify(data.items, null, 2));
 } else if (!data.items?.length) {
