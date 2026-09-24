@@ -242,13 +242,13 @@ function bmSwitchPage(page) {
   bmRenderCurrent();
 }
 
-const BM_LONG_MS = 320;
-const BM_DRAG_SLOP = 8;
+// 鼠标按下后挪过这么多像素就算拖（不用等）；没挪就松开才算单击。大厂拖拽库鼠标默认也是这套，按住等一会儿是给触屏的。
+const BM_DRAG_SLOP = 5;
 let bmDragActive = false; // 从按下到松手都算，期间 bmRefresh 只记账不重画
 let bmRefreshPending = false;
 
-/** 左键按住气泡约三分之一秒再拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
-function bmBindLongDrag(opts) {
+/** 左键按下直接挪就是拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
+function bmBindDrag(opts) {
   const handle = opts.handle;
   const row = opts.row;
   handle.addEventListener("pointerdown", (event) => {
@@ -258,7 +258,6 @@ function bmBindLongDrag(opts) {
     const startY = event.clientY;
     const pointerId = event.pointerId;
     let armed = false;
-    let timer = window.setTimeout(arm, BM_LONG_MS);
     let ghost = null;
     let scrollTimer = 0;
     let lastX = startX;
@@ -266,17 +265,12 @@ function bmBindLongDrag(opts) {
     let hit = null;
     bmDragActive = true;
 
-    function cancelTimer() {
-      if (timer) window.clearTimeout(timer);
-      timer = 0;
-    }
     function clearMarks() {
       document.querySelectorAll(".gap-above, .gap-below, .drag-target").forEach((el) => {
         el.classList.remove("gap-above", "gap-below", "drag-target");
       });
     }
     function finish(commit) {
-      cancelTimer();
       if (scrollTimer) window.clearInterval(scrollTimer);
       clearMarks();
       window.removeEventListener("pointermove", onMove);
@@ -295,8 +289,7 @@ function bmBindLongDrag(opts) {
       })();
     }
     function arm() {
-      timer = 0;
-      // 按下前一瞬的重画已经把这条换掉了：这次长按作废，别拿旧条目做影子。
+      // 按着的这条已经被重画换掉了：这次拖动作废，别拿旧条目做影子。
       if (!row.isConnected) {
         finish(false);
         return;
@@ -361,8 +354,9 @@ function bmBindLongDrag(opts) {
       lastX = event.clientX;
       lastY = event.clientY;
       if (!armed) {
-        if (Math.hypot(event.clientX - startX, event.clientY - startY) > BM_DRAG_SLOP) cancelTimer();
-        return;
+        if (Math.hypot(event.clientX - startX, event.clientY - startY) <= BM_DRAG_SLOP) return;
+        arm();
+        if (!armed) return;
       }
       event.preventDefault();
       paint(event.clientX, event.clientY);
@@ -464,7 +458,7 @@ function bmBuildGroup(key, displayName, records) {
     if (list.childElementCount) group.appendChild(list);
   }
   if (key !== BM_INBOX_KEY) {
-    bmBindLongDrag({
+    bmBindDrag({
       handle: head,
       row: group,
       list: () => document.getElementById("board"),
@@ -548,7 +542,8 @@ function bmBuildTask(record, groupKey, order) {
     const text = document.createElement("div");
     text.className = "task-text";
     text.textContent = record.text;
-    text.addEventListener("click", (event) => {
+    // 单击不打扰（拖动、看都不该弹出改字框），双击才改字。
+    text.addEventListener("dblclick", (event) => {
       event.stopPropagation();
       bmBeginEdit(record.id);
     });
@@ -583,7 +578,7 @@ function bmBuildTask(record, groupKey, order) {
     });
   }
   item.appendChild(body);
-  bmBindLongDrag({
+  bmBindDrag({
     handle: item,
     row: item,
     selfGroup: groupKey,
@@ -735,7 +730,7 @@ async function bmRenderProjects() {
   board.appendChild(list);
 }
 
-/** 单行：文件夹（单击进入+悬停自动弹目录预览）/ md（单击系统默认程序打开）。 */
+/** 单行：文件夹（双击进入+悬停自动弹目录预览）/ md（双击系统默认程序打开）；按下直接挪=拖动排序。 */
 function bmBuildProjectRow(entry) {
   const row = document.createElement("li");
   row.className = "proj-row" + (entry.isDir ? " is-dir" : " is-file");
@@ -762,14 +757,15 @@ function bmBuildProjectRow(entry) {
       if (hoverTimer) window.clearTimeout(hoverTimer);
       bmHideProjPop();
     });
-    row.addEventListener("click", () => {
+    // 跟 Windows 文件夹一样：单击不进，双击才进/才打开，拖的时候不会一不小心点进去。
+    row.addEventListener("dblclick", () => {
       bmProjectsCwd = entry.relPath;
       void bmRenderProjects();
     });
   } else {
-    row.addEventListener("click", () => { void window.bookmark.projectsOpen(entry.relPath); });
+    row.addEventListener("dblclick", () => { void window.bookmark.projectsOpen(entry.relPath); });
   }
-  bmBindLongDrag({
+  bmBindDrag({
     handle: row,
     row,
     list: () => row.parentElement,

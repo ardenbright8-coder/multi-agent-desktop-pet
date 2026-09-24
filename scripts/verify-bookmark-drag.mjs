@@ -1,4 +1,4 @@
-// 书签看板「长按拖动」残影回归验证（Playwright·零抢鼠标）。
+// 书签看板「拖动 / 单击 / 双击」回归验证（Playwright·零抢鼠标）：残影 ①～⑤，单击和拖动分开 ⑥～⑩。
 // 病根（2026-09-24 用户报：拖完屏幕上留下 ⠿01、⠿03 这种窄残影拿不掉）：
 //   按下去那一刻窗口拿到焦点 → 看板整张重画 → 手里按着的那条被换掉；
 //   0.3 秒后长按到点，拿已换掉的旧条目做影子（宽 0），松手事件又只挂在旧条目上收不到 → 影子永远留着。
@@ -126,6 +126,40 @@ try {
       `拖后=${after ? after.join("/") : "没等到 4 条"}`);
   }
 
+  // ⑥～⑨ 单击和拖动分开（2026-09-24 用户拍板）：按下直接挪就是拖，不用等；单击不进改字；双击才改字。
+  await repaint();
+  await sleep(300);
+  const editing = () => panel.locator("#board .task-edit").count();
+  {
+    const before = await order();
+    const moving = before[before.length - 1];
+    // 按在文字上拖——人最常下手的地方，也是最容易被当成「点一下改字」的地方。
+    const textBox = await panel.locator("#board .task .task-text").nth(before.length - 1).boundingBox();
+    const p = { x: textBox.x + Math.min(20, textBox.width / 2), y: textBox.y + textBox.height / 2 };
+    const target = await rowTop(0);
+    await panel.mouse.move(p.x, p.y);
+    await panel.mouse.down();
+    await panel.mouse.move(p.x, target.y, { steps: 8 }); // 不等，直接挪
+    await panel.mouse.up();
+    const after = await waitFor(async () => {
+      const now = await order();
+      return now[0] === moving ? now : null;
+    }, 3000);
+    check("⑥ 按下直接挪（不等）就能拖到最前", !!after, `拖前=${before.join("/")} 拖后=${(after || await order()).join("/")}`);
+    check("⑨ 拖完松手不会误进改字", (await editing()) === 0, `改字框=${await editing()}`);
+  }
+  {
+    const text = panel.locator("#board .task .task-text").first();
+    await text.click();
+    await sleep(400);
+    check("⑦ 单击文字不进改字", (await editing()) === 0, `改字框=${await editing()}`);
+    await panel.locator("#board .task .task-text").first().dblclick();
+    const opened = await waitFor(async () => (await editing()) === 1, 3000);
+    check("⑧ 双击文字进改字", !!opened, `改字框=${await editing()}`);
+    await panel.keyboard.press("Escape");
+    await sleep(300);
+  }
+
   // ④⑤ Agent 分组页：组里的条目、组标题同一套长按拖动，同样过一遍。
   await panel.evaluate(() => window.bookmark.add({ text: "Claude 组条目一", assignee: "Claude" }));
   await panel.evaluate(() => window.bookmark.add({ text: "Claude 组条目二", assignee: "Claude" }));
@@ -175,6 +209,21 @@ try {
     const final = after || await groupOrder();
     check("⑤ 分组页：拖组标题到一半重画，照样挪到最前", final[0] === moving,
       `拖前=${before.join("/")} 拖后=${final.join("/")}`);
+  }
+
+  // ⑩ 项目页跟 Windows 文件夹一样：单击不进，双击才进。
+  await panel.evaluate(() => window.bookmark.projectsMkdir("", "单双击测试夹"));
+  await panel.locator("#tab-projects").click();
+  const folderRow = () => panel.locator('#board .proj-row[data-rel="单双击测试夹"]');
+  await waitFor(async () => (await folderRow().count()) === 1);
+  {
+    await folderRow().click();
+    await sleep(500);
+    const stillTop = (await folderRow().count()) === 1;
+    check("⑩ 项目页单击文件夹不进去", stillTop, `还在上一层=${stillTop}`);
+    if (stillTop) await folderRow().dblclick();
+    const entered = await waitFor(async () => (await folderRow().count()) === 0, 3000);
+    check("⑩ 项目页双击文件夹进去", !!entered);
   }
 } catch (error) {
   failures.push(`脚本异常：${error?.message ?? error}`);
