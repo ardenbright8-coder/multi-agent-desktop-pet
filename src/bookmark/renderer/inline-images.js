@@ -183,7 +183,7 @@ function bmBindImageEditor(input) {
   }
   input.addEventListener("paste", onPaste);
   const tools = document.createElement("div"); tools.className = "bm-image-tools";
-  const choose = document.createElement("button"); choose.type = "button"; choose.textContent = "＋图片"; choose.title = "选图片，或直接 Ctrl+V 粘贴截图";
+  const choose = document.createElement("button"); choose.type = "button"; choose.innerHTML = bmIcon("image"); choose.setAttribute("aria-label", "贴图片"); choose.title = "选图片，或直接 Ctrl+V 粘贴截图";
   const picker = document.createElement("input"); picker.type = "file"; picker.accept = "image/png,image/jpeg,image/webp,image/gif,image/bmp"; picker.multiple = true; picker.hidden = true;
   let savedRange = null;
   choose.addEventListener("mousedown", (event) => { event.preventDefault(); savedRange = [input.selectionStart, input.selectionEnd]; });

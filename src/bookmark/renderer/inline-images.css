@@ -1,10 +1,13 @@
 /* 图文编辑与缩略图：沿用看板字号和颜色，图片不参与任务拖动。 */
-.bm-image-editor { width: 100%; min-width: 0; flex: 1; }
+.bm-image-editor { position: relative; width: 100%; min-width: 0; flex: 1; }
 .bm-image-editor textarea[hidden] { display: none; }
 .bm-rich-input { min-height: 28px; padding: 4px 6px; border: 1px dashed rgba(122,156,94,.45); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; outline-color: #7a9c5e; }
 .bm-rich-input:focus { background: rgba(255,255,255,.3); }
-.bm-image-tools { display:flex; justify-content:flex-end; margin-top:3px; }
-.bm-image-tools button { border:0; background:transparent; color:#4d6b3a; font:inherit; font-size:12px; cursor:pointer; }
+/* 贴图按钮：框里右上角一个淡淡的小图标，不另占一行（2026-09-24 用户：单独占一行太重） */
+.bm-image-tools { position:absolute; top:2px; right:3px; }
+.bm-image-tools button { display:flex; align-items:center; justify-content:center; width:19px; height:19px; padding:0; border:0; border-radius:5px; background:transparent; color:#4d6b3a; opacity:.4; cursor:pointer; }
+.bm-image-tools button:hover, .bm-image-tools button:focus-visible { opacity:1; background:rgba(122,156,94,.15); }
+.bm-image-editor > textarea:not([hidden]), .bm-image-editor > .bm-rich-input { padding-right:24px; }
 .task .task-text.bm-has-images { display:block; -webkit-line-clamp:unset; overflow:visible; }
 /* 小图跟一行字差不多高，像个图标嵌在字里（2026-09-24 用户：大了把排版搞乱）；点一下看大图 */
 .bm-inline-image { display:inline-flex; position:relative; vertical-align:-0.25em; margin:0 2px; max-width:100%; white-space:normal; }

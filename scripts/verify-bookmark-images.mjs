@@ -33,6 +33,15 @@ try {
   page.on("console",m=>console.log("CONSOLE",m.text()));
   const errors = []; page.on("pageerror", (e) => { errors.push(e.message); console.error("PAGE",e.message); });
   await page.locator("#tab-groups").click();
+  // 贴图按钮是框里右边一个小图标，不单独占一行（2026-09-24 用户：图片按钮单独占一行，太重，做个小图标往上放）
+  const tool = await page.evaluate(() => {
+    const row = document.querySelector('.group[data-group="Claude"] .blank-row');
+    const box = row.querySelector("textarea").getBoundingClientRect();
+    const btn = row.querySelector(".bm-image-tools button"); const b = btn.getBoundingClientRect();
+    return { text: btn.textContent.trim(), svg: !!btn.querySelector("svg"), label: btn.getAttribute("aria-label"), inside: b.top >= box.top - 1 && b.bottom <= box.bottom + 1 && b.right <= box.right + 1, rowH: row.getBoundingClientRect().height, boxH: box.height };
+  });
+  assert.ok(tool.svg && tool.text === "" && tool.label, `贴图按钮应是只有图标的小按钮：${JSON.stringify(tool)}`);
+  assert.ok(tool.inside && tool.rowH <= tool.boxH + 4, `贴图按钮应嵌在框里、不另占一行：${JSON.stringify(tool)}`);
   await page.locator('.group[data-group="Claude"] .blank-row textarea').click();
   await page.locator('.group[data-group="Claude"] .blank-row textarea').fill("按钮改这里，下面保留");
   await page.evaluate(() => {const t=document.querySelector('.group[data-group="Claude"] .blank-row textarea'); t.focus();t.setSelectionRange(6,6);});

@@ -35,6 +35,7 @@ function bmToast(msg, ms) {
 // 细线图标（2026-09-24 用户拍板：照 ChatGPT 那排按钮，细线、小、不带圈，比字符和 emoji 清爽）。
 const BM_ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 15.5l-4.5-4.5-8.5 8.5"/>',
   down: '<path d="M6 9l6 6 6-6"/>',
   right: '<path d="M9 6l6 6-6 6"/>',
   copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2.5 2.5 0 0 0-2.5-2.5H6.5A2.5 2.5 0 0 0 4 6.5V13a2.5 2.5 0 0 0 2.5 2.5h2"/>',
