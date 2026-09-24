@@ -215,7 +215,7 @@ try {
       `拖前=${before.join("/")} 拖后=${after.join("/")} 残影=${left.ghosts}`);
   }
 
-  // ⑪～⑮ 标题行清爽：没有条数、没有折叠钮，小加号紧跟组名，交接单专区跟别的组同一个底。
+  // ⑪～⑮ 标题行清爽：没有条数、没有折叠钮，交接单专区的小加号紧跟组名（agent 组 2026-09-24 起不放加号，第一格是空白框），专区跟别的组同一个底。
   {
     const heads = await panel.evaluate(() => ({
       counts: document.querySelectorAll("#board .group-count").length,
@@ -223,7 +223,7 @@ try {
     }));
     check("⑪ 组名后面没有条数、没有折叠钮（交接单专区也没有）", heads.counts === 0 && heads.folds === 0,
       `条数=${heads.counts} 折叠钮=${heads.folds}`);
-    const addPos = await panel.locator('#board .group[data-group="Claude"] .group-head').evaluate((head) => {
+    const addPos = await panel.locator('#board .group.handoff-zone .group-head').evaluate((head) => {
       const add = head.querySelector(".g-add");
       const name = head.querySelector(".group-name");
       if (!add || !name) return null;
@@ -232,12 +232,12 @@ try {
       const h = head.getBoundingClientRect();
       return { gap: Math.round(a.left - n.right), leftHalf: a.right < h.left + h.width / 2, size: Math.round(Math.max(a.width, a.height)) };
     });
-    check("⑫ 小加号紧跟在组名后面（左半边、不大于 20 像素）",
+    check("⑫ 交接单专区的小加号紧跟在组名后面（左半边、不大于 20 像素）",
       !!addPos && addPos.gap >= 0 && addPos.gap <= 16 && addPos.leftHalf && addPos.size <= 20, JSON.stringify(addPos));
-    await panel.locator('#board .group[data-group="Claude"] .g-add').click();
-    const inserting = await waitFor(async () =>
-      (await panel.locator('#board .group[data-group="Claude"] textarea').count()) === 1, 3000);
-    check("⑬ 点小加号就在这组新加一条", !!inserting);
+    await panel.locator('#board .group[data-group="Claude"] .blank-row textarea').click();
+    const inserting = await waitFor(async () => panel.evaluate(() =>
+      !!document.activeElement?.closest?.('#board .group[data-group="Claude"] .blank-row')), 3000);
+    check("⑬ 点 Claude 组第一格空白框就能直接写", !!inserting);
     await panel.keyboard.press("Escape");
     await sleep(300);
     const bg = await panel.evaluate(() => {

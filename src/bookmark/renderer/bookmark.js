@@ -186,8 +186,16 @@ async function bmRefresh() {
     }
     // 正在输入行 / 改字框里打字时重画：画完把光标放回去，不然框收不起来、字也接不上。
     const active = bmActiveImageInput();
+    // 每组都有空白框，输入框要按「哪个组、是不是空白框」找回来，不能拿第一个 .insert-row 凑数。
     const typing = active && active.matches && active.matches(".insert-row textarea, .task-edit")
-      ? { sel: active.matches(".task-edit") ? ".task-edit" : ".insert-row textarea", caret: active.selectionStart, end: active.selectionEnd, text: active.value }
+      ? {
+          edit: active.matches(".task-edit"),
+          group: active.closest(".group")?.dataset.group ?? null,
+          blank: Boolean(active.closest(".blank-row")),
+          caret: active.selectionStart,
+          end: active.selectionEnd,
+          text: active.value,
+        }
       : null;
     if (typing && bmEditingId) {
       const current = records.find((record) => record.id === bmEditingId);
@@ -200,7 +208,7 @@ async function bmRefresh() {
       bmRepainting = false;
     }
     if (typing) {
-      const input = document.querySelector(typing.sel);
+      const input = typing.edit ? document.querySelector(".task-edit") : bmFindInsertInput(typing.group, typing.blank);
       if (input && document.activeElement !== input) {
         input.focus();
         input.setSelectionRange(typing.caret, typing.end);
@@ -475,15 +483,8 @@ function bmBuildGroup(key, displayName, records) {
   name.textContent = displayName;
   head.appendChild(name);
 
-  // 组名后面不放条数、不放折叠钮（2026-09-24 用户：条数没用，组高度跟着内容自己撑开缩回）；小加号紧跟组名，点一下就新加一条。
-  const addBtn = document.createElement("button");
-  addBtn.type = "button";
-  addBtn.className = "g-add";
-  addBtn.title = key === BM_INBOX_KEY ? "记一条到待定区" : `给 ${displayName} 记一条`;
-  addBtn.innerHTML = bmIcon("plus");
-  addBtn.addEventListener("click", () => { void bmBeginInsert(key, null, "above"); });
-  head.appendChild(addBtn);
-
+  // 组名后面不放条数、不放折叠钮（2026-09-24 用户：条数没用，组高度跟着内容自己撑开缩回）；
+  // 也不放小加号：第一格永远是空白框，点进去就写（2026-09-24 用户：不用再按加号）。
   group.appendChild(head);
 
   if (bmOpenComposerGroup === key) group.appendChild(bmBuildComposer(key, displayName));
@@ -1115,21 +1116,24 @@ function bmDetectUrl(text) {
 function bmFillTaskList(list, records, groupKey) {
   const draft = bmInsertDraft && bmInsertDraft.groupKey === groupKey ? bmInsertDraft : null;
   const anchored = Boolean(draft && draft.anchorId && records.some((record) => record.id === draft.anchorId));
-  if (draft && !anchored) list.appendChild(bmBuildInsertRow());
+  if (draft && !anchored) draft.anchorId = null; // 锚点那条没了 → 当成写在最上面
+  // 第一格永远是空白框（交接单专区除外，它还是点小加号才冒输入行）；写在最上面的草稿就写在这个框里。
+  if (groupKey !== BM_HANDOFF_ZONE_KEY) list.appendChild(bmBuildInsertRow(groupKey, true));
+  else if (draft && !anchored) list.appendChild(bmBuildInsertRow(groupKey, false));
   records.forEach((record, index) => {
     const prevBundle = index > 0 ? records[index - 1].bundleId : null;
     const nextBundle = index < records.length - 1 ? records[index + 1].bundleId : null;
     if (record.bundleId && record.bundleId !== prevBundle) {
       list.appendChild(bmBuildBundleHead(record.bundleId, records.filter((r) => r.bundleId === record.bundleId), groupKey));
     }
-    if (draft && anchored && draft.anchorId === record.id && draft.place === "above") list.appendChild(bmBuildInsertRow());
+    if (draft && anchored && draft.anchorId === record.id && draft.place === "above") list.appendChild(bmBuildInsertRow(groupKey, false));
     const task = bmBuildTask(record, groupKey, index + 1);
     if (record.bundleId) {
       task.classList.add("in-bundle");
       if (record.bundleId !== nextBundle) task.classList.add("bundle-last");
     }
     list.appendChild(task);
-    if (draft && anchored && draft.anchorId === record.id && draft.place === "below") list.appendChild(bmBuildInsertRow());
+    if (draft && anchored && draft.anchorId === record.id && draft.place === "below") list.appendChild(bmBuildInsertRow(groupKey, false));
   });
 }
 
@@ -1151,37 +1155,50 @@ async function bmBeginInsert(groupKey, anchorId, place, kind) {
   bmEditingId = null;
   // 等框画出来再放光标：光标不在框里，点别处就没有「离开」这回事，框收不起来（2026-09-24 修）。
   await bmRefresh();
-  const input = document.querySelector(".insert-row textarea");
+  const input = bmFindInsertInput(groupKey, !bmInsertDraft || !bmInsertDraft.anchorId);
   if (!input) return;
   input.focus();
   bmFitTextarea(input);
 }
 
-function bmBuildInsertRow() {
+/** 某组里的输入框：blank＝第一格那个空白框（交接单专区没有空白框，就是它最上面冒出来的输入行），否则＝右键插进来的那行。 */
+function bmFindInsertInput(groupKey, blank) {
+  const group = [...document.querySelectorAll("#board .group")].find((el) => el.dataset.group === groupKey);
+  if (!group) return null;
+  return group.querySelector(blank ? ".insert-row textarea" : ".insert-row:not(.blank-row) textarea");
+}
+
+/**
+ * 输入行。blank＝每组第一格那个常驻空白框（2026-09-24 用户：不用再按加号）：点进去写，第一个字起开一份草稿、
+ * 边写边存；回车或点别处＝这条落到第二格，框清空（回车后光标留在框里接着写）。非 blank＝右键插进来 / 交接单专区的那行。
+ */
+function bmBuildInsertRow(groupKey, blank) {
   const item = document.createElement("li");
-  item.className = "task insert-row";
+  // 空白框不算条目（不带 task）：拖动、数条目、「第一条」都不许把它算进去。
+  item.className = blank ? "insert-row blank-row" : "task insert-row";
   const input = document.createElement("textarea");
   input.rows = 1;
-  input.placeholder = "写在这，写了就存";
-  input.value = bmInsertDraft ? bmInsertDraft.text : "";
+  input.placeholder = blank ? "写一条…" : "写在这，写了就存";
+  // 这个框是不是正在写的那份草稿：空白框只认写在最上面的草稿，右键那行认本组的草稿。
+  const mine = () => Boolean(bmInsertDraft && bmInsertDraft.groupKey === groupKey && (!blank || !bmInsertDraft.anchorId));
+  input.value = mine() ? bmInsertDraft.text : "";
   input.addEventListener("input", () => {
-    if (!bmInsertDraft) return;
+    if (!mine()) {
+      if (!blank) return;
+      bmInsertDraft = { groupKey, anchorId: null, place: "above", id: null, text: "", kind: "note" };
+    }
     bmInsertDraft.text = input.value;
     bmFitTextarea(input);
     if (input.isComposing) return;
     bmScheduleInsertSave(input);
   });
-  input.addEventListener("compositionend", () => bmScheduleInsertSave(input));
-  input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy) void bmInsertCommit({ close: true, input }); });
+  input.addEventListener("compositionend", () => { if (mine()) bmScheduleInsertSave(input); });
+  input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy && mine()) void bmInsertCommit({ close: true, input }); });
   input.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
-    if (event.key === "Enter" && !event.shiftKey) {
+    if ((event.key === "Enter" && !event.shiftKey) || event.key === "Escape") {
       event.preventDefault();
-      void bmInsertCommit({ close: true, input });
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      void bmInsertCommit({ close: true, input });
+      if (mine()) void bmInsertCommit({ close: true, input });
     }
   });
   item.appendChild(input);
@@ -1237,13 +1254,14 @@ async function bmInsertCommit(opts = {}) {
     return;
   }
   if (opts.close) {
-    bmInsertDraft = null;
+    // 等存档那会儿用户可能已经在别的框开了新草稿，别把人家的冲掉
+    if (bmInsertDraft === draft) bmInsertDraft = null;
     await bmRefresh();
     return;
   }
   await bmRefresh();
   if (!hadFocus) return;
-  const input = document.querySelector(".insert-row textarea");
+  const input = bmFindInsertInput(draft.groupKey, !draft.anchorId);
   if (!input) return;
   input.focus();
   const at = typeof caret === "number" ? caret : input.value.length;

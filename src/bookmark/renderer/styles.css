@@ -296,6 +296,11 @@ body {
   background: rgba(255, 252, 245, 0.9);
   padding: 2px 6px;
 }
+/* 每组第一格常驻空白框（2026-09-24）：平时淡淡的，点进去才亮；选择器多一层，压过末尾草木皮肤那句 .insert-row textarea */
+.blank-row { display: flex; margin-bottom: 2px; }
+.insert-row.blank-row textarea { border-color: rgba(47, 62, 44, 0.16); background: rgba(255, 255, 255, 0.3); }
+.insert-row.blank-row textarea::placeholder { color: rgba(47, 62, 44, 0.35); }
+.insert-row.blank-row textarea:focus { outline: none; border-color: rgba(122, 156, 94, 0.7); background: rgba(255, 252, 245, 0.9); }
 
 .task .task-url {
   display: block;

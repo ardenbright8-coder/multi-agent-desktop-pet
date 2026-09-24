@@ -165,8 +165,8 @@ try {
   await closeMenu();
   await panel.locator("#tab-groups").click();
 
-  // ⑥ 组头细线图标
-  const head = await panel.locator('#board .group[data-group="Claude"] .group-head').evaluate((el) => {
+  // ⑥ 组头细线图标（2026-09-24 起 agent 组不放小加号，只剩交接单专区那个）
+  const head = await panel.locator('#board .group.handoff-zone .group-head').evaluate((el) => {
     const add = el.querySelector(".g-add");
     return { svg: !!add?.querySelector("svg"), text: add?.textContent ?? "", size: add?.getBoundingClientRect().width ?? 99 };
   });

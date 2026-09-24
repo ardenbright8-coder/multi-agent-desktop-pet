@@ -79,10 +79,9 @@ try {
   const badge0 = await panel.evaluate(() => document.getElementById("tab-inbox-count")?.textContent ?? null);
   check("② 空库时待定角标 = 0", badge0 === "0", `实际=${badge0}`);
 
-  // ③ 记一条：点待定组的 ＋ → 输入 → Enter。
-  await panel.locator('#board .group[data-group="__inbox__"] .g-add').click();
-  await panel.locator("#bm-inbox-input").fill("后台驱动验证·第一条");
-  await panel.locator("#bm-inbox-input").press("Enter");
+  // ③ 记一条：待定组第一格空白框里输入 → Enter（2026-09-24 起不用先点 ＋）。
+  await panel.locator('#board .group[data-group="__inbox__"] .blank-row textarea').fill("后台驱动验证·第一条");
+  await panel.locator('#board .group[data-group="__inbox__"] .blank-row textarea').press("Enter");
   const badge1 = await waitForValue(
     async () => panel.evaluate(() => document.getElementById("tab-inbox-count")?.textContent),
     "1",
@@ -90,9 +89,8 @@ try {
   check("② 记一条后角标 = 1", badge1 === "1", `实际=${badge1}`);
 
   // 再记一条 → 角标 2。
-  await panel.locator('#board .group[data-group="__inbox__"] .g-add').click();
-  await panel.locator("#bm-inbox-input").fill("后台驱动验证·第二条");
-  await panel.locator("#bm-inbox-input").press("Enter");
+  await panel.locator('#board .group[data-group="__inbox__"] .blank-row textarea').fill("后台驱动验证·第二条");
+  await panel.locator('#board .group[data-group="__inbox__"] .blank-row textarea').press("Enter");
   const badge2 = await waitForValue(
     async () => panel.evaluate(() => document.getElementById("tab-inbox-count")?.textContent),
     "2",
