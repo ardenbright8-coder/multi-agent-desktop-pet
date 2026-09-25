@@ -10,7 +10,7 @@ Windows 桌面程序（Electron）：
 ```
 npm install
 npm run build
-npm start
+npm run dev
 ```
 
 MIT 许可。
