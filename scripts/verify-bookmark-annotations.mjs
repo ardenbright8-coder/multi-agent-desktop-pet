@@ -1,7 +1,8 @@
-// 隔离 Electron 看板：在隐藏窗口里验证标注、存档和交给 AI 的图片路径。
+// 隔离 Electron 看板：隐藏窗口里验证图片标注（设定16第三版）——打开大图就能标、编号 / 框 / 箭头一套流水号、
+// 说明写在图下面、自动存（不烧原图，另存带编号的图）、撤销、拖动编号、删光回原样、改字框里也能标、交给 AI 带编号清单。
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 const require = createRequire(import.meta.url);
 const { _electron } = require("E:/个人AI资源管理/60_公用资源（钩子·skill·搜索引擎·可后期扩展）/后台驱动测试（Playwright·零抢鼠标·测Electron应用）/包（npm下载·playwright完整包）/node_modules/playwright");
@@ -9,6 +10,21 @@ const root = resolve(import.meta.dirname, "..");
 const runs = join(root, ".runtime", "annotation-tests");
 mkdirSync(runs, { recursive: true });
 const home = mkdtempSync(join(runs, "run-"));
+const attachments = join(home, "bookmark", "attachments");
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+async function until(check, what) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const value = await check();
+    if (value) return value;
+    await sleep(100);
+  }
+  throw new Error(`等不到：${what}`);
+}
+const marksOnDisk = (name) => {
+  const path = join(attachments, `${name}.marks.json`);
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).marks : null;
+};
+
 let app;
 try {
   app = await _electron.launch({
@@ -20,7 +36,24 @@ try {
   await page.waitForLoadState("domcontentloaded");
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  const original = await page.evaluate(async () => {
+  // 在大图的标注层上按下 / 挪 / 松手；坐标是占图片宽高的比例。
+  await page.evaluate(() => {
+    window.bmTestDrag = (from, to) => {
+      const layer = document.querySelector("dialog[open] .bm-mark-layer");
+      layer.setPointerCapture = () => {};
+      const rect = document.querySelector("dialog[open] .bm-mark-stage img").getBoundingClientRect();
+      const fire = (type, [x, y]) => layer.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, button: 0, clientX: rect.left + x * rect.width, clientY: rect.top + y * rect.height }));
+      fire("pointerdown", from); fire("pointermove", to); fire("pointerup", to);
+    };
+    window.bmTestTool = (label) => [...document.querySelectorAll("dialog[open] .bm-mark-tools [data-tool]")].find((b) => b.textContent.includes(label)).click();
+  });
+  const openViewer = async (selector) => {
+    await page.evaluate((selector) => document.querySelector(selector).click(), selector);
+    await page.waitForFunction(() => document.querySelector("dialog[open] .bm-mark-stage img")?.naturalWidth === 200 && document.querySelector("dialog[open] .bm-mark-layer")?.width > 0);
+    await page.waitForFunction(() => !!document.querySelector("dialog[open] .bm-mark-notes li"));
+  };
+
+  const name = await page.evaluate(async () => {
     const image = document.createElement("canvas"); image.width = 200; image.height = 120;
     const context = image.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, 200, 120);
     const blob = await new Promise((resolve) => image.toBlob(resolve, "image/png"));
@@ -28,100 +61,77 @@ try {
     await window.bookmark.add({ text: `请看这里 [图片:${name}] 再处理`, assignee: "Claude" });
     document.getElementById("tab-groups").click();
     await bmRefresh();
-    document.querySelector('.group[data-group="Claude"] .task-text .bm-inline-image button').click();
     return name;
   });
-  await page.waitForFunction(() => document.querySelector("dialog[open] img")?.naturalWidth === 200);
-  await page.evaluate(() => {
-    document.querySelector(".bm-image-annotate").click();
-    const canvas = document.querySelector(".bm-annotation-canvas");
-    canvas.setPointerCapture = () => {};
-    const rect = canvas.getBoundingClientRect();
-    const event = (type, x, y) => canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: rect.left + x * rect.width, clientY: rect.top + y * rect.height }));
-    event("pointerdown", .2, .2); event("pointermove", .8, .7); event("pointerup", .8, .7);
-    document.querySelector('.bm-annotation-tools button:last-child').click();
-  });
-  let changed = false;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    changed = await page.evaluate(async (original) => (await window.bookmark.list())[0]?.attachments[0] !== original, original);
-    if (changed) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.ok(changed, JSON.stringify(await page.evaluate(() => ({error: document.querySelector("#board-error")?.textContent, dialog: !!document.querySelector("dialog[open]"), busy: bmImagesBusy}))));
-  const result = await page.evaluate(async () => {
+  const original = readFileSync(join(attachments, name));
+
+  // ① 打开大图就能标：没有「标注图片」「保存」按钮，工具只有编号 / 框 / 箭头 + 撤销
+  await openViewer('.group[data-group="Claude"] .task-text .bm-inline-image button');
+  const ui = await page.evaluate(() => ({
+    tools: [...document.querySelectorAll("dialog[open] .bm-mark-tools [data-tool]")].map((b) => b.textContent),
+    buttons: [...document.querySelectorAll("dialog[open] button")].map((b) => b.textContent),
+    empty: document.querySelector("dialog[open] .bm-mark-empty")?.textContent,
+  }));
+  assert.deepEqual(ui.tools, ["●编号", "▢框", "↗箭头"], JSON.stringify(ui));
+  assert.ok(!ui.buttons.some((text) => /标注图片|保存/.test(text)), JSON.stringify(ui));
+  assert.ok(ui.empty, "没标之前下面有一句怎么用");
+
+  // ② 点一下落编号、光标跳到①的说明；框和箭头接着排 ②③
+  await page.evaluate(() => window.bmTestDrag([0.2, 0.3], [0.2, 0.3]));
+  await page.waitForFunction(() => document.activeElement?.closest?.(".bm-mark-notes li")?.dataset.index === "0");
+  await page.evaluate(() => { const input = document.activeElement; input.value = "这个按钮改成绿色"; input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await page.evaluate(() => { window.bmTestTool("框"); window.bmTestDrag([0.5, 0.2], [0.8, 0.6]); });
+  await page.evaluate(() => { window.bmTestTool("箭头"); window.bmTestDrag([0.1, 0.8], [0.6, 0.8]); });
+  const numbers = await page.evaluate(() => [...document.querySelectorAll("dialog[open] .bm-mark-num")].map((n) => n.textContent));
+  assert.deepEqual(numbers, ["①", "②", "③"]);
+  const saved = await until(() => marksOnDisk(name)?.length === 3 && marksOnDisk(name), "三个标注自动存盘");
+  assert.deepEqual(saved.map((m) => m.kind), ["pin", "box", "arrow"]);
+  assert.equal(saved[0].note, "这个按钮改成绿色");
+  await until(() => existsSync(join(attachments, `${name}.marked.png`)), "带编号的图");
+  assert.deepEqual(readFileSync(join(attachments, name)), original, "原图一个字节都不许动");
+
+  // ③ 撤销去掉最后一个
+  await page.evaluate(() => document.querySelector("dialog[open] .bm-mark-undo").click());
+  await until(() => marksOnDisk(name)?.length === 2, "撤销后剩两个");
+
+  // ④ 关掉再交给 AI：带编号的图＋原图＋清单，正文里的图片标记不换
+  await page.evaluate(() => document.querySelector("dialog[open] .bm-image-close").click());
+  await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+  const handed = await page.evaluate(async () => {
     const record = (await window.bookmark.list())[0];
-    return { record, prompt: await window.bookmark.copyForAgent(record.id, null) };
+    return { text: record.text, prompt: await window.bookmark.copyForAgent(record.id, null) };
   });
-  assert.equal(result.record.attachments.length, 1);
-  const current = result.record.attachments[0];
-  assert.notEqual(current, original);
-  assert.ok(result.record.text.includes(`[图片:${current}]`));
-  assert.ok(result.prompt.includes(current) && !result.prompt.includes(original));
-  assert.notDeepEqual(readFileSync(join(home, "bookmark", "attachments", current)), readFileSync(join(home, "bookmark", "attachments", original)));
+  assert.ok(handed.text.includes(`[图片:${name}]`), "正文图片标记不换");
+  assert.ok(handed.prompt.includes(`${name}.marked.png`) && handed.prompt.includes(`原图：`), handed.prompt);
+  assert.ok(handed.prompt.includes("① 点，在（从左 20%、从上 30%）：这个按钮改成绿色"), handed.prompt);
+  assert.ok(handed.prompt.includes("② 框") && !handed.prompt.includes("③"), handed.prompt);
+
+  // ⑤ 重开还在；按住编号拖走；删光回原样
+  await openViewer('.group[data-group="Claude"] .task-text .bm-inline-image button');
+  const reopened = await page.evaluate(() => [...document.querySelectorAll("dialog[open] .bm-mark-notes input")].map((i) => i.value));
+  assert.deepEqual(reopened, ["这个按钮改成绿色", ""]);
+  await page.evaluate(() => window.bmTestDrag([0.2, 0.3], [0.35, 0.45]));
+  await until(() => Math.abs((marksOnDisk(name)?.[0]?.x ?? 0) - 0.35) < 0.01, "拖动编号后位置存上");
+  await page.evaluate(() => { document.querySelector("dialog[open] .bm-mark-del").click(); });
+  await page.evaluate(() => { document.querySelector("dialog[open] .bm-mark-del").click(); });
+  await until(() => !existsSync(join(attachments, `${name}.marks.json`)) && !existsSync(join(attachments, `${name}.marked.png`)), "删光后两个附属文件都清掉");
+  await page.keyboard.press("Escape");
   await page.waitForFunction(() => !document.querySelector("dialog[open]"));
-  await page.evaluate(() => {
-    document.querySelector(".task-text").click();
-  });
-  await page.waitForSelector(".task-edit.bm-rich-input, .task-edit + .bm-rich-input, .bm-rich-input", { state: "attached" });
-  await page.evaluate(() => {
-    document.querySelector(".bm-rich-input .bm-inline-image button").click();
-  });
-  await page.waitForFunction(() => document.querySelector("dialog[open] img")?.naturalWidth === 200);
-  await page.evaluate(() => {
-    document.querySelector("dialog[open] .bm-image-annotate").click();
-    const buttons = [...document.querySelectorAll('dialog[open] .bm-annotation-tools button')];
-    buttons.find((button) => button.textContent === "文字").click();
-    document.querySelector('dialog[open] .bm-annotation-tools input').value = "这里";
-    const canvas = document.querySelector("dialog[open] .bm-annotation-canvas");
-    const rect = canvas.getBoundingClientRect();
-    canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
-    buttons.find((button) => button.textContent === "保存标注").click();
-  });
-  let edited = false;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    edited = await page.evaluate((current) => !document.querySelector(".task-edit")?.value.includes(current), current);
-    if (edited) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.ok(edited, `改字框里的图片标记也应替换：${JSON.stringify(await page.evaluate(() => ({value: document.querySelector('.task-edit')?.value, busy: bmImagesBusy, editing: bmEditingId, error: document.querySelector('#board-error')?.textContent, dialog: document.querySelector('dialog[open]')?.innerText, buttons: [...document.querySelectorAll('dialog[open] button')].map((b) => [b.textContent,b.disabled])})))}`);
-  let persisted = false;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    persisted = await page.evaluate(async (current) => (await window.bookmark.list())[0]?.attachments[0] !== current, current);
-    if (persisted) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.ok(persisted, `改字框标注应自动存档：${JSON.stringify(await page.evaluate(async () => ({record: (await window.bookmark.list())[0], value: document.querySelector('.task-edit')?.value, busy: bmImagesBusy, editing: bmEditingId, error: document.querySelector('#board-error')?.textContent})))}`);
-  await page.waitForFunction(() => !document.querySelector("dialog[open]"));
-  await page.evaluate(() => {
-    const input = document.querySelector('.group[data-group="ChatGPT"] .blank-row textarea');
-    input.focus();
-    const image = document.createElement("canvas"); image.width = 200; image.height = 120;
-    const data = new DataTransfer();
-    const bytes = Uint8Array.from(atob(image.toDataURL("image/png").split(",")[1]), (char) => char.charCodeAt(0));
-    data.items.add(new File([bytes], "新图.png", { type: "image/png" }));
-    input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
-  });
-  await page.waitForSelector('.group[data-group="ChatGPT"] .blank-row .bm-rich-input .bm-inline-image', { state: "attached" });
-  await page.evaluate(() => document.querySelector('.group[data-group="ChatGPT"] .blank-row .bm-inline-image button').click());
-  await page.waitForFunction(() => document.querySelector("dialog[open] img")?.naturalWidth === 200);
-  await page.evaluate(() => {
-    document.querySelector("dialog[open] .bm-image-annotate").click();
-    const canvas = document.querySelector("dialog[open] .bm-annotation-canvas"); canvas.setPointerCapture = () => {};
-    const rect = canvas.getBoundingClientRect();
-    const event = (type, x, y) => canvas.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX: rect.left + x * rect.width, clientY: rect.top + y * rect.height }));
-    event("pointerdown", .1, .1); event("pointermove", .7, .6); event("pointerup", .7, .6);
-    document.querySelector('dialog[open] .bm-annotation-tools button:last-child').click();
-  });
-  let inserted = false;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    inserted = await page.evaluate(async () => (await window.bookmark.list()).some((record) => record.assignee === "ChatGPT" && record.attachments.length === 1));
-    if (inserted) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.ok(inserted, "第一格新贴的图片标注后应自动存档");
+  const plain = await page.evaluate(async () => window.bookmark.copyForAgent((await window.bookmark.list())[0].id, null));
+  assert.ok(!plain.includes("标了") && !plain.includes(".marked.png"), plain);
+
+  // ⑥ 改字框里点小图也能标，关掉以后改字框还在
+  await page.evaluate(() => document.querySelector(".task-text").click());
+  await page.waitForSelector(".bm-rich-input .bm-inline-image", { state: "attached" });
+  await openViewer(".bm-rich-input .bm-inline-image button");
+  await page.evaluate(() => window.bmTestDrag([0.5, 0.5], [0.5, 0.5]));
+  await page.evaluate(() => document.querySelector("dialog[open] .bm-image-close").click());
+  await until(() => marksOnDisk(name)?.length === 1, "改字框里标的也存上（关窗马上存）");
+  assert.ok(await page.evaluate(() => !!document.querySelector(".bm-rich-input")?.isConnected), "关掉大图后改字框还在");
+
   assert.deepEqual(errors, []);
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((window) => window.isVisible())), false);
-  console.log("PASS 图片箭头和文字标注、生成新图、条目及编辑框替换、第一格贴图自动存档、AI 读取新图；测试窗口始终隐藏");
+  console.log("PASS 打开就能标、编号框箭头一套流水号、说明写在下面、自动存不动原图、撤销、拖动编号、删光回原样、改字框里能标、交给 AI 带编号清单；测试窗口始终隐藏");
 } finally {
   await app?.close();
 }

@@ -5,6 +5,10 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("bookmark", {
   saveImage: (bytes: Uint8Array) => ipcRenderer.invoke("bookmark:image:save", bytes) as Promise<string>,
   readImage: (name: string) => ipcRenderer.invoke("bookmark:image:read", name) as Promise<string>,
+  // 图片标注（设定16第三版）：标注单独存，marked 是带编号的那张（给 AI 看）。
+  getImageMarks: (name: string) => ipcRenderer.invoke("bookmark:image:marks:get", name),
+  setImageMarks: (name: string, marks: unknown, marked: Uint8Array | null) =>
+    ipcRenderer.invoke("bookmark:image:marks:set", { name, marks, marked }),
   list: () => ipcRenderer.invoke("bookmark:list"),
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   insertBeside: (input: unknown) => ipcRenderer.invoke("bookmark:insert-beside", input),

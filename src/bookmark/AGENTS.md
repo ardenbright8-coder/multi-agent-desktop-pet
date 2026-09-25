@@ -19,8 +19,8 @@
 | `inbox.ts` | 收信+回执接线（2026-09-10 接通）：连邮局收手机消息→入 store→发「已收录」回执→通知面板刷新；断线指数退避重连+lastId 续读补收；配置读 `<appDataRoot>\bookmark\ntfy.json`（缺文件/坏档不启动不炸）；逻辑移植自通道夹 receiver.js，一切异常内部消化 |
 | `dock.ts` | 纯函数：贴右缘几何（宽=工作区1/3顶到底）+ Win32 沉底常量；零依赖好单测 |
 | `templates.ts` | 要求模板（设定12/15）：列模板夹 `<appDataRoot>\bookmark\要求模板\` 里的 md、拼复制文字（模板＋「## 这次的事」＋这条）；「启动 Agent · 带编程」用其中的 `带编程.md`；纯函数＋只读 |
-| `inline-images.ts` / `image-ipc.ts` | 条目贴图（2026-09-24 设定16）：正文里存图片标记 `[图片:image-….png]`，真图存 `attachments\`；`image-ipc` 只收图片字节、解码后存 PNG、读图只认本夹文件名；交给 AI 时 `imagesForAgent` 把标记换成「图片文件：完整路径」 |
-| `renderer\inline-images.js/.css` | 贴图编辑框：Ctrl+V 或框里右上角的小图片图标（不另占一行，设定16）贴进光标处，有图时换成可编辑的图文框、显示缩略图，点缩略图看大图并可画箭头、圈框、文字；标注存为新图并替换正文标记；贴图或标注途中 `bmImagesBusy` 压住重画和失焦提交 |
+| `inline-images.ts` / `image-ipc.ts` | 条目贴图（2026-09-24 设定16）：正文里存图片标记 `[图片:image-….png]`，真图存 `attachments\`；`image-ipc` 只收图片字节、解码后存 PNG、读图只认本夹文件名；交给 AI 时 `imagesForAgent` 把标记换成「图片文件：完整路径」；图片标注（设定16第三版）不烧原图，单独存 `<图>.marks.json` ＋ 带编号的 `<图>.marked.png`（`bookmark:image:marks:get/set`），交给 AI 时附编号清单（`describeMarks`） |
+| `renderer\inline-images.js/.css` | 贴图编辑框：Ctrl+V 或框里右上角的小图片图标（不另占一行，设定16）贴进光标处，有图时换成可编辑的图文框、显示缩略图，点缩略图看大图、打开就能标（`bmBindMarks`：编号 / 框 / 箭头一套流水号，说明写在图下一个编号一行，自动存、没有保存钮，按住编号拖、Delete / Ctrl+Z）；贴图或开大图途中 `bmImagesBusy` 压住重画和失焦提交 |
 | `launch.ts` | 启动 Agent 开窗贴字（设定15第四版）：`agentShortcutFor` 组名→桌面快捷方式（Claude→`Claude Code 一`、ChatGPT→`Codex`、Pi Agent→`Pi 编程智能体`、Antigravity→`Antigravity 反重力CLI`（`settleMs` 12 秒：开窗先登录）、Hermes→`Hermes`），桌面程序另带程序文件名 `app`（🚨 Codex 桌面版叫 `chatgpt.exe`，不是 codex.exe）；命令窗口走 `pasteIntoNewWindow` 认新窗口→等启动好→还在最前面才按一次 Ctrl+V，只往开窗前没有的窗口里贴；桌面程序走 `pasteIntoAppWindow` 按程序名认→连续在前面 5 秒→Ctrl+N 新开对话→Ctrl+V（Windows 能力由 panel-window `loadLaunchWin32` 传进来）。🚨 **只按 Ctrl+V / Ctrl+N，绝不按回车**；启动句在 Ctrl+N 时就进剪贴板（紧跟着写再贴会被剪贴板工具占住、贴空）。自测和验证脚本（带隔离数据夹 `AGENT_PET_HUB_HOME`）只报会怎么做、不真开，🚨 别改回只看「常驻」——验证脚本也常驻，2026-09-24 就这样误开了 11 个真 Claude 窗口；`BOOKMARK_AGENT_SHORTCUT_DIR` 指向假快捷方式夹时才真开（真机验证用） |
 | `board-sync.ts` | 手机同步看板（设定19）：`buildBoardSnapshot` 抄整板（不带本机图片路径）、`startBoardPublisher` 每 5 秒看变没变、变了发中转站 `bookmark-board`（每 6 小时补发）；`parsePhoneOp` / `applyPhoneOp` 照做手机发来的挪组 / 删条命令（只认 assign / delete）。发不出去只记日志不连坐 |
 | `sleep-mode.ts` | 两档（设定18）：`parseBoardMode` 读 `mode.json`（只认 sleep，别的都日常档）、`planNudges` 睡觉档到点给哪几组开窗（有活没人干、同一回只开一次）；纯函数，定时器和开窗在 panel-window `runSleepCheck` |
@@ -82,7 +82,7 @@ BookmarkStore（testkit 单测用）
 4. `node scripts/verify-bookmark-handoff.mjs` 过（交接单专区后台驱动验证：落位/📋标记/详情展开/拖拽派活/收回/自删）
 5. `node scripts/verify-bookmark-copy.mjs` 过（行尾复制、六个点启动 Agent（含提示开了哪个快捷方式、测试实例不许真开 Claude 窗口）、右键精简、组头图标、官方标志、捆一捆、真敲命令领活/done/放回去；会动系统剪贴板，脚本自己存了还原）
 6. `node scripts/verify-bookmark-images.mjs` 过（贴多图、光标位置、图文编辑、大图、交给 AI、重载改派、移除图、非图片和越界路径拒绝；隐藏窗口跑，不动系统剪贴板）。🚨 样图必须是校验和都对的真 PNG，Electron 解码器很严
-   图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（已存条目、改字框、第一格贴图标注并自动存档、AI 读取新图；隐藏窗口）。
+   图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（打开就能标、一套流水号、自动存不动原图、撤销、拖动编号、删光清附属文件、改字框里能标、交给 AI 带编号清单；隐藏窗口）。
 7. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点；组框拖不动、标题行无条数无折叠、小加号贴组名、交接单专区同底）
 8. `node scripts/verify-bookmark-launch-paste.mjs` 过（🚨 真机真窗口：假快捷方式指向假 AI 程序 `scripts/bookmark-fake-agent.ps1`，外加 powershell 复制改名 `ChatGPT.exe` 冒充 Codex 跑 `scripts/bookmark-fake-desktop-agent.ps1`；真开窗、真按 Ctrl+N / Ctrl+V；验收到的字＝启动句、没有回车。跑的半分钟别碰键盘鼠标，抢了最前面看板按规矩不贴，这关就红）。只动了启动 Agent 才必跑
 9. `node scripts/verify-bookmark-insert.mjs` 过（每组第一格空白框、没有加号；点进去光标在框里；写了点别处 / 回车落到第二格、框清空，回车后能接着写；打字中途重画不丢；写进哪组落哪组；交接单专区小加号）
