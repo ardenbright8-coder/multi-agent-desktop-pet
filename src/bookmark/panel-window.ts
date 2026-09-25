@@ -20,7 +20,8 @@ import { bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
 import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_ZORDER_FLAGS, pinToggleSteps } from "./dock";
 import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
-import { ensureBookmarkInboxStarted, stopBookmarkInbox } from "./inbox";
+import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "./inbox";
+import { buildBoardSnapshot, startBoardPublisher } from "./board-sync";
 import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
@@ -302,6 +303,17 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
     // 收信模块：坏了只记日志不连坐（隔离铁律）；连不上邮局会自己指数退避重连。
     try {
       ensureBookmarkInboxStarted({ store: requireStore(), onInboxChanged: notifyInboxChanged });
+      // 手机同步（设定19）：整板变了就抄一份发到中转站，手机打开就拉最新一份。发不出去只记日志。
+      const config = readInboxConfig();
+      if (config) {
+        startBoardPublisher({
+          server: config.server,
+          user: config.user,
+          pass: config.pass,
+          topic: config.boardTopic,
+          snapshot: () => buildBoardSnapshot(requireStore().list(), requireRoster().list(), readBoardMode(), Date.now()),
+        });
+      }
     } catch (error) {
       log.出事("收信模块启动失败（看板仍可用，只是收不到手机消息）", error, "inbox");
     }

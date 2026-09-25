@@ -9,6 +9,7 @@
 // 兼容一层：手机端 publish 把 ntfy 发布 JSON（topic/title/message）整包 POST 到 /{topic} 时，
 // 邮局把整包当 message 存。外层没有 dedupeKey，内层 message 才是业务 JSON；回执也必须用内层。
 // type=cmd 只入库绝不执行（手机端约定）；回执 = 原业务 JSON 原样回发到 receipt 主题，手机端按 dedupeKey 对账。
+// type=op（设定19）＝手机上挪组 / 删条的命令：照做（board-sync 的 parsePhoneOp / applyPhoneOp），不入库，回执照发。
 
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
@@ -17,6 +18,7 @@ import { StringDecoder } from "node:string_decoder";
 import { createLogger } from "../shared/log";
 import { bookmarkNtfyConfigPath } from "../shared/paths";
 import type { BookmarkStore } from "./store";
+import { applyPhoneOp, parsePhoneOp } from "./board-sync";
 
 const log = createLogger("bookmark");
 
@@ -36,6 +38,8 @@ export interface NtfyInboxConfig {
   pass: string;
   /** 首次连接补收起点（时长如 168h 或某消息 id）；缺省 168h。 */
   since?: string;
+  /** 整板发给手机的主题（电脑只写、手机只读，设定19）；缺省 bookmark-board。 */
+  boardTopic: string;
 }
 
 /** 从 <appDataRoot>\bookmark\ntfy.json 读邮局配置。缺文件/坏档/缺必填字段一律返回 null（记日志，不启动收信，不炸）。 */
@@ -60,7 +64,8 @@ export function readInboxConfig(path?: string): NtfyInboxConfig | null {
       log.出事(`收信配置缺必填字段（server/upTopic/receiptTopic/user/pass），收信模块不启动`, undefined, "inbox");
       return null;
     }
-    return { server, upTopic, receiptTopic, user, pass, since };
+    const boardTopic = typeof raw.boardTopic === "string" && raw.boardTopic.trim() ? raw.boardTopic.trim() : "bookmark-board";
+    return { server, upTopic, receiptTopic, user, pass, since, boardTopic };
   } catch (error) {
     log.出事("收信配置解析失败，收信模块不启动", error, "inbox");
     return null;
@@ -185,6 +190,18 @@ function subscribe(config: NtfyInboxConfig, options: BookmarkInboxOptions): Book
       return;
     }
     const payload = decoded.payload;
+    // 手机命令（设定19）：挪组 / 删条照做，不入库；回执照发，手机靠回执知道命令到了。
+    const op = parsePhoneOp(payload.raw);
+    if (op) {
+      sink(`手机命令：${applyPhoneOp(options.store, op)}`);
+      try {
+        options.onInboxChanged?.();
+      } catch {
+        /* 通知刷新失败无所谓 */
+      }
+      void sendReceipt(config, decoded.receiptMessage, sink);
+      return;
+    }
     // 入库（dedupeKey 去重是手机端离线重发的防重复闸；重复投递 add 幂等返回旧记录）。
     // type=cmd 也只入库绝不执行（手机端约定）。
     options.store.add({
@@ -225,6 +242,8 @@ interface BusinessPayload {
   content: string;
   assignee: string;
   dedupeKey: string;
+  /** 原始字段（type=op 的命令要读 op / id / assignee）。 */
+  raw: Record<string, unknown>;
 }
 
 interface DecodedPayload {
@@ -264,6 +283,7 @@ function decodeBusiness(raw: string): BusinessPayload | null {
       content: typeof map.content === "string" ? map.content : "",
       assignee: typeof map.assignee === "string" ? map.assignee : "",
       dedupeKey,
+      raw: map,
     };
   } catch {
     return null;

@@ -235,3 +235,40 @@ test("inbox 配置读取：好配置过、尾斜杠剥掉", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 设定19：手机发来的挪组 / 删条命令（type=op）→ 照做、不新加条目、回执照发（手机靠回执知道命令到了）。
+test("inbox 手机命令 type=op：挪组、删条照做，不新加条目，回执照发", async () => {
+  const root = tempRoot();
+  const store = new BookmarkStore(join(root, "bookmarks.json"));
+  const keep = store.add({ text: "要挪的", assignee: "Claude" });
+  const gone = store.add({ text: "要删的", assignee: "Claude" });
+  const assign = JSON.stringify({ v: 1, type: "op", op: "assign", id: keep.id, assignee: "Hermes", ts: 1, dedupeKey: "op-1" });
+  const del = JSON.stringify({ v: 1, type: "op", op: "delete", id: gone.id, ts: 2, dedupeKey: "op-2" });
+  const mock = await startMockNtfy("bookmark-up", [
+    JSON.stringify({ id: "m-1", event: "message", message: assign }),
+    JSON.stringify({ id: "m-2", event: "message", message: del }),
+  ]);
+  const configPath = writeConfig(root, { server: mock.url });
+  try {
+    const handle = startBookmarkInbox({ store, configPath, reconnectBaseMs: 10 });
+    await waitFor(() => mock.receipts.length >= 2);
+    assert.equal(store.count(), 1, "删掉一条、没多出新条目");
+    assert.equal(store.list()[0].id, keep.id);
+    assert.equal(store.list()[0].assignee, "Hermes");
+    assert.deepEqual(mock.receipts.map((r) => r.message), [assign, del]);
+    handle.stop();
+  } finally {
+    mock.server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("inbox 配置：整板主题 boardTopic 缺省 bookmark-board，写了就用写的", () => {
+  const root = tempRoot();
+  try {
+    assert.equal(readInboxConfig(writeConfig(root, {}))?.boardTopic, "bookmark-board");
+    assert.equal(readInboxConfig(writeConfig(root, { boardTopic: "board-x" }))?.boardTopic, "board-x");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
