@@ -293,11 +293,49 @@ export class BookmarkStore {
 
   remove(id: string): boolean {
     this.ensureLoaded();
-    const before = this.records.length;
+    const gone = this.records.find((record) => record.id === id);
+    if (!gone) return false;
     this.records = this.records.filter((record) => record.id !== id);
-    if (this.records.length === before) return false;
     this.save();
+    if (gone.dedupeKey) this.rememberRemoved(gone.dedupeKey);
     return true;
+  }
+
+  // ── 删过的手机条目（2026-09-25 修「删了又回来」）：看板重开会从中转站重收老消息，查重只比现存条目，删过的就复活。
+  // 删手机发来的那条时记下它的 dedupeKey（存盘、最多 2000 个），同一条再来，收信那边直接不收。
+
+  private removedKeys: string[] | null = null;
+
+  private removedPath(): string {
+    return `${this.path}.removed-keys.json`;
+  }
+
+  private loadRemoved(): string[] {
+    if (this.removedKeys) return this.removedKeys;
+    try {
+      const parsed: unknown = existsSync(this.removedPath()) ? JSON.parse(readFileSync(this.removedPath(), "utf8")) : [];
+      this.removedKeys = Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+    } catch {
+      this.removedKeys = [];
+    }
+    return this.removedKeys;
+  }
+
+  /** 这条手机消息对应的条目是不是被删过。 */
+  wasRemoved(dedupeKey: string): boolean {
+    return this.loadRemoved().includes(dedupeKey);
+  }
+
+  private rememberRemoved(dedupeKey: string): void {
+    const keys = this.loadRemoved();
+    if (keys.includes(dedupeKey)) return;
+    keys.push(dedupeKey);
+    if (keys.length > 2000) keys.splice(0, keys.length - 2000);
+    try {
+      writeJsonAtomic(this.removedPath(), keys);
+    } catch (error) {
+      log.出事("删过的条目记不下来（重开看板它可能回来）", error, "store");
+    }
   }
 
   /** 把源图拷进 bookmark\attachments\（文件名加条目 id 前缀防撞），再追到该条 attachments。没这条返 null。 */

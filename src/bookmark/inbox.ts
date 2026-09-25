@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import { StringDecoder } from "node:string_decoder";
+import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { bookmarkNtfyConfigPath } from "../shared/paths";
 import type { BookmarkStore } from "./store";
@@ -82,6 +83,8 @@ export interface BookmarkInboxOptions {
   reconnectBaseMs?: number;
   /** 日志注入（测试静音用）。 */
   logSink?: (message: string) => void;
+  /** 「收到哪一条了」存在这个文件（真机传；测试不传＝只记在内存）。重开看板从它之后接着收，不再重收 7 天内的老消息、不重做手机的挪组命令。 */
+  cursorPath?: string;
 }
 
 export interface BookmarkInboxHandle {
@@ -127,6 +130,24 @@ function subscribe(config: NtfyInboxConfig, options: BookmarkInboxOptions): Book
 
   let stopped = false;
   let lastId: string | undefined = undefined; // 断线补收的命根子：重连时从最后一条消息之后续读
+  if (options.cursorPath) {
+    try {
+      if (existsSync(options.cursorPath)) {
+        const saved = JSON.parse(readFileSync(options.cursorPath, "utf8")) as { lastId?: unknown };
+        if (typeof saved?.lastId === "string" && saved.lastId) lastId = saved.lastId;
+      }
+    } catch {
+      /* 坏档当没有，从 since 默认值收，删过的由 store.wasRemoved 兜 */
+    }
+  }
+  const saveCursor = (): void => {
+    if (!options.cursorPath || !lastId) return;
+    try {
+      writeJsonAtomic(options.cursorPath, { lastId });
+    } catch (error) {
+      log.出事("收信进度存不下来（重开会重收老消息，删过的不会回来）", error, "inbox");
+    }
+  };
   let currentReq: http.ClientRequest | undefined = undefined;
   let reconnectTimer: NodeJS.Timeout | undefined = undefined;
   let attempt = 0;
@@ -166,6 +187,7 @@ function subscribe(config: NtfyInboxConfig, options: BookmarkInboxOptions): Book
             if (evt && evt.event === "message") {
               try {
                 handleMessage(evt);
+                saveCursor();
               } catch (error) {
                 log.出事("收信处理抛错（已吞掉，不影响继续收）", error, "inbox");
               }
@@ -199,6 +221,12 @@ function subscribe(config: NtfyInboxConfig, options: BookmarkInboxOptions): Book
       } catch {
         /* 通知刷新失败无所谓 */
       }
+      void sendReceipt(config, decoded.receiptMessage, sink);
+      return;
+    }
+    // 删过的不再收（2026-09-25：看板重开会重收 7 天内的老消息，不拦就「删了又回来」）；回执照发，手机照样知道到了。
+    if (options.store.wasRemoved(payload.dedupeKey)) {
+      sink("这条以前删过，不再收");
       void sendReceipt(config, decoded.receiptMessage, sink);
       return;
     }

@@ -303,7 +303,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   if (options?.inbox) {
     // 收信模块：坏了只记日志不连坐（隔离铁律）；连不上邮局会自己指数退避重连。
     try {
-      ensureBookmarkInboxStarted({ store: requireStore(), onInboxChanged: notifyInboxChanged });
+      ensureBookmarkInboxStarted({ store: requireStore(), onInboxChanged: notifyInboxChanged, cursorPath: join(bookmarkDataDirectory(), "inbox-cursor.json") });
       // 手机同步（设定19）：整板变了就抄一份发到中转站，手机打开就拉最新一份。发不出去只记日志。
       const config = readInboxConfig();
       if (config) {
