@@ -21,7 +21,7 @@ import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_ZORDER_FLAG
 import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "./inbox";
-import { buildBoardSnapshot, startBoardPublisher } from "./board-sync";
+import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
 import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
@@ -312,7 +312,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           user: config.user,
           pass: config.pass,
           topic: config.boardTopic,
-          snapshot: () => buildBoardSnapshot(requireStore().list(), requireRoster().list(), readBoardMode(), Date.now()),
+          snapshot: () => buildBoardSnapshot(requireStore().list(), requireRoster().list(), readBoardMode(), Date.now(), readProjectsForPhone()),
         });
       }
     } catch (error) {
@@ -1050,6 +1050,22 @@ function writeBoardOpacity(opacity: number): number {
     log.出事("appearance.json 写盘失败（本次不记忆，看板照用）", error, "appearance");
   }
   return clamped;
+}
+
+// ── 手机项目页（2026-09-25）：跟整板一起发项目夹和 md 内容，手机只能看。读坏了就不带，整板照发 ──
+
+function readProjectsForPhone(): BoardProjectNode[] | undefined {
+  try {
+    const root = projectsRoot();
+    if (!existsSync(root)) return [];
+    return collectProjects(
+      (rel) => listProjects(root, rel).ordered,
+      (rel) => readFileSync(resolveProjectPath(root, rel), "utf8"),
+    );
+  } catch (error) {
+    log.出事("抄项目页给手机失败（这回不带项目页）", error, "board");
+    return undefined;
+  }
 }
 
 // ── 字号（2026-09-24 用户拍板）：Ctrl+等号/减号/0、Ctrl+滚轮，只管看板窗口；zoom.json 记住，重开照旧 ──

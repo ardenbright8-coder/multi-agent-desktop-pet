@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyPhoneOp, buildBoardSnapshot, parsePhoneOp, type BoardRow } from "../../bookmark/board-sync";
+import { applyPhoneOp, buildBoardSnapshot, collectProjects, parsePhoneOp, type BoardRow } from "../../bookmark/board-sync";
 
 const rows: BoardRow[] = [
   { id: "a", text: "甲", assignee: "Claude", kind: "note", detail: null, bundleId: null, claimedBy: "Claude-3", report: null, reportedBy: null, reportedAt: null, dedupeKey: null, createdAt: "2026-09-24T01:00:00.000Z", url: null, attachments: [] },
@@ -51,4 +51,40 @@ test("applyPhoneOp：挪组走 setAssignee、删走 remove；条目不在了不�
   assert.equal(applyPhoneOp(store, { op: "delete", id: "c" }), "删掉「交接：干到一半」");
   assert.equal(applyPhoneOp(store, { op: "delete", id: "zz" }), "要删的那条已经不在了");
   assert.deepEqual(calls, ["assign a Hermes", "assign b null", "remove c"]);
+});
+
+test("collectProjects：照电脑顺序抄夹和 md，md 带内容；太长截断、总量超了不带、读坏的只列名字", () => {
+  const tree: Record<string, { name: string; relPath: string; isDir: boolean }[]> = {
+    "": [
+      { name: "中医", relPath: "中医", isDir: true },
+      { name: "说明.md", relPath: "说明.md", isDir: false },
+    ],
+    "中医": [
+      { name: "设计思路.md", relPath: "中医/设计思路.md", isDir: false },
+      { name: "坏的.md", relPath: "中医/坏的.md", isDir: false },
+      { name: "长的.md", relPath: "中医/长的.md", isDir: false },
+    ],
+  };
+  const files: Record<string, string> = { "中医/设计思路.md": "先看舌苔", "中医/长的.md": "一二三四五六七八九十", "说明.md": "根目录说明" };
+  const out = collectProjects(
+    (rel) => tree[rel] ?? [],
+    (rel) => { if (!(rel in files)) throw new Error("读不到"); return files[rel]; },
+    { totalChars: 12, fileChars: 6, depth: 6, nodes: 100 },
+  );
+  assert.deepEqual(out.map((n) => [n.name, n.dir]), [["中医", true], ["说明.md", false]]);
+  const inner = out[0].children!;
+  assert.deepEqual(inner.map((n) => n.name), ["设计思路.md", "坏的.md", "长的.md"]);
+  assert.equal(inner[0].content, "先看舌苔");
+  assert.equal(inner[1].content, undefined, "读坏的只列名字");
+  assert.equal(inner[2].content, "一二三四五六");
+  assert.equal(inner[2].truncated, true);
+  // 总量 12 字已经用完：根目录那份只剩 2 个字的位置
+  assert.equal(out[1].content, "根目");
+  assert.equal(out[1].truncated, true);
+});
+
+test("buildBoardSnapshot：带上项目页；不给就不带这个字段（老手机照样认）", () => {
+  const withProjects = buildBoardSnapshot([], ["Claude"], "day", 1, [{ name: "a.md", path: "a.md", dir: false, content: "x" }]);
+  assert.equal(withProjects.projects?.[0].content, "x");
+  assert.ok(!("projects" in buildBoardSnapshot([], ["Claude"], "day", 1)));
 });

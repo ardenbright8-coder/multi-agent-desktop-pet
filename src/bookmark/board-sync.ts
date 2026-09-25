@@ -44,6 +44,18 @@ export interface BoardItem {
   images: number;
 }
 
+/** 项目页（2026-09-25 用户：手机也要三个页签，项目页先只能看）：一个夹或一份 md。md 带内容，手机点开就能看。 */
+export interface BoardProjectNode {
+  name: string;
+  /** 相对项目根的路径（正斜杠），手机拿它当编号用。 */
+  path: string;
+  dir: boolean;
+  children?: BoardProjectNode[];
+  content?: string;
+  /** 文档太长或总量超了，只带了前面一截（或没带）。 */
+  truncated?: boolean;
+}
+
 export interface BoardSnapshot {
   v: 1;
   type: "board";
@@ -52,15 +64,64 @@ export interface BoardSnapshot {
   agents: string[];
   /** 看板顺序（store 数组顺序＝每组里从上到下）。 */
   items: BoardItem[];
+  /** 电脑看板「📁 项目」页的夹和文档（照电脑上的顺序）。老版手机不认这个字段，照样能用。 */
+  projects?: BoardProjectNode[];
 }
 
-export function buildBoardSnapshot(rows: BoardRow[], agents: string[], mode: BoardMode, now: number): BoardSnapshot {
+/** 整板一份发，中转站上限 256K：项目文档内容合起来最多带这么多字，单份最多带这么多，夹最多套这么深。 */
+export const PROJECT_LIMITS = { totalChars: 120_000, fileChars: 20_000, depth: 6, nodes: 400 };
+
+/** 抄项目页：list 给某一层（相对路径，根＝""）按电脑顺序排好的条目，read 给某份 md 的全文。读不到的那份只列名字不带内容。 */
+export function collectProjects(
+  list: (relPath: string) => { name: string; relPath: string; isDir: boolean }[],
+  read: (relPath: string) => string,
+  limits = PROJECT_LIMITS,
+): BoardProjectNode[] {
+  let chars = 0;
+  let nodes = 0;
+  const walk = (relPath: string, depth: number): BoardProjectNode[] => {
+    const out: BoardProjectNode[] = [];
+    for (const entry of list(relPath)) {
+      if (nodes >= limits.nodes) break;
+      nodes += 1;
+      if (entry.isDir) {
+        out.push({ name: entry.name, path: entry.relPath, dir: true, children: depth < limits.depth ? walk(entry.relPath, depth + 1) : [] });
+        continue;
+      }
+      const node: BoardProjectNode = { name: entry.name, path: entry.relPath, dir: false };
+      let text: string | null = null;
+      try {
+        text = read(entry.relPath);
+      } catch {
+        text = null;
+      }
+      if (text !== null) {
+        const room = Math.max(0, Math.min(limits.fileChars, limits.totalChars - chars));
+        node.content = text.slice(0, room);
+        chars += node.content.length;
+        if (text.length > room) node.truncated = true;
+      }
+      out.push(node);
+    }
+    return out;
+  };
+  return walk("", 0);
+}
+
+export function buildBoardSnapshot(
+  rows: BoardRow[],
+  agents: string[],
+  mode: BoardMode,
+  now: number,
+  projects?: BoardProjectNode[],
+): BoardSnapshot {
   return {
     v: 1,
     type: "board",
     ts: now,
     mode,
     agents: [...agents],
+    ...(projects ? { projects } : {}),
     items: rows.map((r) => ({
       id: r.id,
       text: r.text,
