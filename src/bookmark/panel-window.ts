@@ -24,6 +24,7 @@ import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "
 import { buildBoardSnapshot, startBoardPublisher } from "./board-sync";
 import { startBookmarkCliServer } from "./cli-server";
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
+import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
@@ -479,6 +480,7 @@ function createPanel(): BrowserWindow {
     setTimeout(() => keepAcrylicLit(win), 0);
   });
   win.on("show", () => setTimeout(() => keepAcrylicLit(win), 0));
+  wireBoardZoom(win);
   win.on("closed", () => {
     panel = null;
   });
@@ -1048,4 +1050,59 @@ function writeBoardOpacity(opacity: number): number {
     log.出事("appearance.json 写盘失败（本次不记忆，看板照用）", error, "appearance");
   }
   return clamped;
+}
+
+// ── 字号（2026-09-24 用户拍板）：Ctrl+等号/减号/0、Ctrl+滚轮，只管看板窗口；zoom.json 记住，重开照旧 ──
+// 🚨 在看板窗口的 before-input-event 里拦，不准改成 globalShortcut——全局会抢掉其他软件的 Ctrl 加减。
+// 不靠 Electron 自带菜单的放大键：它认的是「Ctrl+加号」，Windows 上要按 Shift，用户按 Ctrl+等号没反应（当天实测）。
+
+function boardZoomPath(): string {
+  return join(bookmarkDataDirectory(), "zoom.json");
+}
+
+function readBoardZoom(): number {
+  try {
+    if (!existsSync(boardZoomPath())) return DEFAULT_BOARD_ZOOM;
+    return parseZoom(readFileSync(boardZoomPath(), "utf8"));
+  } catch (error) {
+    log.出事("zoom.json 读取失败（回落 100%）", error, "zoom");
+    return DEFAULT_BOARD_ZOOM;
+  }
+}
+
+function writeBoardZoom(zoom: number): void {
+  try {
+    mkdirSync(bookmarkDataDirectory(), { recursive: true });
+    writeJsonAtomic(boardZoomPath(), { zoom });
+  } catch (error) {
+    log.出事("zoom.json 写盘失败（本次不记忆，看板照用）", error, "zoom");
+  }
+}
+
+function wireBoardZoom(win: BrowserWindow): void {
+  let zoom = readBoardZoom();
+  const apply = (): void => {
+    if (!win.isDestroyed()) win.webContents.setZoomFactor(zoom);
+  };
+  const change = (next: number): void => {
+    zoom = clampZoom(next);
+    apply();
+    writeBoardZoom(zoom);
+    const tip = `字号 ${Math.round(zoom * 100)}%`;
+    // 弹一行小字让用户知道调到多大了；提示函数不在也不影响调字号。
+    void win.webContents.executeJavaScript(`typeof bmToast === "function" && bmToast(${JSON.stringify(tip)}, 1200)`)
+      .catch(() => undefined);
+    log.记(`看板${tip}`, "zoom");
+  };
+  // 页面每次加载（含自测刷新）Chromium 可能把缩放打回默认，加载完重新套上。
+  win.webContents.on("did-finish-load", apply);
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const action = zoomActionForKey(input);
+    if (!action) return;
+    event.preventDefault();
+    change(action === "reset" ? DEFAULT_BOARD_ZOOM : stepZoom(zoom, action));
+  });
+  // Ctrl+滚轮：Electron 不自己缩放，只发这个事件，照走一档。
+  win.webContents.on("zoom-changed", (_event, direction) => change(stepZoom(zoom, direction)));
 }
