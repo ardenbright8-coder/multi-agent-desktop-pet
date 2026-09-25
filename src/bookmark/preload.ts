@@ -7,8 +7,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   readImage: (name: string) => ipcRenderer.invoke("bookmark:image:read", name) as Promise<string>,
   // 图片标注（设定16第三版）：标注单独存，marked 是带编号的那张（给 AI 看）。
   getImageMarks: (name: string) => ipcRenderer.invoke("bookmark:image:marks:get", name),
-  setImageMarks: (name: string, marks: unknown, marked: Uint8Array | null) =>
-    ipcRenderer.invoke("bookmark:image:marks:set", { name, marks, marked }),
+  setImageMarks: (name: string, marks: unknown, summary: string, marked: Uint8Array | null) =>
+    ipcRenderer.invoke("bookmark:image:marks:set", { name, marks, summary, marked }),
   list: () => ipcRenderer.invoke("bookmark:list"),
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   insertBeside: (input: unknown) => ipcRenderer.invoke("bookmark:insert-beside", input),

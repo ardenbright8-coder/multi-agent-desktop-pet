@@ -24,6 +24,10 @@ const marksOnDisk = (name) => {
   const path = join(attachments, `${name}.marks.json`);
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).marks : null;
 };
+const summaryOnDisk = (name) => {
+  const path = join(attachments, `${name}.marks.json`);
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).summary : null;
+};
 
 let app;
 try {
@@ -72,7 +76,7 @@ try {
     buttons: [...document.querySelectorAll("dialog[open] button")].map((b) => b.textContent),
     empty: document.querySelector("dialog[open] .bm-mark-empty")?.textContent,
   }));
-  assert.deepEqual(ui.tools, ["●编号", "▢框", "↗箭头"], JSON.stringify(ui));
+  assert.deepEqual(ui.tools, ["●标注", "▢框", "↗箭头"], JSON.stringify(ui));
   assert.ok(!ui.buttons.some((text) => /标注图片|保存/.test(text)), JSON.stringify(ui));
   assert.ok(ui.empty, "没标之前下面有一句怎么用");
 
@@ -82,11 +86,13 @@ try {
   await page.evaluate(() => { const input = document.activeElement; input.value = "这个按钮改成绿色"; input.dispatchEvent(new Event("input", { bubbles: true })); });
   await page.evaluate(() => { window.bmTestTool("框"); window.bmTestDrag([0.5, 0.2], [0.8, 0.6]); });
   await page.evaluate(() => { window.bmTestTool("箭头"); window.bmTestDrag([0.1, 0.8], [0.6, 0.8]); });
+  await page.evaluate(() => { const box = document.querySelector("dialog[open] .bm-mark-summary"); box.value = "整体再清爽一点"; box.dispatchEvent(new Event("input", { bubbles: true })); });
   const numbers = await page.evaluate(() => [...document.querySelectorAll("dialog[open] .bm-mark-num")].map((n) => n.textContent));
   assert.deepEqual(numbers, ["①", "②", "③"]);
   const saved = await until(() => marksOnDisk(name)?.length === 3 && marksOnDisk(name), "三个标注自动存盘");
   assert.deepEqual(saved.map((m) => m.kind), ["pin", "box", "arrow"]);
   assert.equal(saved[0].note, "这个按钮改成绿色");
+  await until(() => summaryOnDisk(name) === "整体再清爽一点", "整体说明存盘");
   await until(() => existsSync(join(attachments, `${name}.marked.png`)), "带编号的图");
   assert.deepEqual(readFileSync(join(attachments, name)), original, "原图一个字节都不许动");
 
@@ -103,19 +109,25 @@ try {
   });
   assert.ok(handed.text.includes(`[图片:${name}]`), "正文图片标记不换");
   assert.ok(handed.prompt.includes(`${name}.marked.png`) && handed.prompt.includes(`原图：`), handed.prompt);
-  assert.ok(handed.prompt.includes("① 点，在（从左 20%、从上 30%）：这个按钮改成绿色"), handed.prompt);
+  assert.ok(handed.prompt.includes("① 标注，大约在（从左 20%、从上 30%）这附近：这个按钮改成绿色"), handed.prompt);
+  assert.ok(handed.prompt.includes("整张图的说明：整体再清爽一点"), handed.prompt);
   assert.ok(handed.prompt.includes("② 框") && !handed.prompt.includes("③"), handed.prompt);
 
   // ⑤ 重开还在；按住编号拖走；删光回原样
   await openViewer('.group[data-group="Claude"] .task-text .bm-inline-image button');
-  const reopened = await page.evaluate(() => [...document.querySelectorAll("dialog[open] .bm-mark-notes input")].map((i) => i.value));
-  assert.deepEqual(reopened, ["这个按钮改成绿色", ""]);
+  const reopened = await page.evaluate(() => ({ notes: [...document.querySelectorAll("dialog[open] .bm-mark-notes input")].map((i) => i.value), summary: document.querySelector("dialog[open] .bm-mark-summary").value }));
+  assert.deepEqual(reopened, { notes: ["这个按钮改成绿色", ""], summary: "整体再清爽一点" });
   await page.evaluate(() => window.bmTestDrag([0.2, 0.3], [0.35, 0.45]));
   await until(() => Math.abs((marksOnDisk(name)?.[0]?.x ?? 0) - 0.35) < 0.01, "拖动编号后位置存上");
   await page.evaluate(() => { document.querySelector("dialog[open] .bm-mark-del").click(); });
   await page.evaluate(() => { document.querySelector("dialog[open] .bm-mark-del").click(); });
-  await until(() => !existsSync(join(attachments, `${name}.marks.json`)) && !existsSync(join(attachments, `${name}.marked.png`)), "删光后两个附属文件都清掉");
-  await page.keyboard.press("Escape");
+  // 标注删光、整体说明还在：留说明，不留带编号的图
+  await until(() => marksOnDisk(name)?.length === 0 && !existsSync(join(attachments, `${name}.marked.png`)), "标注删光后只剩整体说明");
+  const summaryOnly = await page.evaluate(async () => window.bookmark.copyForAgent((await window.bookmark.list())[0].id, null));
+  assert.ok(summaryOnly.includes("整张图的说明：整体再清爽一点") && !summaryOnly.includes(".marked.png"), summaryOnly);
+  await page.evaluate(() => { const box = document.querySelector("dialog[open] .bm-mark-summary"); box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); });
+  await until(() => !existsSync(join(attachments, `${name}.marks.json`)) && !existsSync(join(attachments, `${name}.marked.png`)), "说明也清空后两个附属文件都清掉");
+  await page.evaluate(() => document.querySelector("dialog[open] .bm-image-close").click());
   await page.waitForFunction(() => !document.querySelector("dialog[open]"));
   const plain = await page.evaluate(async () => window.bookmark.copyForAgent((await window.bookmark.list())[0].id, null));
   assert.ok(!plain.includes("标了") && !plain.includes(".marked.png"), plain);
@@ -131,7 +143,7 @@ try {
 
   assert.deepEqual(errors, []);
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((window) => window.isVisible())), false);
-  console.log("PASS 打开就能标、编号框箭头一套流水号、说明写在下面、自动存不动原图、撤销、拖动编号、删光回原样、改字框里能标、交给 AI 带编号清单；测试窗口始终隐藏");
+  console.log("PASS 打开就能标、标注框箭头一套流水号、整体说明、说明写在下面、自动存不动原图、撤销、拖动编号、删光回原样、改字框里能标、交给 AI 带编号清单；测试窗口始终隐藏");
 } finally {
   await app?.close();
 }

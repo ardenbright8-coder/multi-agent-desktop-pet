@@ -70,7 +70,8 @@ async function bmImageSource(name) {
 // 图片标注（设定16第三版，2026-09-24 用户：学 ChatGPT 那样打开就能标、工具常驻、按编号告诉 AI）：
 // 打开大图就能标；工具只留编号 / 框 / 箭头；全图一套流水号；说明写在图下面、一个编号一行；
 // 标注不烧进原图，边改边自动存（主进程另存一张带编号的给 AI）；没有保存按钮。
-const BM_MARK_RED = "#e5484d";
+// 标注颜色：马卡龙橙红（2026-09-24 用户：原来的大红太扎眼，要偏艳一点的橙红）。
+const BM_MARK_RED = "#f76c55";
 const BM_MARK_NUMBERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
 function bmMarkLabel(index) { return BM_MARK_NUMBERS[index] || `(${index + 1})`; }
 function bmMarkAnchor(mark) {
@@ -130,11 +131,11 @@ function bmBindMarks(dialog, stage, img, name) {
   const layer = document.createElement("canvas"); layer.className = "bm-mark-layer";
   stage.appendChild(layer);
   const ctx = layer.getContext("2d");
-  let marks = [], tool = "pin", selected = -1, draft = null, moving = null, ready = false;
+  let marks = [], summary = "", tool = "pin", selected = -1, draft = null, moving = null, ready = false;
   let saveTimer = null, dirty = false, chain = Promise.resolve(), shownWidth = 0, savedTimer = null;
 
   const tools = document.createElement("div"); tools.className = "bm-mark-tools";
-  for (const [kind, icon, label, tip] of [["pin", "●", "编号", "点一下图片，落一个编号"], ["box", "▢", "框", "拖一下，框住一块"], ["arrow", "↗", "箭头", "从哪拖到哪"]]) {
+  for (const [kind, icon, label, tip] of [["pin", "●", "标注", "点一下图片，落一个带号的标注"], ["box", "▢", "框", "拖一下，框住一块"], ["arrow", "↗", "箭头", "从哪拖到哪"]]) {
     const button = document.createElement("button"); button.type = "button"; button.dataset.tool = kind; button.title = tip;
     const mark = document.createElement("span"); mark.className = "bm-mark-icon"; mark.textContent = icon;
     button.append(mark, label); button.setAttribute("aria-pressed", String(kind === tool));
@@ -148,8 +149,12 @@ function bmBindMarks(dialog, stage, img, name) {
   const undo = document.createElement("button"); undo.type = "button"; undo.className = "bm-mark-undo"; undo.textContent = "↶"; undo.title = "撤销上一个（Ctrl+Z）";
   undo.addEventListener("click", () => { if (marks.length) remove(marks.length - 1); });
   tools.append(saved, undo);
+  // 整体说明：对整张图说的话（2026-09-24 用户：光有局部不够，要一个总的）。可以不填。
+  const overall = document.createElement("textarea"); overall.className = "bm-mark-summary"; overall.rows = 2; overall.maxLength = 2000;
+  overall.placeholder = "整张图总的说一下（可以不填）"; overall.setAttribute("aria-label", "整张图的说明"); overall.readOnly = true;
+  overall.addEventListener("input", () => { summary = overall.value; schedule(); });
   const notes = document.createElement("ol"); notes.className = "bm-mark-notes";
-  dialog.append(tools, notes);
+  dialog.append(tools, overall, notes);
 
   const draw = () => {
     ctx.clearRect(0, 0, layer.width, layer.height);
@@ -184,6 +189,7 @@ function bmBindMarks(dialog, stage, img, name) {
     if (!dirty) return chain;
     dirty = false;
     const snapshot = marks.map(({ kind, x, y, endX, endY, note }) => ({ kind, x, y, endX, endY, note }));
+    const overallText = summary;
     const scale = shownWidth ? Math.max(1, img.naturalWidth / shownWidth) : 1;
     chain = chain.then(async () => {
       let bytes = null;
@@ -195,7 +201,7 @@ function bmBindMarks(dialog, stage, img, name) {
         const blob = await new Promise((resolve) => out.toBlob(resolve, "image/png"));
         if (blob) bytes = new Uint8Array(await blob.arrayBuffer());
       }
-      await window.bookmark.setImageMarks(name, snapshot, bytes);
+      await window.bookmark.setImageMarks(name, snapshot, overallText, bytes);
       saved.classList.add("on"); clearTimeout(savedTimer); savedTimer = setTimeout(() => saved.classList.remove("on"), 1500);
     }).catch((error) => { dirty = true; bmShowError("标注没存上：" + bmErrorText(error)); });
     return chain;
@@ -210,7 +216,7 @@ function bmBindMarks(dialog, stage, img, name) {
     notes.replaceChildren();
     if (!marks.length) {
       const empty = document.createElement("li"); empty.className = "bm-mark-empty";
-      empty.textContent = "点一下图片落编号，拖一下画框或箭头；每个编号要怎么改，写在这里";
+      empty.textContent = "点一下图片落标注，拖一下画框或箭头；每个标注要怎么改，写在这里";
       notes.appendChild(empty); return;
     }
     marks.forEach((mark, index) => {
@@ -234,7 +240,7 @@ function bmBindMarks(dialog, stage, img, name) {
   layer.addEventListener("pointerdown", (event) => {
     if (!ready || event.button !== 0) return;
     event.preventDefault();
-    if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur();
+    if (document.activeElement?.matches?.("input, textarea")) document.activeElement.blur();
     layer.setPointerCapture(event.pointerId);
     const p = point(event), index = hit(event);
     if (index >= 0) { moving = { index, from: p, orig: { ...marks[index] }, moved: false }; select(index); return; }
@@ -268,16 +274,19 @@ function bmBindMarks(dialog, stage, img, name) {
   });
   layer.addEventListener("pointercancel", () => { draft = null; moving = null; draw(); });
   dialog.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLInputElement) return;
+    if (event.target.matches?.("input, textarea")) return;
     if ((event.key === "Delete" || event.key === "Backspace") && selected >= 0) { event.preventDefault(); remove(selected); }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && marks.length) { event.preventDefault(); remove(marks.length - 1); }
   });
 
   renderNotes();
   void window.bookmark.getImageMarks(name)
-    .then((loaded) => { marks = Array.isArray(loaded) ? loaded : []; })
+    .then((loaded) => {
+      marks = Array.isArray(loaded?.marks) ? loaded.marks : [];
+      summary = typeof loaded?.summary === "string" ? loaded.summary : ""; overall.value = summary;
+    })
     .catch(() => { marks = []; })
-    .finally(() => { ready = true; renderNotes(); draw(); });
+    .finally(() => { ready = true; overall.readOnly = false; renderNotes(); draw(); });
   return () => { if (saveTimer) { clearTimeout(saveTimer); void save(); } };
 }
 function bmImageNode(name, marker, editable) {

@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { ipcMain, nativeImage, type WebContents } from "electron";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { attachmentsRoot } from "../shared/paths";
-import { MARKABLE_IMAGE, markedFileName, marksFileName, readImageMarks, sanitizeMarks } from "./inline-images";
+import { MARKABLE_IMAGE, markedFileName, marksFileName, readImageMarks, sanitizeMarks, sanitizeSummary } from "./inline-images";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 export function registerBookmarkImageIpc(allowed: (sender: WebContents) => boolean): void {
@@ -36,28 +36,32 @@ export function registerBookmarkImageIpc(allowed: (sender: WebContents) => boole
   ipcMain.handle("bookmark:image:marks:get", (event, name: unknown) => {
     if (!allowed(event.sender)) throw new Error("只允许看板读取标注");
     if (typeof name !== "string" || !MARKABLE_IMAGE.test(name)) throw new Error("图片文件名无效");
-    return readImageMarks(name).marks;
+    const { marks, summary } = readImageMarks(name);
+    return { marks, summary };
   });
   ipcMain.handle("bookmark:image:marks:set", (event, payload: unknown) => {
     if (!allowed(event.sender)) throw new Error("只允许看板保存标注");
-    const { name, marks: raw, marked } = (payload ?? {}) as { name?: unknown; marks?: unknown; marked?: unknown };
+    const { name, marks: raw, summary: rawSummary, marked } = (payload ?? {}) as { name?: unknown; marks?: unknown; summary?: unknown; marked?: unknown };
     if (typeof name !== "string" || !MARKABLE_IMAGE.test(name)) throw new Error("图片文件名无效");
     const dir = attachmentsRoot();
     const marksPath = join(dir, marksFileName(name));
     const markedPath = join(dir, markedFileName(name));
     const marks = sanitizeMarks(raw);
-    if (!marks.length) {
+    const summary = sanitizeSummary(rawSummary);
+    if (!marks.length && !summary.trim()) {
       // 全删光了＝回到没标过：两个附属文件一起清掉，交给 AI 只给原图。
       rmSync(marksPath, { force: true });
       rmSync(markedPath, { force: true });
-      return marks;
+      return { marks, summary: "" };
     }
     mkdirSync(dir, { recursive: true });
-    writeJsonAtomic(marksPath, { marks });
-    if (marked instanceof Uint8Array && marked.length && marked.length <= MAX_BYTES) {
+    writeJsonAtomic(marksPath, { marks, summary });
+    // 只写了整体说明、一个标注都没画：不要带编号的图，交给 AI 给原图＋说明。
+    if (!marks.length) rmSync(markedPath, { force: true });
+    else if (marked instanceof Uint8Array && marked.length && marked.length <= MAX_BYTES) {
       const picture = nativeImage.createFromBuffer(Buffer.from(marked));
       if (!picture.isEmpty()) writeFileSync(markedPath, picture.toPNG());
     }
-    return marks;
+    return { marks, summary };
   });
 }
