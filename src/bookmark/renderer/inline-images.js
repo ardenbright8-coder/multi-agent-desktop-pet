@@ -67,17 +67,116 @@ async function bmImageSource(name) {
   }
   return bmImageCache.get(name);
 }
-function bmShowImage(name) {
+function bmShowImage(name, onReplace, holdEditor = false) {
+  if (holdEditor) bmImagesBusy += 1; // 模态窗抢焦点时，别让图文编辑框按失焦提交并销毁。
   const dialog = document.createElement("dialog");
   dialog.className = "bm-image-viewer";
   const close = document.createElement("button"); close.textContent = "×"; close.type = "button"; close.className = "bm-image-close"; close.title = "关闭（也可以按 Esc 或点外面）";
   close.addEventListener("click", () => dialog.close());
   const img = document.createElement("img"); img.alt = "任务参考图";
   dialog.append(close, img); document.body.appendChild(dialog);
-  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    if (holdEditor) {
+      bmImagesBusy -= 1;
+      if (dialog.bmChangedInput?.isConnected) dialog.bmChangedInput.dispatchEvent(new Event("input", { bubbles: true }));
+      bmFlushImageRefresh();
+    }
+  });
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   dialog.showModal();
   void bmImageSource(name).then((url) => { img.src = url; }).catch(() => { img.alt = "图片文件缺失或无法读取"; });
+  if (onReplace) {
+    const edit = document.createElement("button"); edit.type = "button";
+    edit.className = "bm-image-annotate"; edit.textContent = "标注图片";
+    edit.addEventListener("click", () => bmAnnotateImage(dialog, img, onReplace));
+    dialog.appendChild(edit);
+  }
+}
+function bmAnnotateImage(dialog, img, onReplace) {
+  if (!img.complete || !img.naturalWidth) { bmShowError("图片还没加载好，请稍后再试"); return; }
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  canvas.className = "bm-annotation-canvas";
+  const ctx = canvas.getContext("2d");
+  const strokes = [];
+  let draft = null;
+  let tool = "arrow";
+  const draw = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    for (const mark of [...strokes, ...(draft ? [draft] : [])]) {
+      ctx.strokeStyle = "#ed302c"; ctx.fillStyle = "#ed302c";
+      ctx.lineWidth = Math.max(3, Math.min(canvas.width, canvas.height) / 180);
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      const { x, y, endX, endY } = mark;
+      if (mark.kind === "text") {
+        ctx.font = `bold ${Math.max(18, Math.min(canvas.width, canvas.height) / 18)}px sans-serif`;
+        ctx.lineWidth = 4; ctx.strokeStyle = "white";
+        ctx.strokeText(mark.text, x, y); ctx.fillText(mark.text, x, y);
+      } else if (mark.kind === "rect") {
+        ctx.strokeRect(x, y, endX - x, endY - y);
+      } else if (mark.kind === "circle") {
+        ctx.beginPath(); ctx.ellipse((x + endX) / 2, (y + endY) / 2, Math.max(1, Math.abs(endX - x) / 2), Math.max(1, Math.abs(endY - y) / 2), 0, 0, Math.PI * 2); ctx.stroke();
+      } else {
+        const angle = Math.atan2(endY - y, endX - x);
+        const head = Math.max(12, Math.min(canvas.width, canvas.height) / 28);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(endX, endY);
+        ctx.moveTo(endX, endY); ctx.lineTo(endX - head * Math.cos(angle - Math.PI / 6), endY - head * Math.sin(angle - Math.PI / 6));
+        ctx.moveTo(endX, endY); ctx.lineTo(endX - head * Math.cos(angle + Math.PI / 6), endY - head * Math.sin(angle + Math.PI / 6)); ctx.stroke();
+      }
+    }
+  };
+  const point = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
+  };
+  const toolbar = document.createElement("div"); toolbar.className = "bm-annotation-tools";
+  const modes = [["arrow", "箭头"], ["circle", "圈选"], ["rect", "方框"], ["text", "文字"]];
+  for (const [kind, label] of modes) {
+    const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+    button.setAttribute("aria-pressed", String(kind === tool));
+    button.addEventListener("click", () => {
+      tool = kind;
+      for (const item of toolbar.querySelectorAll("[aria-pressed]")) item.setAttribute("aria-pressed", String(item === button));
+    });
+    toolbar.appendChild(button);
+  }
+  const words = document.createElement("input"); words.type = "text"; words.placeholder = "要写在图上的字";
+  words.setAttribute("aria-label", "标注文字"); words.maxLength = 60; toolbar.appendChild(words);
+  const undo = document.createElement("button"); undo.type = "button"; undo.textContent = "撤销上一步";
+  undo.addEventListener("click", () => { strokes.pop(); draw(); }); toolbar.appendChild(undo);
+  const save = document.createElement("button"); save.type = "button"; save.textContent = "保存标注";
+  save.addEventListener("click", async () => {
+    if (!strokes.length) return;
+    save.disabled = true; bmImagesBusy += 1;
+    try {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("无法生成标注图片");
+      const newName = await window.bookmark.saveImage(new Uint8Array(await blob.arrayBuffer()));
+      dialog.bmChangedInput = await onReplace(newName);
+      dialog.close();
+    } catch (error) { bmShowError("保存标注失败：" + bmErrorText(error)); save.disabled = false; }
+    finally { bmImagesBusy -= 1; bmFlushImageRefresh(); }
+  }); toolbar.appendChild(save);
+  canvas.addEventListener("pointerdown", (event) => {
+    if (tool === "text") {
+      if (!words.value.trim()) { words.focus(); return; }
+      strokes.push({ kind: "text", ...point(event), text: words.value.trim() }); draw(); return;
+    }
+    const start = point(event); draft = { kind: tool, ...start, endX: start.x, endY: start.y };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => { if (!draft) return; const end = point(event); draft.endX = end.x; draft.endY = end.y; draw(); });
+  canvas.addEventListener("pointerup", (event) => {
+    if (!draft) return;
+    const end = point(event); draft.endX = end.x; draft.endY = end.y;
+    if (Math.hypot(draft.endX - draft.x, draft.endY - draft.y) > 3) strokes.push(draft);
+    draft = null; draw();
+  });
+  canvas.addEventListener("pointercancel", () => { draft = null; draw(); });
+  img.hidden = true; dialog.classList.add("bm-annotating"); dialog.querySelector(".bm-image-annotate").hidden = true;
+  dialog.append(toolbar, canvas); draw();
 }
 function bmImageNode(name, marker, editable) {
   const box = document.createElement("span");
@@ -88,7 +187,27 @@ function bmImageNode(name, marker, editable) {
   open.appendChild(img); box.appendChild(open);
   box.addEventListener("pointerdown", (event) => event.stopPropagation());
   box.addEventListener("mousedown", (event) => event.preventDefault());
-  open.addEventListener("click", (event) => { event.stopPropagation(); bmShowImage(name); });
+  open.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const rich = editable ? box.parentElement : null;
+    const row = !editable ? box.closest(".task[data-id]") : null;
+    const onReplace = marker && (rich?.bmSource || row) ? async (newName) => {
+      const before = marker;
+      const after = `[图片:${newName}]`;
+      if (rich?.bmSource) {
+        const input = rich.bmSource;
+        input.value = input.value.replace(before, after);
+        bmRenderImages(rich, input.value, true);
+        return input;
+      } else {
+        const record = (await window.bookmark.list()).find((item) => item.id === row.dataset.id);
+        if (!record || !record.text.includes(before)) throw new Error("条目已改变，请重新打开图片");
+        await window.bookmark.updateText(record.id, record.text.replace(before, after), record.url);
+        await bmRefresh();
+      }
+    } : null;
+    bmShowImage(name, onReplace, editable);
+  });
   void bmImageSource(name).then((url) => { img.src = url; img.alt = "参考图"; }).catch(() => { img.alt = "图片缺失，点击检查"; });
   if (editable) {
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "bm-image-remove";

@@ -74,7 +74,7 @@ try {
   });
   assert.ok(closeBtn && closeBtn.text === "×" && closeBtn.region === "no-drag" && closeBtn.dialog === "no-drag", `大图关闭钮：${JSON.stringify(closeBtn)}`);
   assert.equal(await page.locator(".task-edit").count(),0);
-  await page.locator("dialog button").click();
+  await page.locator("dialog .bm-image-close").click();
   const prompt = await page.evaluate((id) => window.bookmark.copyForAgent(id,null), id);
   assert.ok(prompt.indexOf("图片文件：") < prompt.indexOf("下面保留"));
   assert.ok(prompt.includes("后面的补充")); assert.equal((prompt.match(/图片文件：/g)||[]).length,2);

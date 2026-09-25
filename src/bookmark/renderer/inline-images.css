@@ -23,3 +23,11 @@
 .bm-image-viewer > .bm-image-close { position:absolute; top:6px; right:6px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:rgba(255,255,255,.9); color:#3d4a38; font-size:18px; line-height:28px; cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.25); }
 .bm-image-viewer > .bm-image-close:hover { background:#fff; }
 .bm-image-viewer img { display:block; max-width:85vw; max-height:80vh; object-fit:contain; }
+.bm-image-viewer [hidden] { display:none !important; }
+.bm-image-annotate { display:block; margin:8px auto 0; padding:5px 12px; border:1px solid #78905f; border-radius:7px; background:#fff; color:#36502a; cursor:pointer; }
+.bm-annotation-tools { display:flex; flex-wrap:wrap; gap:5px; padding:3px 30px 9px 0; }
+.bm-annotation-tools button, .bm-annotation-tools input { min-height:28px; padding:3px 7px; border:1px solid #a8b49d; border-radius:6px; background:#fff; color:#34452d; }
+.bm-annotation-tools button { cursor:pointer; }
+.bm-annotation-tools button[aria-pressed="true"] { background:#547b42; color:white; }
+.bm-annotation-tools input { width:125px; min-width:0; }
+.bm-annotation-canvas { display:block; max-width:85vw; max-height:70vh; width:auto; height:auto; cursor:crosshair; touch-action:none; }
