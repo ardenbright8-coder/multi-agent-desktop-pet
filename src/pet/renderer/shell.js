@@ -24,8 +24,6 @@ const elements = {
   searchState: document.querySelector("#search-state"),
   searchResults: document.querySelector("#search-results"),
   diagnosticsList: document.querySelector("#diagnostics-list"),
-  petSize: document.querySelector("#pet-size"),
-  petSizeValue: document.querySelector("#pet-size-value"),
 };
 
 const labels = {
@@ -72,8 +70,6 @@ let searchTimer = null;
 let searchGeneration = 0;
 let activeTab = "sessions";
 let celebrationTimer = null;
-let previewTimer = null;
-let ambientNextAt = Date.now() + 7_000;
 let motionPreference = "lively";
 let activeInteractionEventId = null;
 let interactionSubmitting = false;
@@ -253,16 +249,19 @@ function renderSnapshot(next) {
   if (drawerOpen) renderDiagnostics();
 }
 
-// 询问／权限／完成面板的窗口高度跟着内容走（2026-10-01）。
-// 以前一律 740 高，这台机工作区才 778，一弹面板就挡住整条屏幕右边，下半截还是空的。
-// 抽屉和设置照旧给满高（返回 null，主进程用默认值）。
+// 询问／权限／完成面板和设置的窗口高度跟着内容走（2026-10-01）。
+// 以前一律 740 高，这台机工作区才 778，一弹面板就挡住整条屏幕右边，下半截还是空的
+// （面板开着时整个窗口收鼠标，透明的下半截也点不穿）。
+// 事件抽屉照旧给满高（返回 null，主进程用默认值）。
 const PANEL_TOP_BAND = 8;
 const PANEL_BOTTOM_GAP = 20;
 let panelHeightSent = null;
 
 function panelFitHeight() {
+  if (drawerOpen) return null;
+  if (settingsOpen) return Math.ceil(elements.settings.offsetHeight + PANEL_TOP_BAND + PANEL_BOTTOM_GAP);
   const panel = !elements.interaction.hidden ? elements.interaction : completionOpen ? elements.completionPanel : null;
-  if (!panel || drawerOpen || settingsOpen) return null;
+  if (!panel) return null;
   let height = 2; // 面板上下边框
   for (const child of panel.children) {
     if (child.hidden) continue;

@@ -75,30 +75,24 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     context.trayActions.openSettings();
     await delay(200);
     await visible(win, "#settings-panel");
+    await waitFor(() => win.getBounds().height < 400, 1_500, `设置就一排按钮，窗口却有 ${win.getBounds().height} 高，透明的下半截会挡鼠标`);
     await click(win, ".motion-option[data-motion='calm']");
     await rendererAssert(win, "document.body.dataset.motion === 'calm' && document.querySelector(\".motion-option[data-motion='calm']\").getAttribute('aria-pressed') === 'true'", "Calm motion button did not apply");
     await click(win, ".motion-option[data-motion='normal']");
     await rendererAssert(win, "document.body.dataset.motion === 'normal'", "Normal motion button did not apply");
     await click(win, ".motion-option[data-motion='lively']");
     await rendererAssert(win, "document.body.dataset.motion === 'lively'", "Lively motion button did not apply");
-    await click(win, "#pet-size");
-    await press(win, "Home");
-    // 单次快照断言会误伤键盘事件送达的延迟（实机 flake：End 键偶尔不生效），
-    // 滑杆要响应 Home/End 是意图，改成轮询等它生效。
-    await waitForRenderer(win, "document.querySelector('#pet-size').value === '70' && document.querySelector('#pet-size-value').textContent === '70%'", 2_000);
-    await press(win, "End");
-    await waitForRenderer(win, "document.querySelector('#pet-size').value === '140' && document.querySelector('#pet-size-value').textContent === '140%'", 2_000);
     await click(win, "#settings-close");
     await hidden(win, "#settings-panel");
     context.trayActions.openSettings();
     await delay(200);
-    await rendererAssert(win, "document.querySelector('#pet-size').value === '140' && document.body.dataset.motion === 'lively'", "Appearance preferences were not retained after closing settings");
+    await rendererAssert(win, "document.body.dataset.motion === 'lively'", "Appearance preferences were not retained after closing settings");
     await click(win, "#settings-close");
     const reloaded = onceDidFinishLoad(win);
     win.webContents.reload();
     await reloaded;
     await delay(180);
-    await rendererAssert(win, "document.querySelector('#pet-size').value === '140' && document.querySelector('#pet-size-value').textContent === '140%' && document.body.dataset.motion === 'lively'", "Appearance preferences were not restored after renderer restart");
+    await rendererAssert(win, "document.body.dataset.motion === 'lively' && !document.querySelector('#pet-size')", "Appearance preferences were not restored after renderer restart");
 
     const question = makeQuestionEvent();
     hub.publish(question);
@@ -333,7 +327,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       version: context.version,
       fixedButtonsClicked: 14,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm", "option-in-view"],
-      inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
+      inputs: ["search-hit", "search-empty", "tab-keyboard", "settings-restart-restore"],
       window: ["panel-fits-content", "panel-keeps-pet-visible","always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "recall", "hide", "open-drawer", "open-settings", "flip-note", "open-logs", "simulate", "quit"],
       interactionAnswersVerified: true,

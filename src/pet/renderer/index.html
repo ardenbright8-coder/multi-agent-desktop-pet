@@ -77,17 +77,11 @@
       <section id="settings-panel" class="settings-panel" data-interactive aria-labelledby="settings-heading" hidden>
         <div class="settings-header">
           <div>
-            <h2 id="settings-heading">幼苗设置</h2>
-            <p>只调大小和活泼程度；动作跟着 Agent 状态自动变化</p>
+            <h2 id="settings-heading">设置</h2>
+            <p>Windows 关了动画时，选「安静」面板弹出就不带动画</p>
           </div>
           <button id="settings-close" class="text-button" type="button">收起</button>
         </div>
-
-        <label class="size-control" for="pet-size">
-          <span>幼苗大小</span>
-          <output id="pet-size-value" for="pet-size">100%</output>
-        </label>
-        <input id="pet-size" class="range-control" type="range" min="70" max="140" step="5" value="100" />
 
         <fieldset class="motion-control">
           <legend>活泼程度</legend>
@@ -98,7 +92,6 @@
           </div>
         </fieldset>
 
-        <p class="settings-note">桌面幼苗已移除（2026-08-14），大小与活泼程度设置不再生效；如需恢复请告知。</p>
       </section>
 
       <!-- 完成弹窗：任何 Agent 干完活就弹，跟权限/询问一个壳。

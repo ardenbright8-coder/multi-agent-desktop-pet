@@ -145,7 +145,6 @@ elements.searchInput.addEventListener("input", () => {
   activateTab("history");
 });
 
-elements.petSize.addEventListener("input", () => applyPetSize(elements.petSize.value, true));
 for (const option of document.querySelectorAll(".motion-option")) {
   option.addEventListener("click", () => applyMotionPreference(option.dataset.motion, true));
 }
@@ -167,7 +166,6 @@ setInterval(() => {
   window.agentPet.snapshot().then(renderSnapshot).catch(() => {});
   if (activeTab === "diagnostics") renderDiagnostics();
 }, 2_500);
-setInterval(runAmbientMotion, 1_000);
 // 卡顿检测：Agent 卡了 5 分钟没动静要亮红灯，但这事不一定有新事件推过来，
 // 所以定时自己刷一遍座位灯色（灯色按当前时间重算，灯没变就不重画）。
 setInterval(() => { renderSeats(snapshot.sessions); }, 10_000);

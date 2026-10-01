@@ -10,7 +10,7 @@
 | `window-position.ts` | 位置计算：默认位置、拉回可见屏幕 |
 | `focus-agent.ts` | 点「返回终端」时先按进程号、再按标题把对应终端拉到前台 |
 | `renderer\shell.js` | 界面底座：DOM 引用、共享状态、总调度 `renderSnapshot`。**必须第一个加载** |
-| `renderer\pet.js` | 幼苗姿态、庆祝、随机小动作、拿起放下、大小和活泼程度 |
+| `renderer\pet.js` | 幼苗姿态、庆祝、拖动、活泼程度（2026-10-01 删了没效果的大小滑杆和随机小动作） |
 | `renderer\boot.js` | 绑事件、开定时器。**必须最后一个加载** |
 | `renderer\index.html` `styles.css` | 页面骨架和样式 |
 
@@ -59,7 +59,7 @@ createTray  createTrayActions  PetTrayActions
   幼苗区是 `inset: 0` 占满窗口的，给它 `data-interactive` 等于整块窗口都吃鼠标，
   穿透就全废了（2026-08-12 踩过）。
 - **页面缩放已关死**：`setVisualZoomLevelLimits(1,1)` + `zoom-changed` 复位 + `before-input-event`
-  拦 Ctrl +/-/0 + 拦 Ctrl+滚轮。幼苗大小走设置里的滑杆，不要第二套缩放（用户明确要求）。
+  拦 Ctrl +/-/0 + 拦 Ctrl+滚轮。不要第二套缩放（用户明确要求）。
 - **状态框摆哪边**：`syncNoteSide()` 按幼苗在屏幕哪半边自动决定（左半屏→框在右，右半屏→框在左），
   让框永远朝屏幕中间展开。托盘「聊天框换个边」可手动翻，**手动翻过就钉住不再自动**。
 - 🚨 **界面这几份 js 是普通 script，不是 ES module。** 页面走 `loadFile()`（file:// 协议），**ESM 的 `import` 在 file:// 下会被拦死**。所以它们靠 `index.html` 里的 `<script>` 顺序加载、共享同一个全局作用域。加新文件就在 html 里加一行，**顺序是 shell → pet → panel → drawer → boot，别调**。

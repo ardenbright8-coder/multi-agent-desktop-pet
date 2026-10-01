@@ -1,8 +1,9 @@
-// 幼苗本身：姿态、庆祝、随机小动作、拿起放下，以及设置面板里的大小和活泼程度。
+// 幼苗本身：姿态、庆祝、拖动，以及设置面板里的活泼程度。
+// 幼苗 2026-08-14 已隐藏；2026-10-01 删了没效果的大小滑杆和每秒跑一次的随机小动作。
 // 状态在 shell.js 里声明，这份只管改它。
 
 function updatePetPose() {
-  if (celebrationTimer || previewTimer) return;
+  if (celebrationTimer) return;
   const state = snapshot.sessions[0]?.state || "idle";
   setPetPose(poseByState[state]);
 }
@@ -18,42 +19,6 @@ function celebrateCompletion() {
     celebrationTimer = null;
     updatePetPose();
   }, 1_450);
-}
-
-function previewPose(pose, duration) {
-  if (previewTimer) clearTimeout(previewTimer);
-  if (celebrationTimer) {
-    clearTimeout(celebrationTimer);
-    celebrationTimer = null;
-  }
-  setPetPose(pose);
-  const defaultDuration = pose === "jumping" ? 1_500 : pose.startsWith("working-") ? 2_300 : 2_050;
-  previewTimer = setTimeout(() => {
-    previewTimer = null;
-    updatePetPose();
-  }, duration || defaultDuration);
-}
-
-function runAmbientMotion() {
-  if (Date.now() < ambientNextAt) return;
-  const state = snapshot.sessions[0]?.state || "idle";
-  if (motionPreference === "calm" || drawerOpen || settingsOpen || celebrationTimer || previewTimer) {
-    ambientNextAt = Date.now() + 3_000;
-    return;
-  }
-  if (state === "working") {
-    const workingPoses = motionPreference === "lively" ? ["running", "working-rope", "working-focus", "working-typing"] : ["running", "working-focus", "working-typing"];
-    previewPose(workingPoses[Math.floor(Math.random() * workingPoses.length)], 2_300);
-    ambientNextAt = Date.now() + (motionPreference === "lively" ? 3_600 : 6_000);
-    return;
-  }
-  if (state !== "idle") {
-    ambientNextAt = Date.now() + 3_000;
-    return;
-  }
-  const poses = motionPreference === "lively" ? ["waving", "jumping", "review", "jumping"] : ["waving", "review", "jumping"];
-  previewPose(poses[Math.floor(Math.random() * poses.length)]);
-  ambientNextAt = Date.now() + (motionPreference === "lively" ? 5_500 : 10_000);
 }
 
 // 拖动：按住幼苗直接拖，松手放下——跟别的桌面宠物一个手感。
@@ -126,10 +91,6 @@ function closeSettings(restorePermission = true) {
   if (!settingsOpen) return;
   settingsOpen = false;
   elements.settings.hidden = true;
-  if (previewTimer) {
-    clearTimeout(previewTimer);
-    previewTimer = null;
-  }
   updatePetPose();
   if (restorePermission) restoreInteractionAfterPanelClose();
   syncPanelVisibility();
@@ -138,18 +99,7 @@ function closeSettings(restorePermission = true) {
 function restorePetPreferences() {
   let preferences = {};
   try { preferences = JSON.parse(localStorage.getItem("agent-pet:appearance") || "{}"); } catch { preferences = {}; }
-  applyPetSize(preferences.size || 100, false);
   applyMotionPreference(preferences.motion || "lively", false);
-}
-
-function applyPetSize(value, persist) {
-  const size = Math.max(70, Math.min(140, Number(value) || 100));
-  elements.pet.style.setProperty("--user-pet-scale", String(size / 100));
-  elements.petSize.value = String(size);
-  elements.petSizeValue.textContent = `${size}%`;
-  // 幼苗那条顶带：面板弹出时幼苗隐藏（styles.css :has 规则），所以顶带固定小顶距 8px。
-  document.documentElement.style.setProperty("--pet-band", "8px");
-  if (persist) savePetPreferences();
 }
 
 function applyMotionPreference(value, persist) {
@@ -160,12 +110,11 @@ function applyMotionPreference(value, persist) {
     option.classList.toggle("active", selected);
     option.setAttribute("aria-pressed", String(selected));
   }
-  ambientNextAt = Date.now() + (motionPreference === "lively" ? 4_000 : 8_000);
   if (persist) savePetPreferences();
 }
 
 function savePetPreferences() {
   try {
-    localStorage.setItem("agent-pet:appearance", JSON.stringify({ size: Number(elements.petSize.value), motion: motionPreference }));
+    localStorage.setItem("agent-pet:appearance", JSON.stringify({ motion: motionPreference }));
   } catch { /* appearance preferences are optional */ }
 }
