@@ -10,6 +10,9 @@
 - **改面板长相、文案** → `design（现行设计·表述规则）/` 和本夹 `DESIGN.md`。两份面板参考图是用户敲定的，以图为准
 - **接一家新 Agent** → 本夹 `AGENT_INTEGRATION.md`
 - **Agent 看板（`src/bookmark/`）的设定和维修记录** → 不在本项目，在隔壁 `书签工具` 项目。看板只是借住在这个程序外壳里
+- **跟用户说话、写注释用什么词** → 项目根 `00_叫什么（咱俩说话的统一叫法）.md`。进项目先扫一眼
+- **聊定的设定（为什么这么做）** → 项目根 `设计思路（聊定的设定·一条两份）/`，一条两份。新定一条就往里加，不建 `docs/adr/`
+- **拆好的任务单** → 本夹 `.scratch/<功能名>/`，一张一个 markdown，用到再建。不用 GitHub 的任务功能；分类用默认五个标签 `needs-triage` `needs-info` `ready-for-agent` `ready-for-human` `wontfix`
 
 ## 这库怎么转
 
@@ -60,9 +63,12 @@ shared（谁都不依赖）
 
 ## 改完必须过这几关
 
+0. **提交时自动查**：`.githooks/pre-commit` 跑边界检查和类型检查，几秒。新克隆的库先跑一次 `git config core.hooksPath .githooks` 才生效
 1. `node 检查边界.mjs` → 退出码 0
 2. `npm test` → 全过。2026-10-01 基线：147 + 4 项，连跑三轮一致
-3. 动了界面的，再跑 `npm run controls`、`npm run lifecycle`、`npm run smoke`。controls 基线 `buttons=14 dynamic=6 inputs=6 window=11`
+3. 动了界面的，再跑 `npm run controls`、`npm run lifecycle`、`npm run smoke`。controls 基线 `buttons=14 dynamic=6 inputs=6 window=12`
+
+🚨 **`npm test` 和所有 `npm run` 测试都会先清空 `dist/` 再重建，而桌面图标跑的就是 `dist/`。** 用户的桌宠开着时跑测试，等于在它脚底下换地板。跑之前看一眼有没有 `--skip-integration-install` 那个 electron 进程在跑；在跑就提醒用户，或者跑完提醒他重开一次桌宠。
 4. 动了接入的，跑 `npm run integration:smoke`
 5. **桌面和开机那个图标跑的是本夹的 `dist/`**：它们都指项目根 `入口（开发版·跑源码）/多Agent桌面宠物.exe`。改完 `npm run build`（或在看板里 Ctrl+R），重开就是新代码。`release-*` 打包盒不会跟着变，也不许有图标指它
 
@@ -72,5 +78,5 @@ shared（谁都不依赖）
 
 ---
 
-_2026-10-01 建（待用户过目）。照「写代码工作流」开局建库那套补的封档：同一天补了换行／编码规定文件、旧打包夹挪出代码夹、下划线夹不进安装包。_
+_2026-10-01 建（待用户过目）。照编程 skill 的「老代码库保养办法」做的第一轮：换行／编码规定文件、旧打包夹挪出代码夹、下划线夹不进安装包、叫法表、设计思路夹、面板高度跟着内容走、提交前自动查。_
 _结构变了这页要跟着改。_

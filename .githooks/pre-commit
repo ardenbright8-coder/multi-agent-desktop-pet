@@ -1,0 +1,6 @@
+#!/bin/sh
+# 提交前自动查：边界检查 + 类型检查。几秒跑完。
+# 不跑 npm test：它会先清空 dist/，而桌面那个图标跑的就是 dist/，桌宠开着时会被釜底抽薪。
+# 启用（每个新克隆跑一次）：git config core.hooksPath .githooks
+node 检查边界.mjs || { echo "提交被拦：边界检查没过"; exit 1; }
+node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit || { echo "提交被拦：类型检查没过"; exit 1; }
