@@ -91,6 +91,8 @@ const PANEL_VERSION: string = (() => {
 })();
 
 let panel: BrowserWindow | null = null;
+/** 退出程序时才置真；窗口 closed 时据此区分「真退出」和「被意外关掉要重建」。 */
+let panelShuttingDown = false;
 let store: BookmarkStore | null = null;
 let roster: AgentRoster | null = null;
 let hotkeyRegistered = false;
@@ -377,6 +379,7 @@ export function toggleBookmarkPanel(): void {
 
 /** 退出清理：退热键、停定时器、关窗口。数据在磁盘上，不丢。 */
 export function closeBookmarkPanel(): void {
+  panelShuttingDown = true;
   try {
     if (hotkeyRegistered) {
       globalShortcut.unregister(BOOKMARK_HOTKEY);
@@ -481,8 +484,20 @@ function createPanel(): BrowserWindow {
   });
   win.on("show", () => setTimeout(() => keepAcrylicLit(win), 0));
   wireBoardZoom(win);
+  // 🚨 看板永远常驻（设定03）。窗口被意外关掉（Alt+F4、系统收走）就记一笔，1 秒后重建；
+  // 只有退出程序走 closeBookmarkPanel 才算真关。2026-10-01 实机：窗口没了、日志一个字没有，托盘点了才回来。
   win.on("closed", () => {
-    panel = null;
+    if (panel === win) panel = null;
+    if (panelShuttingDown) return;
+    log.出事("看板窗口被关了（不是退出程序），1 秒后重建", undefined, "window");
+    setTimeout(() => {
+      if (panelShuttingDown || panel) return;
+      try {
+        ensurePanel();
+      } catch (error) {
+        log.出事("看板重建失败（托盘「书签台」还能拉回来）", error, "window");
+      }
+    }, 1_000);
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     // 面板里不开网页：链接一律丢给系统浏览器。

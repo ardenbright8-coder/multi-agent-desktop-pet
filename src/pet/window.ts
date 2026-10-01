@@ -30,18 +30,19 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 //   上下各空 10px，而画框的圆角和阴影是按 290 高画的 → 木框四角和窗口边错开，
 //   看着就是「背景错位」（2026-08-14 用户报的）。改高度比改 CSS 干净：图正好铺满窗口。
 //   👉 以后要换背景图，**同时改这里的高度**，别让两边比例再分家。
+//   2026-10-01 用户嫌太大：背景裁成 6 座（1672×721），窗口物理 **400×173**（400 × 721 ÷ 1672 = 172.5）。
 //   ⚠️ screen 在 app ready 前访问会挂（Electron 限制），所以这里只给默认值（100% 缩放），
 //   真实值在 createPetWindow 里按 scaleFactor 重算（见 ensurePetWindowSize）。
 let PET_SCALE = 1;
-export let PET_WINDOW_SIZE = { width: 480, height: 270 };
+export let PET_WINDOW_SIZE = { width: 400, height: 173 };
 export const PET_PHYSICAL_MARGIN = 16; // 距工作区顶部/右侧的物理像素
 
-/** 按当前主屏 scaleFactor 重算窗口逻辑尺寸（物理 480×270，= 场景图 1672×941 同比例）。 */
+/** 按当前主屏 scaleFactor 重算窗口逻辑尺寸（物理 400×173，= 场景图 1672×721 同比例）。 */
 function ensurePetWindowSize(): void {
   PET_SCALE = Math.max(1, screen.getPrimaryDisplay().scaleFactor || 1);
   PET_WINDOW_SIZE = {
-    width: Math.max(100, Math.round(480 / PET_SCALE)),
-    height: Math.max(60, Math.round(270 / PET_SCALE)),
+    width: Math.max(100, Math.round(400 / PET_SCALE)),
+    height: Math.max(60, Math.round(173 / PET_SCALE)),
   };
 }
 // 面板窗口最高 740（这台机工作区 778）。抽屉、设置用满高；
@@ -96,7 +97,7 @@ export function destroyPetWindow(): void {
 }
 
 export function createPetWindow(hub: AgentHub): BrowserWindow {
-  ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 480×270 → 逻辑）
+  ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 400×173 → 逻辑）
   const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
   const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);

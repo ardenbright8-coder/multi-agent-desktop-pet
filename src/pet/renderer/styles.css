@@ -103,14 +103,14 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
    撑满会踩这个坑：窗口高度按 scaleFactor 换算完难免差个几像素，图 contain 之后
    上下留一条空白，而圆角和阴影是照窗口边画的 → 木框四角和窗口边错开，
    看着就是「背景错位」（2026-08-14 用户报的）。
-   让画框自己保持 1672:941 并垂直居中，圆角/阴影永远咬着图边，换背景图也不会再错。 */
+   让画框自己保持 1672:721（2026-10-01 改 6 座后的图）并垂直居中，圆角/阴影永远咬着图边，换背景图也不会再错。 */
 .scene-frame {
   position: absolute;
   left: 0;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
-  aspect-ratio: 1672 / 941;
+  aspect-ratio: 1672 / 721;
   max-height: 100%;
   z-index: 0;
   border-radius: 16px;
@@ -133,7 +133,8 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
 }
 
 /* ===== 各 Agent 座位环境（v0.1.24 最终版背景）=====
-   座位对齐最终版背景图（1672x941，带圆角木框）9 套工位椅子中心。
+   座位对齐背景图（1672x721，带圆角木框）6 套工位椅子中心。
+   2026-10-01 用户嫌 9 座太大、最多用到 6 个：原图 1672x941 裁掉最前排 3 张桌子，横坐标不变，bottom 按新图高换算，小人放大约 1/4。
    坐标按 2026-08-14 vision 标定（椅子中心，±1%）；图 contain 在画框内。
    尺寸用百分比：窗口/画框跨缩放自适应（100%~179%）。 */
 .agent-seats {
@@ -142,7 +143,7 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   top: 50%;
   transform: translate(-50%, -50%);
   width: 100%;
-  aspect-ratio: 1672 / 941;
+  aspect-ratio: 1672 / 721;
   max-height: 100%;
   z-index: 4;
   pointer-events: none;
@@ -166,25 +167,22 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   clip-path: inset(15% 18% 0 18%);
 }
 
-/* 9 个落位（2026-08-14 从 classroom.png 网格标定）：
+/* 6 个落位（2026-08-14 从 9 座原图网格标定，2026-10-01 裁成 6 座后换算）：
    left = 椅背中心 x；bottom = 桌面上沿距图底；width = 素材画布宽。
    🚨 width 是**画布**宽不是小人宽：`normalize-avatars.ps1` 把小人本体统一排成画布的 62%，
    所以想让小人本体跟椅背一样宽（≈7.8% 图宽），画布得给到 12.6%。改了归一化比例，这里跟着改。
-   三排近大远小（远排小 10%、近排大 10%），跟房间透视对上。 */
-.seat-pos-0 { left: 29.3%; bottom: 65.4%; width: 11.3%; }
-.seat-pos-1 { left: 50.8%; bottom: 65.4%; width: 11.3%; }
-.seat-pos-2 { left: 72.7%; bottom: 65.4%; width: 11.3%; }
-.seat-pos-3 { left: 28.8%; bottom: 45.5%; width: 12.6%; }
-.seat-pos-4 { left: 50.5%; bottom: 45.5%; width: 12.6%; }
-.seat-pos-5 { left: 72.4%; bottom: 45.5%; width: 12.6%; }
-.seat-pos-6 { left: 27.9%; bottom: 23.6%; width: 13.9%; }
-.seat-pos-7 { left: 49.8%; bottom: 23.6%; width: 13.9%; }
-.seat-pos-8 { left: 72.2%; bottom: 23.6%; width: 13.9%; }
+   两排近大远小（后排小、前排大），跟房间透视对上。
+   🚨 先坐前排（0~2 是前排）：顶上的状态框会压住后排中间那个小人的头，三个以内的会话一个都不被挡。 */
+.seat-pos-0 { left: 28.8%; bottom: 28.9%; width: 16%; }
+.seat-pos-1 { left: 50.5%; bottom: 28.9%; width: 16%; }
+.seat-pos-2 { left: 72.4%; bottom: 28.9%; width: 16%; }
+.seat-pos-3 { left: 29.3%; bottom: 54.8%; width: 14.5%; }
+.seat-pos-4 { left: 50.8%; bottom: 54.8%; width: 14.5%; }
+.seat-pos-5 { left: 72.7%; bottom: 54.8%; width: 14.5%; }
 
 /* 前排盖后排，符合房间透视（DOM 顺序按会话优先级排，不能靠它） */
-.seat-pos-0, .seat-pos-1, .seat-pos-2 { z-index: 1; }
-.seat-pos-3, .seat-pos-4, .seat-pos-5 { z-index: 2; }
-.seat-pos-6, .seat-pos-7, .seat-pos-8 { z-index: 3; }
+.seat-pos-3, .seat-pos-4, .seat-pos-5 { z-index: 1; }
+.seat-pos-0, .seat-pos-1, .seat-pos-2 { z-index: 2; }
 
 /* 有人的座位：可点，但**一点视觉反馈都不给**。
    用户 2026-08-14 拍板：hover 冒出来的那个蓝框不要显示——点击是「底层功能」（点小人/椅子直接切回那个终端），

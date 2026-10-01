@@ -45,7 +45,7 @@ app.whenReady().then(async () => {
     protocolVersion: 1,
   });
   const now = Date.now();
-  // 9 个会话全坐满；含一个 done（完成）状态验证通用表情图回落（assets/avatars/done.png）
+  // 9 个会话，只坐得下 6 个（多的不显示）；含一个 done（完成）状态验证通用表情图回落（assets/avatars/done.png）
   hub.publish(ev("state.working", "pi", "pi-1", now, { project: "宠物项目" }));
   hub.publish(ev("context.updated", "opencode", "oc-1", now));
   hub.publish(ev("state.working", "claude-code", "cc-1", now - 6 * 60 * 1000));
@@ -89,16 +89,15 @@ app.whenReady().then(async () => {
   })()`);
   console.log("SEATS_DOM=" + JSON.stringify(dom, null, 1));
 
-  // 期望：9 个座位对齐背景图里的 9 把椅背（2026-08-14 重标）。
+  // 期望：6 个座位对齐背景图里的 6 把椅背（2026-08-14 标定，2026-10-01 裁成 6 座后换算）。
   // 落位是 left ＋ bottom 定的（画布底边压桌面上沿），这里换算成中心点：
-  //   中心 y = 1 - bottom - 画布高的一半，画布是正方形，高 = width × 1672/941。
+  //   中心 y = 1 - bottom - 画布高的一半，画布是正方形，高 = width × 1672/721。
   const expected = [
-    [0.293, 0.2455], [0.508, 0.2455], [0.727, 0.2455],
-    [0.288, 0.433], [0.505, 0.433], [0.724, 0.433],
-    [0.279, 0.6405], [0.498, 0.6405], [0.722, 0.6405],
+    [0.288, 0.5255], [0.505, 0.5255], [0.724, 0.5255], // 前排先坐
+    [0.293, 0.284], [0.508, 0.284], [0.727, 0.284],
   ];
-  const okCount = dom.seatCount === 9;
-  const okBg = dom.bgLoaded && dom.bgSize === "1672x941";
+  const okCount = dom.seatCount === 6;
+  const okBg = dom.bgLoaded && dom.bgSize === "1672x721";
   // 座位坐标 = 图内百分比 × agent-seats 实际尺寸（图 contain 在画框内，尺寸随窗口/缩放变化）
   const sb = dom.seatsBox;
   const okPos = dom.positions.every((p, i) => {
@@ -107,9 +106,9 @@ app.whenReady().then(async () => {
     const dy = Math.abs(p.y - (sb.y + want[1] * sb.h));
     return dx <= 16 && dy <= 16;
   });
-  // 画框：有圆角（不是 0）、和场景图同比例铺满窗口（物理 480×270 = 1672:941，不留空白条）
+  // 画框：有圆角（不是 0）、和场景图同比例铺满窗口（物理 400×173 = 1672:721，不留空白条）
   const frameRatio = dom.frame.w / dom.frame.h;
-  const okFrame = dom.frame.r !== "0px" && dom.frame.w > 0 && Math.abs(frameRatio - 1672 / 941) < 0.02;
+  const okFrame = dom.frame.r !== "0px" && dom.frame.w > 0 && Math.abs(frameRatio - 1672 / 721) < 0.02;
   const okNoDots = dom.noDots === 0;
   // done 会话（pi-2，expr=done）→ 素材降级到通用 done.png 且加载成功（不隐藏）
   const doneSeat = dom.avatars.find((a) => a.expr === "done");

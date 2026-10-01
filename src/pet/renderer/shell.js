@@ -156,7 +156,7 @@ function refreshPetPose() {
 }
 
 // ===== 各 Agent 座位环境（v0.1.23 从「气泡条」改版，第三版：表情小人）=====
-// 环境 = 像素教室背景图（assets/classroom.png，用户原型图），9 套工位就是 9 个座位。
+// 环境 = 像素教室背景图（assets/classroom.png，用户原型图），6 套工位就是 6 个座位（2026-10-01 从 9 座裁成 6 座，用户最多同时用 6 个）。
 // 座位 = 椅子贴片（assets/seats/chair-0~8.png，从背景原位抠出贴回无缝）+ 坐在椅子上的小人 + 状态灯。
 // 小人素材 = assets/avatars/<agent>.png，按状态分表情：
 //   <agent>-working.png（干活） / <agent>-error.png（报错） / <agent>-done.png（开心完成） / <agent>-waiting.png（疑问）
@@ -164,7 +164,7 @@ function refreshPetPose() {
 //   用户 2026-08-14 拍板：不要 CSS 像素小人占位，表情图用户自己提供。
 // 灯色规矩沿用拍的板（状态灯保留，集成到表情之外仍亮着）：
 //   绿 = 工作中 / 黄 = 休息中 / 红 = 卡顿·故障。
-const SEAT_COUNT = 9;
+const SEAT_COUNT = 6;
 const SEAT_STUCK_MS = 5 * 60 * 1000;
 let seatSignature = null;
 
@@ -215,7 +215,7 @@ function filledSeatHtml(session, now, index) {
 
 // 每次快照都调，但只在「哪几个会话 + 各自灯色」变了才重画 DOM——
 // 干活时快照来得很快，每次都重建会让座位闪烁（用户视力不好，不许闪）。
-// 会话按优先级排序后依次坐进 seat-pos-0~8；空工位不渲染（背景图里本来就有）。
+// 会话按优先级排序后依次坐进 seat-pos-0~5；空工位不渲染（背景图里本来就有）。
 function renderSeats(sessions) {
   const now = Date.now();
   const seatSessions = (sessions || []).slice(0, SEAT_COUNT);
