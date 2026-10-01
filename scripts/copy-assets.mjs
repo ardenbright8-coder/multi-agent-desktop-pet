@@ -18,6 +18,8 @@ function copyNonTypeScript(from, to) {
     const source = join(from, entry.name);
     const target = join(to, entry.name);
     if (entry.isDirectory()) {
+      // 下划线开头的夹是旧版备份和没处理完的素材（_old、_素材暂存…），只留在源码里，不进 dist 和安装包
+      if (entry.name.startsWith("_")) continue;
       copyNonTypeScript(source, target);
       continue;
     }
