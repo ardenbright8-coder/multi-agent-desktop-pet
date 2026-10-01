@@ -253,11 +253,31 @@ function renderSnapshot(next) {
   if (drawerOpen) renderDiagnostics();
 }
 
+// 询问／权限／完成面板的窗口高度跟着内容走（2026-10-01）。
+// 以前一律 740 高，这台机工作区才 778，一弹面板就挡住整条屏幕右边，下半截还是空的。
+// 抽屉和设置照旧给满高（返回 null，主进程用默认值）。
+const PANEL_TOP_BAND = 8;
+const PANEL_BOTTOM_GAP = 20;
+let panelHeightSent = null;
+
+function panelFitHeight() {
+  const panel = !elements.interaction.hidden ? elements.interaction : completionOpen ? elements.completionPanel : null;
+  if (!panel || drawerOpen || settingsOpen) return null;
+  let height = 2; // 面板上下边框
+  for (const child of panel.children) {
+    if (child.hidden) continue;
+    height += child.classList.contains("interaction-scroll") ? child.scrollHeight : child.offsetHeight;
+  }
+  return Math.ceil(height + PANEL_TOP_BAND + PANEL_BOTTOM_GAP);
+}
+
 function syncPanelVisibility() {
   const visible = drawerOpen || settingsOpen || completionOpen || !elements.interaction.hidden;
-  if (panelVisible === visible) return;
+  const height = visible ? panelFitHeight() : null;
+  if (panelVisible === visible && panelHeightSent === height) return;
   panelVisible = visible;
-  window.agentPet.setPanelVisibility(visible);
+  panelHeightSent = height;
+  window.agentPet.setPanelVisibility(visible, height ?? undefined);
 }
 
 function activateTab(name) {

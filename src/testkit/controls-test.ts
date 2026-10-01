@@ -162,6 +162,9 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     // 错误提示必须钉在滚动区外面（否则报错也看不见）
     const errorPinned = await evaluate<boolean>(win, "!document.querySelector('.interaction-scroll').contains(document.querySelector('#interaction-error'))");
     assert.ok(errorPinned, "错误提示还在滚动正文里，会被滚出视野");
+    // 面板窗口高度跟着内容走：内容装得下就不该再出滚动条，也不该长到 740 满高（2026-10-01 用户嫌挡东西）
+    await waitFor(() => evaluate<boolean>(win, "(() => { const s = document.querySelector('#interaction-panel .interaction-scroll'); return s.scrollHeight <= s.clientHeight + 2; })()"), 1_500, "权限面板内容没装下——窗口高度没跟着内容走");
+    assert.ok(win.getBounds().height < 740, `权限面板窗口还是满高 ${win.getBounds().height}`);
     await click(win, "[data-prompt-id='permission'] input[value='once']");
     await click(win, "#interaction-confirm");
     await waitForRenderer(win, "document.querySelector('#interaction-panel').hidden");
@@ -311,6 +314,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     hub.publish(makeEvent("task.completed", "completion-a", { summary: "A 干完了" }));
     await visible(win, "#completion-panel");
     await rendererAssert(win, "document.querySelector('#completion-explanation').textContent.includes('A 干完了')", "完成弹窗没带上摘要");
+    await waitFor(() => win.getBounds().height < 400, 1_500, `完成面板就两行字，窗口却有 ${win.getBounds().height} 高`);
     await click(win, "#completion-return");
     await hidden(win, "#completion-panel");
     hub.publish(makeEvent("state.working", "completion-b", { summary: "B 在干活" }));
@@ -330,7 +334,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
       fixedButtonsClicked: 14,
       dynamicControls: ["radio", "checkbox", "custom-text", "pending-reopen", "fallback-confirm", "option-in-view"],
       inputs: ["search-hit", "search-empty", "range-home", "range-end", "tab-keyboard", "settings-restart-restore"],
-      window: ["panel-keeps-pet-visible", "always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
+      window: ["panel-fits-content", "panel-keeps-pet-visible","always-on-top", "click-through", "pet-drag-start", "pet-drag-move", "pet-drag-clamped", "pet-drag-no-growth", "pet-drag-end", "hide", "tray-restore", "close-to-tray"],
       trayCallbacks: ["show", "recall", "hide", "open-drawer", "open-settings", "flip-note", "open-logs", "simulate", "quit"],
       interactionAnswersVerified: true,
     };

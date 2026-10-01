@@ -11,7 +11,7 @@ declare global {
       moveWindowToPointer(position: { screenX: number; screenY: number; anchorX: number; anchorY: number }): void;
       finishWindowMove(): void;
       setPetPickedUp(pickedUp: boolean): void;
-      setPanelVisibility(visible: boolean): void;
+      setPanelVisibility(visible: boolean, height?: number): void;
       hideWindow(): void;
       onSnapshot(listener: (snapshot: HubSnapshot) => void): () => void;
     };

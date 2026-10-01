@@ -44,8 +44,16 @@ function ensurePetWindowSize(): void {
     height: Math.max(60, Math.round(270 / PET_SCALE)),
   };
 }
-// 高度尽量吃满工作区（这台机 778），面板让出幼苗顶带之后正文才不至于被压扁。
+// 面板窗口最高 740（这台机工作区 778）。抽屉、设置用满高；
+// 询问／权限／完成面板由界面量好内容高度传过来，内容少窗口就矮（2026-10-01，用户嫌面板挡东西）。
 export const PANEL_WINDOW_SIZE = { width: 440, height: 740 };
+const PANEL_MIN_HEIGHT = 200;
+let panelHeight = PANEL_WINDOW_SIZE.height;
+
+function fitPanelHeight(requested?: number): number {
+  if (!Number.isFinite(requested)) return PANEL_WINDOW_SIZE.height;
+  return Math.min(PANEL_WINDOW_SIZE.height, Math.max(PANEL_MIN_HEIGHT, Math.round(requested as number)));
+}
 
 // 面板往**下**长：窗口左上角不动，幼苗贴在窗口顶部，所以它纹丝不动。
 // （早先是往左上长，那时幼苗贴窗口底部；改成顶部对齐后必须跟着反过来，
@@ -184,7 +192,7 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
 const EDGE_SAFETY = 8;
 
 function designSize(): { width: number; height: number } {
-  return panelOpen ? PANEL_WINDOW_SIZE : PET_WINDOW_SIZE;
+  return panelOpen ? { width: PANEL_WINDOW_SIZE.width, height: panelHeight } : PET_WINDOW_SIZE;
 }
 
 function safeWindowSize(): { width: number; height: number } {
@@ -286,11 +294,19 @@ export function keepWindowOnVisibleDisplay(): void {
   persistWindowPosition();
 }
 
-export function setPanelVisibility(visible: boolean): void {
+export function setPanelVisibility(visible: boolean, height?: number): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   if (visible) {
+    const nextHeight = fitPanelHeight(height);
     if (panelOpen) {
+      // 面板开着换了内容（比如完成面板换成权限面板），高度跟着换，左上角不动
+      if (nextHeight !== panelHeight) {
+        panelHeight = nextHeight;
+        const current = mainWindow.getBounds();
+        moveTo(current.x, current.y);
+        log.记(`面板换内容，窗口高度改成 ${panelHeight}`, "setPanelVisibility");
+      }
       ensureFullyVisible();
       return;
     }
@@ -298,14 +314,15 @@ export function setPanelVisibility(visible: boolean): void {
     const before = mainWindow.getBounds();
     positionBeforePanel = { x: before.x, y: before.y };
     panelOpen = true;
+    panelHeight = nextHeight;
     mainWindow.setBounds({
       x: before.x,
       y: before.y,
       width: PANEL_WINDOW_SIZE.width,
-      height: PANEL_WINDOW_SIZE.height,
+      height: panelHeight,
     }, false);
     ensureFullyVisible();
-    log.记(`面板展开，窗口长大 ${before.x},${before.y} → ${mainWindow.getBounds().x},${mainWindow.getBounds().y}`, "setPanelVisibility");
+    log.记(`面板展开，窗口长大 ${before.x},${before.y} → ${mainWindow.getBounds().x},${mainWindow.getBounds().y} 高 ${panelHeight}`, "setPanelVisibility");
     applyMouseMode();
     return;
   }
