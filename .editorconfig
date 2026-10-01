@@ -1,0 +1,15 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+
+# Windows PowerShell 5.1 不带 BOM 会按 GBK 读中文，必乱码
+[*.ps1]
+charset = utf-8-bom
+
+[*.{bat,cmd}]
+end_of_line = crlf

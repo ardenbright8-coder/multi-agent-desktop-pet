@@ -1,4 +1,4 @@
-# 开机自启指固定入口（跑源码），不许再指 release-0.1.xx 打包盒。
+﻿# 开机自启指固定入口（跑源码），不许再指 release-0.1.xx 打包盒。
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $petRoot = Split-Path -Parent $projectRoot

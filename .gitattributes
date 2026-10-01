@@ -1,0 +1,14 @@
+# 换行符统一成 LF，不管谁在哪台机器上改都一样
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF，否则 cmd 读错行
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制，别碰
+*.png binary
+*.ico binary
+*.gif binary
+*.jpg binary
+*.webp binary
+*.exe binary
