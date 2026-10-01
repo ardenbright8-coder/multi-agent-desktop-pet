@@ -846,6 +846,37 @@ function bmBuildProjectRow(entry) {
   row.appendChild(name);
 
   if (entry.isDir) {
+    const kit = document.createElement("span");
+    kit.className = "proj-kit";
+    const kits = [
+      { label: "设计思路", rel: entry.relPath + "/设计思路.md", kind: "file" },
+      { label: "执行过程", rel: entry.relPath + "/执行过程.md", kind: "file" },
+      { label: "资源包", rel: entry.relPath + "/资源包", kind: "dir" },
+    ];
+    for (const item of kits) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "proj-kit-btn";
+      chip.textContent = item.kind === "dir" ? "📁 资源包" : item.label;
+      chip.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (item.kind === "file") {
+          void window.bookmark.projectsOpen(item.rel);
+          return;
+        }
+        void bmShowProjPop({ name: "资源包", relPath: item.rel, isDir: true }, chip);
+      });
+      chip.addEventListener("mouseenter", (event) => {
+        event.stopPropagation();
+        if (item.kind !== "dir") return;
+        void bmShowProjPop({ name: "资源包", relPath: item.rel, isDir: true }, chip);
+      });
+      kit.appendChild(chip);
+    }
+    row.appendChild(kit);
+  }
+
+  if (entry.isDir) {
     // 悬停自动弹目录预览（用户原话：鼠标碰到就弹，不用点）；半秒延迟防乱弹。
     let hoverTimer = null;
     row.addEventListener("mouseenter", () => {
@@ -916,10 +947,10 @@ async function bmShowProjPop(entry, anchor) {
   const panelRect = document.getElementById("app").getBoundingClientRect();
   const rect = anchor.getBoundingClientRect();
   pop.hidden = false;
-  let left = rect.right - panelRect.left + 8;
-  if (left + 200 > panelRect.width) left = Math.max(6, rect.left - panelRect.left - 206);
-  pop.style.left = `${left}px`;
-  pop.style.top = `${Math.max(6, rect.top - panelRect.top)}px`;
+  let left = rect.left - panelRect.left;
+  if (left + 220 > panelRect.width) left = Math.max(6, panelRect.width - 226);
+  pop.style.left = `${Math.max(6, left)}px`;
+  pop.style.top = `${rect.bottom - panelRect.top + 4}px`;
 }
 
 function bmHideProjPop() {

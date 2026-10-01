@@ -1,6 +1,6 @@
 # pet —— 窗口、画框和它里面的一切
 
-**这块管什么**：右上角那个木框小浮窗（物理 480×290）。窗口怎么建、放哪、什么形状、托盘菜单，以及画框里的座位/小人/状态框/右键菜单。**2026-08-14 起：桌面幼苗已移除**（`.pet { display:none }`，元素保留避免报错），功能全部集成到画框窗口（按住画框拖窗口、右键菜单）。
+**这块管什么**：右上角那个木框小浮窗（物理 480×270）。窗口怎么建、放哪、什么形状、托盘菜单，以及画框里的座位/小人/状态框/右键菜单。**2026-08-14 起：桌面幼苗已移除**（`.pet { display:none }`，元素保留避免报错），功能全部集成到画框窗口（按住画框拖窗口、右键菜单）。
 
 | 文件 | 管什么 |
 |---|---|
@@ -32,9 +32,12 @@ createTray  createTrayActions  PetTrayActions
 - 🚨 **桌面幼苗已移除（2026-08-14）**：`.pet { display: none !important }`，元素保留（pet.js/boot.js 还有引用，删了会报错）。动画/姿态全部不可见，pet.js 的 `beginPetDrag`/`endPetDrag` 已通用化成 `(event, targetEl)` 供画框拖动用。**不许把 .pet 恢复显示**（用户拍板不要幼苗）。
 - 🚨 **拖动 = 按住画框（`.scene-frame`）移动整个窗口**：boot.js 绑 scene-frame 的 pointerdown（排除 `.seat-filled`/`#status-note`/`#pet-menu`），窗口全屏可拖、锁工作区内、位置保存。
 - 🚨 **右键画框任意处 = 功能菜单**（`#pet-menu`）：详情/设置/藏起来/测试通知/打开日志/退出。新增 ipc `window:show` / `window:open-logs` / `window:quit`（window-ipc.ts）+ preload `showWindow/openLogs/quitApp`。托盘保留同样功能。
-- 🚨 **窗口物理尺寸固定 480×290**（`PET_WINDOW_SIZE`），按 `screen.getPrimaryDisplay().scaleFactor` 换算逻辑像素——**必须在 createPetWindow 里算（ensurePetWindowSize），模块顶层访问 screen 在 app ready 前会挂**。默认右上角（`PET_PHYSICAL_MARGIN`=16 物理像素）。
+- 🚨 **窗口物理尺寸固定 480×270**（`PET_WINDOW_SIZE`），按 `screen.getPrimaryDisplay().scaleFactor` 换算逻辑像素——**必须在 createPetWindow 里算（ensurePetWindowSize），模块顶层访问 screen 在 app ready 前会挂**。默认右上角（`PET_PHYSICAL_MARGIN`=16 物理像素）。
+  高度 270 = 480 ÷ (1672/941)，**跟背景图同比例**。早先 290 对不上，图 contain 之后上下各空 10px，木框四角和窗口边错开——用户 2026-08-14 报的「背景错位」就是这个。换背景图记得同时改这里。
+- 🚨 **画框 `.scene-frame` 自己带 `aspect-ratio: 1672/941` 并垂直居中，不是 `inset: 0` 撑满窗口。** 窗口高按 scaleFactor 换算难免差几像素，撑满就会让圆角/阴影照着窗口边画、和图边错开。让画框咬着图的比例走，是「背景错位」的第二道保险。
 - 🚨 **座位定位用百分比**（`.seat-pos-0~8`，相对 `.agent-seats` 的 aspect-ratio 容器），跨缩放自适应；`--pet-band` 固定 8px（面板弹出时画框+幼苗一起隐藏，:has 规则）。
-- 🚨 **背景 = 用户图 v2**（`assets/classroom.png`，1672×941，圆角木框，四角已透明化），`object-fit: contain` 完整显示；画框（`.scene-frame`）自带交互层+16px 圆角裁切，图自带的木框不再重复画 padding/边框。
+- 🚨 **背景 = 用户图 v2**（`assets/classroom.png`，1672×941，圆角木框，四角已透明化）。**这是用户的原型图定稿，别再「优化」它**——2026-08-14 用户以为背景被改了，实际是贴上去的小人素材糊住了显示器。
+- 🚨 **座位不许有任何视觉框。** hover 冒出来的边框/底色用户明确不要（2026-08-14）：点座位切回终端是「底层功能」，不该在画面上留痕。`.seat` 是 `border: 0`，hover/active/focus 一律不给样式。命中区靠 `clip-path: inset(15% 18% 0 18%)` 裁到小人本体那块——**不裁不行**：素材画布上方是大片透明留白，前排座位的留白会盖住后排的命中区，点了切错终端。
 - 🚨🚨 **别再用 `setShape()` 挡点击，它挡不住。** Electron 官方文档白纸黑字：**透明窗口的透明区域点不过去**，而 `setShape` 是实验性 API，在 Windows 上对 transparent＋layered 窗口不生效。页面里那句 `pointer-events: none` 只管网页内部，管不到系统层。
   → 结果就是那个 440×680 的透明矩形一直吃鼠标，人在底下点视频、点别的窗口全点不着（2026-08-12 用户报的 bug，根因就是这个）。
   **现在的正解**：窗口默认 `setIgnoreMouseEvents(true, { forward: true })` 整个让开，`forward` 保证穿透时仍收得到 mousemove；界面用 `document.elementFromPoint` 判断鼠标底下是不是 `[data-interactive]`，是才让主进程临时收回穿透。逻辑在 `window.ts` 的 `applyMouseMode()` 和 `renderer\pet.js` 的 `syncHitTest()`。

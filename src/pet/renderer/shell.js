@@ -210,7 +210,6 @@ function filledSeatHtml(session, now, index) {
   return `<button class="seat seat-filled seat-pos-${index}" type="button" data-interactive
     data-agent="${escapeHtml(session.agent)}" data-project="${escapeHtml(project)}" data-origin-pid="${session.originPid || 0}"
     aria-label="${escapeHtml(tip)}" title="${escapeHtml(tip)}">
-    <img class="seat-chair-img" src="assets/seats/chair-${index}.png" alt="" aria-hidden="true" draggable="false">
     <span class="seat-person" aria-hidden="true">
       <img class="seat-avatar" src="${escapeHtml(seatAvatarPath(session.agent, session.state))}"
         data-agent="${escapeHtml(session.agent)}" data-expr="${escapeHtml(SEAT_EXPRESSION[session.state] || "")}" data-step="0" alt="">

@@ -23,21 +23,25 @@ import { clampWindowPosition, defaultWindowPosition } from "./window-position";
 //   高 = 8 + 176×1.4 + 8 ≈ 265  ← 2026-08-13 加「各Agent状态气泡条」后长到 410。
 //   v0.1.23 气泡条改成「座位环境」，第二版：窗口背景 = 用户原型图（像素教室 1672×941 ≈ 1.78:1），
 //   9 个座位对齐图里 9 套工位。窗口 760 宽 = 左侧 640 教室图（≈1.78:1 几乎无变形）+ 右侧 120 透明区放幼苗。
-//   v0.1.23 第三版（2026-08-14 用户定规格）：窗口是右上角小浮窗，**物理尺寸固定 480×290**，
+//   v0.1.23 第三版（2026-08-14 用户定规格）：窗口是右上角小浮窗，**物理尺寸固定 480×270**，
 //   按 display.scaleFactor 换算 Electron 逻辑像素（Windows 100%/125%/150%/自定义缩放看到的窗口面积基本一致）。
-//   场景原图 1672×941 不压缩，界面里 object-fit: contain 缩小显示。
+//   🚨 高度 270 不是随手定的：**必须和场景图 1672×941 同比例**（480 × 941 ÷ 1672 = 270.1）。
+//   早先是 290，比例 1.655 对不上图的 1.778，`object-fit: contain` 之后图只有 480×270，
+//   上下各空 10px，而画框的圆角和阴影是按 290 高画的 → 木框四角和窗口边错开，
+//   看着就是「背景错位」（2026-08-14 用户报的）。改高度比改 CSS 干净：图正好铺满窗口。
+//   👉 以后要换背景图，**同时改这里的高度**，别让两边比例再分家。
 //   ⚠️ screen 在 app ready 前访问会挂（Electron 限制），所以这里只给默认值（100% 缩放），
 //   真实值在 createPetWindow 里按 scaleFactor 重算（见 ensurePetWindowSize）。
 let PET_SCALE = 1;
-export let PET_WINDOW_SIZE = { width: 480, height: 290 };
+export let PET_WINDOW_SIZE = { width: 480, height: 270 };
 export const PET_PHYSICAL_MARGIN = 16; // 距工作区顶部/右侧的物理像素
 
-/** 按当前主屏 scaleFactor 重算窗口逻辑尺寸（物理 480×290）。 */
+/** 按当前主屏 scaleFactor 重算窗口逻辑尺寸（物理 480×270，= 场景图 1672×941 同比例）。 */
 function ensurePetWindowSize(): void {
   PET_SCALE = Math.max(1, screen.getPrimaryDisplay().scaleFactor || 1);
   PET_WINDOW_SIZE = {
     width: Math.max(100, Math.round(480 / PET_SCALE)),
-    height: Math.max(60, Math.round(290 / PET_SCALE)),
+    height: Math.max(60, Math.round(270 / PET_SCALE)),
   };
 }
 // 高度尽量吃满工作区（这台机 778），面板让出幼苗顶带之后正文才不至于被压扁。
@@ -84,7 +88,7 @@ export function destroyPetWindow(): void {
 }
 
 export function createPetWindow(hub: AgentHub): BrowserWindow {
-  ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 480×290 → 逻辑）
+  ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 480×270 → 逻辑）
   const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
   const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);

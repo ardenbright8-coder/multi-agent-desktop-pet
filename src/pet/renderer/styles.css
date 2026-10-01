@@ -99,16 +99,26 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
    背景图本身带完整木框+大圆角（四角外已处理成透明），窗口只负责：
    ① 裁切窗口圆角（border-radius 略大于图圆角缩放后的大小，保证四角不露尖）；
    ② 悬浮阴影；③ 交互层（data-interactive：拖窗口/右键菜单），画框外透明区仍穿透。 */
+/* 🚨 画框**自己跟着图的比例走**（aspect-ratio），不是 inset:0 撑满窗口。
+   撑满会踩这个坑：窗口高度按 scaleFactor 换算完难免差个几像素，图 contain 之后
+   上下留一条空白，而圆角和阴影是照窗口边画的 → 木框四角和窗口边错开，
+   看着就是「背景错位」（2026-08-14 用户报的）。
+   让画框自己保持 1672:941 并垂直居中，圆角/阴影永远咬着图边，换背景图也不会再错。 */
 .scene-frame {
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  aspect-ratio: 1672 / 941;
+  max-height: 100%;
   z-index: 0;
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
-/* 场景图：contain 完整显示（不裁切、不变形），画框内居中 */
+/* 场景图：铺满画框（画框已经和图同比例，不会变形） */
 .scene-bg {
   display: block;
   width: 100%;
@@ -122,8 +132,9 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   pointer-events: none;
 }
 
-/* ===== 各 Agent 座位环境（v0.1.23 第三版）=====
-   座位对齐背景图 9 套工位中心（百分比坐标，图 contain 在画框内）。
+/* ===== 各 Agent 座位环境（v0.1.24 最终版背景）=====
+   座位对齐最终版背景图（1672x941，带圆角木框）9 套工位椅子中心。
+   坐标按 2026-08-14 vision 标定（椅子中心，±1%）；图 contain 在画框内。
    尺寸用百分比：窗口/画框跨缩放自适应（100%~179%）。 */
 .agent-seats {
   position: absolute;
@@ -137,69 +148,68 @@ body[data-state="done"] .note-dot { background: var(--sprout-light); }
   pointer-events: none;
 }
 
-/* 一个座位 = 一把椅子（贴片）+ 坐在椅子上的小人。尺寸百分比（跨缩放自适应） */
+/* 一个座位 = 小人的落位框（椅子自带在背景图里，不贴椅子贴片、不画任何框）。
+   ▸ 框是**正方形**（`aspect-ratio: 1`），跟素材画布 512×512 同比例，图直接铺满不留边。
+   ▸ 横向：`left` 对准背景图里那把椅背的中心，`translateX(-50%)`。
+   ▸ 纵向：用 `bottom` 把画布**底边压在桌面上沿**——小人下半身被桌子挡住，
+     看上去就是坐在椅子后面办公；显示器/键盘一概不遮（用户 2026-08-14 的硬要求）。
+   ▸ `clip-path`：素材画布下半中间那块才是小人本体，上方大片是透明留白。
+     不裁的话，前排座位的透明留白会盖住后排座位的命中区，点了切错终端。
+     裁完也顺带保证「点到的一定是看得见的小人」。 */
 .seat {
   position: absolute;
-  width: 16%;
-  height: 24%;
-  transform: translate(-50%, -50%);
-  border: 1px solid transparent;
-  border-radius: 8px;
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  border: 0;
   background: transparent;
   padding: 0;
+  clip-path: inset(15% 18% 0 18%);
 }
 
-/* 9 把椅子的中心坐标（图内百分比；椅子在工位中心右上侧，PIL 裁剪时标定） */
-.seat-pos-0 { left: 26.5%; top: 29%; }
-.seat-pos-1 { left: 51%;  top: 29%; }
-.seat-pos-2 { left: 76.5%; top: 29%; }
-.seat-pos-3 { left: 26.5%; top: 51%; }
-.seat-pos-4 { left: 51%;  top: 51%; }
-.seat-pos-5 { left: 76.5%; top: 51%; }
-.seat-pos-6 { left: 24.5%; top: 76%; }
-.seat-pos-7 { left: 50.5%; top: 76%; }
-.seat-pos-8 { left: 76%;  top: 76%; }
+/* 9 个落位（2026-08-14 从 classroom.png 网格标定）：
+   left = 椅背中心 x；bottom = 桌面上沿距图底；width = 素材画布宽。
+   🚨 width 是**画布**宽不是小人宽：`normalize-avatars.ps1` 把小人本体统一排成画布的 62%，
+   所以想让小人本体跟椅背一样宽（≈7.8% 图宽），画布得给到 12.6%。改了归一化比例，这里跟着改。
+   三排近大远小（远排小 10%、近排大 10%），跟房间透视对上。 */
+.seat-pos-0 { left: 29.3%; bottom: 65.4%; width: 11.3%; }
+.seat-pos-1 { left: 50.8%; bottom: 65.4%; width: 11.3%; }
+.seat-pos-2 { left: 72.7%; bottom: 65.4%; width: 11.3%; }
+.seat-pos-3 { left: 28.8%; bottom: 45.5%; width: 12.6%; }
+.seat-pos-4 { left: 50.5%; bottom: 45.5%; width: 12.6%; }
+.seat-pos-5 { left: 72.4%; bottom: 45.5%; width: 12.6%; }
+.seat-pos-6 { left: 27.9%; bottom: 23.6%; width: 13.9%; }
+.seat-pos-7 { left: 49.8%; bottom: 23.6%; width: 13.9%; }
+.seat-pos-8 { left: 72.2%; bottom: 23.6%; width: 13.9%; }
 
-/* 椅子贴片：铺满座位，从背景图原位抠出（贴回无缝），作为小人的“座位” */
-.seat-chair-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: fill;
-  z-index: 0;
-  user-select: none;
-  -webkit-user-drag: none;
-  pointer-events: none;
-}
+/* 前排盖后排，符合房间透视（DOM 顺序按会话优先级排，不能靠它） */
+.seat-pos-0, .seat-pos-1, .seat-pos-2 { z-index: 1; }
+.seat-pos-3, .seat-pos-4, .seat-pos-5 { z-index: 2; }
+.seat-pos-6, .seat-pos-7, .seat-pos-8 { z-index: 3; }
 
-/* 有人的座位：可点，hover 亮一下（跟气泡一样的交互语言） */
+/* 有人的座位：可点，但**一点视觉反馈都不给**。
+   用户 2026-08-14 拍板：hover 冒出来的那个蓝框不要显示——点击是「底层功能」（点小人/椅子直接切回那个终端），
+   不该在教室画面上画任何框、底色或高亮。命中区照旧是整个 .seat，只是看不见。 */
 .seat-filled {
   cursor: pointer;
   color: var(--paper);
   font: inherit;
-  transition: border-color 140ms ease-out, background 140ms ease-out;
 }
-.seat-filled:hover { border-color: rgba(143,219,120,0.55); background: rgba(15, 28, 21, 0.45); }
-.seat-filled:active { border-color: rgba(143,219,120,0.8); background: rgba(15, 28, 21, 0.6); }
-.seat-filled:focus-visible { outline: 2px solid var(--success); outline-offset: 1px; }
+.seat-filled:hover,
+.seat-filled:active,
+.seat-filled:focus,
+.seat-filled:focus-visible { border: 0; background: transparent; outline: none; box-shadow: none; }
 
-/* 小人（前景）：坐在椅子上，坐满椅子区域。尺寸百分比（跨缩放自适应） */
+/* 小人（前景）：铺满落位框。框已经是正方形、跟素材画布同比例，
+   所以图 1:1 铺进去就位，不用再缩放或偏移——素材本身怎么排版，画面上就怎么坐。 */
 .seat-person {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 82%;
-  height: 128%;
-  display: grid;
-  place-items: center;
+  inset: 0;
+  display: block;
   z-index: 1;
   pointer-events: none;
 }
 .seat-person img.seat-avatar {
-  position: relative;
-  z-index: 1;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;

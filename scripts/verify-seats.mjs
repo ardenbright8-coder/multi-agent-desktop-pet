@@ -89,11 +89,13 @@ app.whenReady().then(async () => {
   })()`);
   console.log("SEATS_DOM=" + JSON.stringify(dom, null, 1));
 
-  // 期望：9 个座位对齐「椅子中心」（PIL 裁剪标定的坐标，图占窗口左侧 640px）
+  // 期望：9 个座位对齐背景图里的 9 把椅背（2026-08-14 重标）。
+  // 落位是 left ＋ bottom 定的（画布底边压桌面上沿），这里换算成中心点：
+  //   中心 y = 1 - bottom - 画布高的一半，画布是正方形，高 = width × 1672/941。
   const expected = [
-    [0.265, 0.29], [0.51, 0.29], [0.765, 0.29],
-    [0.265, 0.51], [0.51, 0.51], [0.765, 0.51],
-    [0.245, 0.76], [0.505, 0.76], [0.76, 0.76],
+    [0.293, 0.2455], [0.508, 0.2455], [0.727, 0.2455],
+    [0.288, 0.433], [0.505, 0.433], [0.724, 0.433],
+    [0.279, 0.6405], [0.498, 0.6405], [0.722, 0.6405],
   ];
   const okCount = dom.seatCount === 9;
   const okBg = dom.bgLoaded && dom.bgSize === "1672x941";
@@ -105,13 +107,15 @@ app.whenReady().then(async () => {
     const dy = Math.abs(p.y - (sb.y + want[1] * sb.h));
     return dx <= 16 && dy <= 16;
   });
-  // 画框：有圆角（不是 0）、窗口 ≤ 480×290 物理的缩放比例
-  const okFrame = dom.frame.r !== "0px" && dom.frame.w > 0;
+  // 画框：有圆角（不是 0）、和场景图同比例铺满窗口（物理 480×270 = 1672:941，不留空白条）
+  const frameRatio = dom.frame.w / dom.frame.h;
+  const okFrame = dom.frame.r !== "0px" && dom.frame.w > 0 && Math.abs(frameRatio - 1672 / 941) < 0.02;
   const okNoDots = dom.noDots === 0;
-  // done 会话（pi-2，expr=done）→ 素材降级到通用 done.png 且加载成功（不隐藏）；其他无图会话 → 隐藏
+  // done 会话（pi-2，expr=done）→ 素材降级到通用 done.png 且加载成功（不隐藏）
   const doneSeat = dom.avatars.find((a) => a.expr === "done");
   const okDoneFallback = doneSeat && !doneSeat.hidden && doneSeat.src.includes("/done.png");
-  const okAvatarFallback = dom.avatars.filter((a) => a.expr !== "done").every((a) => a.hidden === true);
+  // 其余会话走 <agent>-<状态>.png → <状态>.png → <agent>.png 回落链，现在素材齐了，一个都不该隐藏
+  const okAvatarFallback = dom.avatars.every((a) => a.hidden !== true && a.src.length > 0);
   console.log(`CHECK count=${okCount} bg=${okBg} pos=${okPos} frame=${okFrame} noDots=${okNoDots} doneFallback=${okDoneFallback} avatarFallback=${okAvatarFallback}`);
 
   const shot = await win.webContents.capturePage();

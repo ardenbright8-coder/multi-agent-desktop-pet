@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+  <title>书签台</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="titlebar">
+      <span class="title">书签台</span>
+      <span class="hint">Alt+S 呼出 / 收起</span>
+      <button id="hide-btn" type="button" title="收起（Alt+S）">─</button>
+    </header>
+
+    <section id="composer">
+      <textarea id="input" rows="2"
+        placeholder="随手记：一句话 / 粘个网址（Enter 记下，Shift+Enter 换行）"></textarea>
+      <div id="assignee-row">
+        <span class="label">交给谁：</span>
+        <div id="chips"></div>
+        <input id="custom-assignee" type="text" placeholder="自定义" maxlength="20" />
+      </div>
+      <div id="composer-foot">
+        <span id="composer-error" role="alert"></span>
+        <button id="add-btn" type="button">记下来</button>
+      </div>
+    </section>
+
+    <ul id="list"></ul>
+  </div>
+  <script src="bookmark.js"></script>
+</body>
+</html>
