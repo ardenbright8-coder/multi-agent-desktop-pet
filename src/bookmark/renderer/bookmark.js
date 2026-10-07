@@ -99,6 +99,7 @@ async function bmReportCodeFreshness() {
 }
 
 function bmInit() {
+  bmInitDispatch();
   // 版本戳：主进程通过 query 传进来的（git短hash·启动时间），页面刷新不变，Ctrl+R 整程序重开才变。
   const versionStamp = new URLSearchParams(window.location.search).get("v") ?? "";
   const versionEl = document.getElementById("title-version");
@@ -172,7 +173,7 @@ function bmInit() {
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   window.bookmark.onInboxChanged?.(() => { void bmRefresh(); });
   // 启动 Agent 贴字结果（设定15第三版）：贴了就提醒看一眼再回车；没贴就说为什么、让用户自己贴。
-  // 两档（设定18）：☀️ 日常档 / 🌙 睡觉档，标题栏点一下切换。切到睡觉档，看板马上看一眼、有活没人干的组开好窗贴好领活那句。
+  // 两档仅切换报告方式，助手窗口由用户自己开。
   const modeBtn = document.getElementById("mode-btn");
   const paintMode = (mode) => {
     modeBtn.textContent = mode === "sleep" ? "🌙 睡觉档" : "☀️ 日常档";
@@ -183,14 +184,11 @@ function bmInit() {
     try {
       const mode = await window.bookmark.setMode(modeBtn.classList.contains("sleep") ? "day" : "sleep");
       paintMode(mode);
-      if (mode === "sleep") bmToast("已切到睡觉档：AI 干完一条写好大白话报告就接着领下一条，不等你说可以；每半小时看一眼有没有组有活没人干", 8000);
+      if (mode === "sleep") bmToast("已切到睡觉档：你自己开助手窗口；干完一条写报告再领下一条，不自动开窗", 8000);
       else bmToast("已切回日常档：AI 干完先给你验，你说可以再删", 5000);
     } catch (error) {
       bmShowError(bmErrorText(error));
     }
-  });
-  window.bookmark.onSleepNudged?.((groups) => {
-    bmToast(`睡觉档：${groups.join("、")} 组有活没人干，开好窗、贴好领活那句了（没按回车，你按一下它就开干）`, 12000);
   });
   window.bookmark.onLaunchPasted?.((r) => {
     if (r.ok) bmToast(`启动句已贴进 ${r.label} 窗口，没按回车：你看一眼再按回车`, 8000);
@@ -201,7 +199,9 @@ function bmInit() {
 
 async function bmRefresh() {
   try {
-    const [agents, records] = await Promise.all([window.bookmark.agents(), window.bookmark.list()]);
+    const [agents, records, dispatch] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
+      window.bookmark.dispatch ? window.bookmark.dispatch({ action: 'list' }) : Promise.resolve({ bundles: [] })]);
+    bmDispatchBundles = new Map((dispatch.bundles || []).map(b => [b.id, b]));
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
     // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
     if (bmDragActive || bmImagesBusy) {
@@ -273,6 +273,7 @@ function bmGroupRecords(records) {
 // ── 渲染 ─────────────────────────────────────────────────
 
 function bmRenderBoard(records) {
+  bmDispatchRecords = records;
   const board = document.getElementById("board");
   board.textContent = "";
   const { inbox, byAgent, handoffZone } = bmGroupRecords(records);
@@ -282,6 +283,8 @@ function bmRenderBoard(records) {
   // 一次只画当前页：待定页占满面板；分组页显示各 agent 组（加Agent 按钮只在分组页有意义）；项目页走真实文件夹浏览器。
   if (bmCurrentPage === "inbox") {
     board.appendChild(bmBuildGroup(BM_INBOX_KEY, "💭 待定（想想区）", inbox));
+  } else if (bmCurrentPage === 'skills') {
+    void bmRenderSkills();
   } else if (bmCurrentPage === "projects") {
     void bmRenderProjects();
   } else {
@@ -292,14 +295,16 @@ function bmRenderBoard(records) {
     board.appendChild(bmBuildHandoffZone(handoffZone));
   }
   bmRestoreOpenComposer();
+  bmRefreshDispatchSelection();
 }
 
 /** 切页签：改 active 态、重画 board、加Agent 按钮跟页走（待定页没它的事）。 */
 function bmSwitchPage(page) {
   if (bmImagesBusy) return;
-  if (page !== "inbox" && page !== "groups" && page !== "projects") return;
+  if (page !== "inbox" && page !== "groups" && page !== "projects" && page !== 'skills') return;
   if (page === bmCurrentPage) return;
   bmCurrentPage = page;
+  bmClearDispatchSelection();
   bmOpenComposerGroup = null; // 切页收起正在展开的输入行
   bmToggleAddAgentRow(false); // 收起加Agent 行（幂等）
   document.getElementById("add-agent-btn").hidden = page !== "groups";
@@ -631,7 +636,8 @@ function bmBuildTask(record, groupKey, order) {
     box.className = "task-report";
     const head = document.createElement("div");
     head.className = "report-head";
-    head.textContent = `✅ 干完待审 · ${record.reportedBy ?? ""} · ${bmClock(Date.parse(record.reportedAt))}`;
+    const cooperative = bmDispatchBundles.has(record.bundleId);
+    head.textContent = `${cooperative ? '待调度审核' : '✅ 干完待审'} · ${record.reportedBy ?? ""} · ${bmClock(Date.parse(record.reportedAt))}`;
     const words = document.createElement("div");
     words.className = "report-text";
     words.textContent = record.report;
@@ -649,7 +655,13 @@ function bmBuildTask(record, groupKey, order) {
         bmShowError(bmErrorText(error));
       }
     });
-    box.append(head, words, ok);
+    box.append(head, words);
+    if (!cooperative) box.appendChild(ok);
+    else {
+      const hint = document.createElement('span');
+      hint.textContent = '整捆报告交齐、测试通过后，在捆头统一确认清理';
+      box.appendChild(hint);
+    }
     body.appendChild(box);
   }
   item.appendChild(body);
@@ -1354,6 +1366,9 @@ async function bmInsertCommit(opts = {}) {
 
 async function bmBeginEdit(id) {
   if (bmImagesBusy) return;
+  const record = bmDispatchRecords.find(r => r.id === id);
+  const owned = record && bmDispatchBundles.get(record.bundleId);
+  if (owned?.owner) { bmToast(`${owned.owner} 占住整捆，先放回再改原始任务`); return; }
   bmEditingId = id;
   bmInsertDraft = null;
   await bmRefresh(); // 同 bmBeginInsert：等框画出来再放光标
@@ -1563,13 +1578,14 @@ function bmBuildBundleHead(bundleId, members, groupKey) {
   const name = document.createElement("span");
   name.className = "bundle-name";
   const first = members[0] ? members[0].text : "";
-  name.textContent = first.length > 16 ? `${first.slice(0, 16)}…` : first;
+  const dispatch = bmDispatchBundles.get(bundleId);
+  name.textContent = dispatch ? `派工捆 · ${dispatch.name}` : (first.length > 16 ? `${first.slice(0, 16)}…` : first);
   head.appendChild(name);
-  const busy = [...new Set(members.map((r) => r.claimedBy).filter(Boolean))];
+  const busy = dispatch?.owner ? [dispatch.owner] : [...new Set(members.map((r) => r.claimedBy).filter(Boolean))];
   if (busy.length) {
     const claim = document.createElement("span");
     claim.className = "claim";
-    claim.textContent = `🔄 ${busy.join("、")} 在干`;
+    claim.textContent = dispatch ? `${dispatch.status} · ${dispatch.owner} 占住整捆` : `🔄 ${busy.join("、")} 在干`;
     head.appendChild(claim);
   }
   return head;
@@ -1578,7 +1594,9 @@ function bmBuildBundleHead(bundleId, members, groupKey) {
 function bmShowBundleMenu(bundleId, groupKey, anchor) {
   const menu = document.getElementById("ctx-menu");
   menu.textContent = "";
-  for (const el of bmLaunchOptions(bundleId, groupKey)) menu.appendChild(el);
+  const dispatch = bmDispatchBundles.get(bundleId);
+  if (dispatch) bmShowDispatchBundleMenu(dispatch, menu);
+  else for (const el of bmLaunchOptions(bundleId, groupKey)) menu.appendChild(el);
   const sep = document.createElement("div");
   sep.className = "ctx-sep";
   menu.appendChild(sep);

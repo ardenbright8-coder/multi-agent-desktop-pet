@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld("bookmark", {
   setImageMarks: (name: string, marks: unknown, summary: string, marked: Uint8Array | null) =>
     ipcRenderer.invoke("bookmark:image:marks:set", { name, marks, summary, marked }),
   list: () => ipcRenderer.invoke("bookmark:list"),
+  dispatch: (input: unknown) => ipcRenderer.invoke('bookmark:dispatch', input),
+  boardSkills: () => ipcRenderer.invoke('bookmark:skills:list'),
+  readBoardSkill: (name: string) => ipcRenderer.invoke('bookmark:skills:read', name),
+  copyDispatch: (id: string, by: string) => ipcRenderer.invoke('bookmark:dispatch:copy', { id, by }),
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   insertBeside: (input: unknown) => ipcRenderer.invoke("bookmark:insert-beside", input),
   move: (id: string, anchorId: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:move", { id, anchorId, place }),

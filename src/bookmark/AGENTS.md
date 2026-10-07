@@ -11,6 +11,8 @@
 
 | 文件 | 管什么 |
 |---|---|
+| `coordination.ts` / `dispatch-cli.ts` | 明确启用的多人派工：每捆一个窗口、逐条领取、调度收件箱、用户验收后清理；普通捆不登记，不启动模型或后台工兵 |
+| `skills.ts` / `renderer/dispatch.js/.css` | 读取项目技能正本；Ctrl多选成捆、技能页、协同捆复制领取命令；不替用户打开执行窗口 |
 | `store.ts` | 本地库：增删查改（updateText 改正文/链接，输入行自动存档用）、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；条目带 `detail`（详情，交接单等长内容）与 `kind`（note 普通 / handoff 交接单），旧库读入自动补齐默认；JSON 原子写；捆一捆与 AI 领活（设定15）：`bundleId/claimedBy/claimedAt`、`bundleWith`/`claimNext`/`done`（必须带用户原话）/`release` |
 | `appearance.ts` | 看板外观纯函数：透明度解析/夹取（范围 0.30–0.95，默认 0.6，坏档回落默认）；存取 IO 在 panel-window（appearance.json） |
 | `zoom.ts` | 看板字号纯函数（设定20）：档位 50%–200% 一档 10%、zoom.json 解析、哪个键算调字号；接线在 panel-window `wireBoardZoom`（看板窗口 before-input-event + zoom-changed，🚨 不走 globalShortcut） |
@@ -63,6 +65,13 @@ BookmarkStore（testkit 单测用）
 - 🚨 **交接单条目（kind=handoff）必须保留 📋 标记**，底色只比普通条目暖一点点；**交接单专区跟别的组同一个底和边框**，别整块换色（2026-09-24 用户：统一风格上再差异化，设定13）；**交接单专区固定在 Agent分组页最底部、＋加Agent 按钮上方，别处不加**（用户画的黄框位置，2026-09-10 拍板）；未派发交接单默认落专区，拖到哪个组头=派给谁，组内交接单可「收回交接单专区」；「接完活自己 remove 删掉」的规矩草案写在仓库根 AGENT_INTEGRATION.md 的 CLI 节，别删了它。
 - 🚨 **透明度只调 renderer 半透明底**（CSS 变量 `--bm-alpha`，滑条在左下角 ⚙ 设置浮层，存档 appearance.json）——acrylic 材质别动；设置浮层结构「一项一行」，以后新设置项往里加行。
 - 渲染层是普通 script 共享全局作用域（边界检查②会扫），**函数名一律 `bm` 前缀**（bmRefresh / bmRenderList…），别跟 pet renderer 的全局函数撞名。
+
+## 看板派工（2026-10-07）
+
+- 行为规则唯一正本：项目根 `skills（AI用看板的说明书）/看板派工/SKILL.md`，界面技能页和 CLI 读取同一份。
+- 协同归属与通知保存于看板私有目录的 `bookmarks.json.coordination.json`；报告后整捆归属仍保留。坏档阻止重新领取，保留原文件，不能把坏锁当空锁。
+- 只读派工查询不能触发面板刷新，否则会形成“刷新→查询→再刷新”的循环；协同捆从原睡觉档自动开窗名单排除。
+- 本次回归：`node scripts/verify-bookmark-dispatch.mjs`（隔离 Playwright：Ctrl两捆、整捆锁、报告等待返回、技能同源、原任务保留）；`bookmark-coordination.test.ts` 覆盖服务端占用与重启。普通捆仍走原流程。
 
 ## 二阶段计划（写在这防走样）
 

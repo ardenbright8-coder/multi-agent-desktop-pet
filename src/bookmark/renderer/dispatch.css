@@ -1,0 +1,16 @@
+/* 看板派工的局部样式，不改其他页签和桌宠。 */
+#dispatch-toolbar { display:flex; flex-wrap:wrap; gap:7px; padding:9px 12px; border-bottom:1px solid rgba(90,120,80,.25); background:rgba(246,249,241,.8); }
+#dispatch-toolbar[hidden], #dispatch-coordinator[hidden] { display:none; }
+#dispatch-toolbar input:not([type=checkbox]), .dispatch-worker { padding:6px 8px; min-width:0; border:1px solid #a7b9a0; border-radius:6px; background:#fbfdf8; color:#31402f; font:inherit; }
+#dispatch-name, #dispatch-coordinator { flex:1 1 180px; }
+#dispatch-toolbar label { display:flex; align-items:center; gap:5px; }
+#dispatch-toolbar button, .skill-card button { border:1px solid #a7b9a0; border-radius:6px; padding:6px 10px; background:#edf4e7; color:#31402f; cursor:pointer; font:inherit; }
+.task.dispatch-selected { outline:2px solid #729e5d; background:rgba(185,214,165,.45); }
+.dispatch-menu-info { padding:8px; max-width:280px; white-space:normal; line-height:1.5; }
+.dispatch-worker { width:calc(100% - 12px); margin:6px; }
+.dispatch-intro { margin:12px; line-height:1.65; }
+.skill-card { padding:14px; margin:10px; }
+.skill-card p { margin:9px 0; line-height:1.6; white-space:normal; overflow-wrap:anywhere; }
+.skill-path { font-size:12px; opacity:.7; }
+.skill-content { white-space:pre-wrap; overflow-wrap:anywhere; max-height:55vh; overflow:auto; padding:12px; margin-top:10px; border-radius:8px; background:rgba(255,255,255,.65); font:inherit; line-height:1.7; }
+.skill-content[hidden] { display:none; }

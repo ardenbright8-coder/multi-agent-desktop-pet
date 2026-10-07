@@ -23,13 +23,15 @@ import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "./inbox";
 import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
 import { startBookmarkCliServer } from "./cli-server";
+import { handleDispatchAction } from './dispatch-cli';
+import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
-import { parseBoardMode, planNudges, type BoardMode } from "./sleep-mode";
+import { parseBoardMode, type BoardMode } from "./sleep-mode";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -352,6 +354,8 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           log.记(`${by} 睡觉档干完「${record.text.slice(0, 30)}」，报告挂上等用户审`, "cli");
           return record;
         },
+        dispatch: (input) => handleDispatchAction(requireStore(), input),
+        bundleInfo: (id) => requireStore().taskBundles().find(b => b.id === id),
         mode: () => readBoardMode(),
         template: () => listTemplates(templatesDirectory()).find((t) => t.name === CODING_TEMPLATE)?.text ?? null,
       },
@@ -360,7 +364,6 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   } catch (error) {
     log.出事("CLI 接入服务启动失败（看板仍可用，只是命令行连不上）", error, "cli");
   }
-  if (readBoardMode() === "sleep") startSleepTimer();
   log.记("书签台就绪（Agent 看板·常驻贴屏）", "init");
 }
 
@@ -654,6 +657,24 @@ ${result.stdout || ""}`.trim();
 function registerIpc(): void {
   registerBookmarkImageIpc((sender) => Boolean(panel && !panel.isDestroyed() && sender === panel.webContents));
   ipcMain.handle("bookmark:list", () => requireStore().list());
+  ipcMain.handle('bookmark:dispatch', (_event, input) => {
+    const result = handleDispatchAction(requireStore(), input ?? {});
+    if (!['list', 'messages', 'skills', 'skill'].includes(String(input?.action))) notifyInboxChanged();
+    return result;
+  });
+  const skillRoot = join(__dirname, '..', '..', 'skills（AI用看板的说明书）');
+  ipcMain.handle('bookmark:skills:list', () => listBoardSkills(skillRoot));
+  ipcMain.handle('bookmark:skills:read', (_event, name) => readBoardSkill(skillRoot, String(name ?? '')));
+  ipcMain.handle('bookmark:dispatch:copy', (_event, payload) => {
+    const raw = payload ?? {};
+    const bundle = requireStore().taskBundles().find(b => b.id === String(raw.id ?? ''));
+    if (!bundle) throw new Error('找不到协同捆');
+    const worker = String(raw.by ?? '').trim();
+    if (!worker || /["\r\n]/.test(worker)) throw new Error('填写独立执行窗口的名字');
+    const text = `先读看板派工技能：${join(skillRoot, '看板派工', 'SKILL.md')}\n只领本捆，用户自己开窗口，不要开子助手：\nnode "${bookmarkCliScriptPath()}" next ${bundle.id} --by "${worker}"`;
+    clipboard.writeText(text);
+    return text;
+  });
   ipcMain.handle("bookmark:add", (_event, input: unknown) => requireStore().add(normalizeInput(input)));
   ipcMain.handle("bookmark:insert-beside", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { anchorId?: unknown; place?: unknown };
@@ -768,18 +789,12 @@ function registerIpc(): void {
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
     return { line, label, ...(await openAgentShortcut(group, line, label)) };
   });
-  // 两档（设定18）：切到睡觉档马上看一眼、给有活没人干的组开好窗贴好领活那句（回车用户按），之后每半小时看一眼。
+  // 两档仅决定领活后的报告流程；执行窗口一律由用户自己开，不挂自动开窗计时器。
   ipcMain.handle("bookmark:mode:get", () => readBoardMode());
   ipcMain.handle("bookmark:mode:set", (_event, value: unknown) => {
     const mode: BoardMode = value === "sleep" ? "sleep" : "day";
     writeJsonAtomic(join(bookmarkDataDirectory(), MODE_FILE), { mode });
-    sleepNudged.clear();
-    log.记(`看板切到${mode === "sleep" ? "睡觉档" : "日常档"}`, "cli");
-    // 看一眼要等开窗贴字（每组十几秒），不让按钮等着：开了哪几组另发 bookmark:sleep-nudged。
-    if (mode === "sleep") {
-      startSleepTimer();
-      void runSleepCheck();
-    } else stopSleepTimer();
+    log.记(`看板切到${mode === "sleep" ? "睡觉档" : "日常档"}（不自动开助手窗口）`, "cli");
     return mode;
   });
   ipcMain.handle("bookmark:templates:open", async () => {
@@ -799,6 +814,8 @@ function registerIpc(): void {
     "bookmark:agents:remove",
     (_event, name: unknown) => {
       const target = String(name ?? "").trim();
+      const busy = requireStore().taskBundles().find(b => b.group.toLowerCase() === target.toLowerCase() && b.owner);
+      if (busy) throw new Error(`「${busy.name}」由 ${busy.owner} 占住整捆，先放回再删除分组`);
       const removed = requireRoster().remove(target);
       // 名下条目不丢：全部收回待定（assignee 置空）。大小写不敏感对齐。
       if (removed) {
@@ -913,12 +930,6 @@ async function pasteLaunchLine(
 }
 
 const MODE_FILE = "mode.json";
-/** 睡觉档多久看一眼（用户：「半个小时试一次」）。 */
-const SLEEP_CHECK_MS = 30 * 60_000;
-let sleepTimer: NodeJS.Timeout | null = null;
-/** 开过窗、还没人来领的组：同一回卡住只开一次（planNudges 管）。 */
-const sleepNudged = new Set<string>();
-let sleepChecking = false;
 
 /** 现在是哪一档：mode.json 缺了、坏了一律日常档。 */
 function readBoardMode(): BoardMode {
@@ -927,52 +938,6 @@ function readBoardMode(): BoardMode {
     return existsSync(path) ? parseBoardMode(readFileSync(path, "utf8")) : "day";
   } catch {
     return "day";
-  }
-}
-
-function startSleepTimer(): void {
-  if (sleepTimer) return;
-  sleepTimer = setInterval(() => void runSleepCheck(), SLEEP_CHECK_MS);
-  sleepTimer.unref?.();
-}
-
-function stopSleepTimer(): void {
-  if (sleepTimer) clearInterval(sleepTimer);
-  sleepTimer = null;
-}
-
-/**
- * 睡觉档看一眼（设定18）：有活又没人在干的组，开这组的窗口、贴好「按组领活」那句。一组一组来，
- * 等上一组贴完再开下一组（同时开几个会抢最前面）。🚨 只贴不回车：发不发还是用户的事。返回开了哪几组。
- */
-async function runSleepCheck(): Promise<string[]> {
-  if (sleepChecking || readBoardMode() !== "sleep") return [];
-  sleepChecking = true;
-  try {
-    const groups = requireRoster().list().filter((g) => agentShortcutFor(g));
-    const plan = planNudges(requireStore().list(), groups, sleepNudged);
-    for (const g of plan.clear) sleepNudged.delete(g);
-    for (const group of plan.launch) {
-      sleepNudged.add(group);
-      const label = nextWindowLabel(group);
-      const line = `领看板的活：node "${bookmarkCliScriptPath()}" next --to "${group}" --by ${label}`;
-      clipboard.writeText(line);
-      log.记(`睡觉档：${group} 组有活没人干，开窗贴好领活那句（${label}，没按回车）`, "cli");
-      await openAgentShortcut(group, line, label, true);
-    }
-    if (plan.launch.length) {
-      try {
-        if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:sleep-nudged", plan.launch);
-      } catch {
-        /* 面板不在就算了 */
-      }
-    }
-    return plan.launch;
-  } catch (error) {
-    log.出事("睡觉档看一眼出错（下回再看）", error, "cli");
-    return [];
-  } finally {
-    sleepChecking = false;
   }
 }
 

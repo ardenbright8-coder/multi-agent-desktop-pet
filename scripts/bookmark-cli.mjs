@@ -49,7 +49,21 @@ if (typeof cfg?.port !== "number" || typeof cfg?.token !== "string") {
 const base = `http://127.0.0.1:${cfg.port}`;
 let res;
 try {
-  if (args.command === "add") {
+  if (args.command === 'dispatch') {
+    const waiting = args.payload.action === 'wait';
+    const end = Date.now() + (args.payload.seconds ?? 120) * 1000;
+    do {
+      res = await fetch(`${base}/dispatch`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.token}` },
+        body: JSON.stringify(waiting ? { ...args.payload, action: 'messages' } : args.payload),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!waiting || !res.ok) break;
+      const pending = await res.clone().json();
+      if (pending.notices?.length || Date.now() >= end) break;
+      await new Promise(resolve => setTimeout(resolve, Math.min(2000, Math.max(0, end - Date.now()))));
+    } while (true);
+  } else if (args.command === "add") {
     res = await fetch(`${base}/add`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
@@ -102,7 +116,12 @@ if (!res.ok || data?.ok === false) {
 }
 
 // 4. 展示
-if (args.command === "add") {
+if (args.command === 'dispatch') {
+  if (args.payload.action === 'next' && !args.json) {
+    const self = fileURLToPath(import.meta.url).split(String.fromCharCode(92)).join('/');
+    console.log(cli.formatClaimMessage(data, { cli: self, by: args.payload.by, coding: false }));
+  } else console.log(JSON.stringify(data, null, 2));
+} else if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `✅ 已进看板（${data.id}）`);
 } else if (args.command === "handoff") {
   console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）；接手的 AI 接完活要用 remove 删掉它`);
@@ -115,7 +134,11 @@ if (args.command === "add") {
 } else if (args.command === "done") {
   console.log(args.json ? JSON.stringify(data) : "✅ 这条干完了，已从看板删掉。接着按上面第 4 步 next 领下一条。");
 } else if (args.command === "report") {
-  console.log(args.json ? JSON.stringify(data) : "✅ 报告挂上了，这条标成「干完待审」，等用户早上看。接着按上面第 3 步 next 领下一条。");
+  const self = fileURLToPath(import.meta.url).split(String.fromCharCode(92)).join('/');
+  const text = data.cooperation
+    ? `报告已交给 ${data.coordinator}，原任务留待审核，整捆仍由你负责。继续只领本捆：node "${self}" next ${data.bundleId} --by "${args.by}"`
+    : '✅ 报告挂上了，这条标成「干完待审」，等用户早上看。接着按上面第 3 步 next 领下一条。';
+  console.log(args.json ? JSON.stringify(data) : text);
 } else if (args.command === "release") {
   console.log(args.json ? JSON.stringify(data) : "↩️ 已放回去，别的窗口可以领了。");
 } else if (args.json) {

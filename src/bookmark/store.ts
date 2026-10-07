@@ -9,6 +9,8 @@ import { createLogger } from "../shared/log";
 import { attachmentsRoot, bookmarksDataPath } from "../shared/paths";
 
 import { reconcileImages } from "./inline-images";
+import { CoordinationStore } from "./coordination";
+import type { TaskBundle } from "./coordination";
 
 const log = createLogger("bookmark");
 
@@ -58,16 +60,95 @@ export interface ClaimResult {
   /** 领完这条后，这一捆还剩几条没人领。 */
   remaining: number;
   busy: string[];
+  bundleId?: string;
+  coordinator?: string;
 }
 
 export class BookmarkStore {
   private records: BookmarkRecord[] = [];
   private readonly path: string;
   private loaded = false;
+  private readonly coordination: CoordinationStore;
 
   constructor(path?: string) {
     this.path = path ?? bookmarksDataPath();
+    this.coordination = new CoordinationStore(`${this.path}.coordination.json`);
   }
+
+  taskBundles(): TaskBundle[] {
+    this.ensureLoaded();
+    return this.coordination.list().filter(b => this.records.some(r => r.bundleId === b.id));
+  }
+
+  /** 成捆只调整归属和位置，原文、图片、报告保持不变。顺序沿用当前看板顺序。 */
+  createTaskBundle(ids: string[], name: string, coordinator?: string): TaskBundle {
+    this.ensureLoaded();
+    const chosen = new Set(ids);
+    const items = this.records.filter(r => chosen.has(r.id));
+    if (!chosen.size || items.length !== chosen.size) throw new Error('选中的任务不存在或列表为空');
+    if (!items[0].assignee || items.some(r => r.kind !== 'note' || groupKeyOf(r) !== groupKeyOf(items[0]))) {
+      throw new Error('只能把同一个助手分组里的普通任务捆起来');
+    }
+    for (const r of items) {
+      this.coordination.assertEditable(r.bundleId);
+      if (r.claimedBy || r.report) throw new Error('在干或待审核的任务不能重新成捆');
+      if (r.bundleId) throw new Error('选中任务已在捆里，先拆开原捆再组合');
+    }
+    const id = `b-${randomUUID().slice(0, 8)}`;
+    const title = name.trim() || items[0].text.slice(0, 24);
+    const result: TaskBundle = coordinator
+      ? this.coordination.add(id, title, items[0].assignee!, coordinator)
+      : { id, name: title, group: items[0].assignee!, coordinator: '', owner: null, status: '待领取' };
+    const at = this.records.indexOf(items[0]);
+    const rest = this.records.filter(r => !chosen.has(r.id));
+    items.forEach(r => { r.bundleId = id; });
+    rest.splice(at, 0, ...items);
+    this.records = rest;
+    this.save();
+    return result;
+  }
+
+  /** 协同入口只在明确指定的分组和调度窗口范围选捆，不捞其他任务。 */
+  claimTaskBundle(group: string, by: string, coordinator: string): ClaimResult {
+    if (!group.trim() || !by.trim() || !coordinator.trim()) throw new Error('缺分组、工兵窗口名或调度窗口名');
+    const candidates = this.taskBundles().filter(b => b.group.toLowerCase() === group.toLowerCase() && b.coordinator === coordinator);
+    const mine = candidates.find(b => b.owner === by && b.status === '执行中');
+    const pick = mine ?? candidates.find(b => !b.owner && b.status !== '待审核');
+    if (pick) return this.claimNext(pick.id, by);
+    return { record: null, position: 0, total: 0, remaining: 0,
+      busy: candidates.filter(b => b.owner && b.status === '执行中').map(b => b.owner!) };
+  }
+
+  releaseTaskBundle(id: string, by: string): void {
+    this.ensureLoaded();
+    this.coordination.release(id, by);
+    for (const r of this.records.filter(r => r.bundleId === id)) {
+      r.claimedBy = null;
+      r.claimedAt = null;
+    }
+    this.save();
+  }
+
+  /** 用户验收后由调度清理整捆；不会把尚未报告的任务一起删除。 */
+  acceptTaskBundle(id: string, by: string, userOk: string): void {
+    this.ensureLoaded();
+    const b = this.coordination.get(id);
+    if (!b || b.coordinator !== by.trim()) throw new Error('只有本捆调度窗口能登记验收');
+    if (!userOk.trim()) throw new Error('缺用户验收确认（--ok）');
+    const items = this.records.filter(r => r.bundleId === id);
+    if (!items.length || items.some(r => !r.report || r.claimedBy)) throw new Error('还有未交报告或正在干的任务，不能整捆删除');
+    this.coordination.release(id, by);
+    this.records = this.records.filter(r => r.bundleId !== id);
+    this.save();
+    this.coordination.remove(id);
+    for (const r of items) if (r.dedupeKey) this.rememberRemoved(r.dedupeKey);
+  }
+
+  /** 原睡觉档只处理普通任务，协同捆绝不触发后台开窗。 */
+  ordinaryTasks(): BookmarkRecord[] { return this.list().filter(r => !this.coordination.get(r.bundleId)); }
+
+  taskNotices(coordinator: string) { return this.coordination.notices(coordinator); }
+  acknowledgeTaskNotice(id: string, coordinator: string): void { this.coordination.acknowledge(id, coordinator); }
 
   /** 新→旧排好的一份快照。 */
   list(): BookmarkRecord[] {
@@ -141,6 +222,8 @@ export class BookmarkStore {
     this.ensureLoaded();
     const from = this.records.findIndex((item) => item.id === id);
     if (from < 0 || id === anchorId) return this.records[from] ?? null;
+    this.coordination.assertEditable(this.records[from].bundleId);
+    this.coordination.assertEditable(this.records.find(r => r.id === anchorId)?.bundleId);
     const [item] = this.records.splice(from, 1);
     let to = this.records.findIndex((record) => record.id === anchorId);
     if (to < 0) {
@@ -162,6 +245,8 @@ export class BookmarkStore {
     const item = this.records.find((r) => r.id === id);
     const target = this.records.find((r) => r.id === targetId);
     if (!item || !target) return null;
+    this.coordination.assertEditable(item.bundleId);
+    this.coordination.assertEditable(target.bundleId);
     if (groupKeyOf(item) !== groupKeyOf(target)) throw new Error("只能捆同一组的");
     const bundle = target.bundleId ?? `b-${randomUUID().slice(0, 6)}`;
     target.bundleId = bundle;
@@ -178,6 +263,8 @@ export class BookmarkStore {
   /** 拆开一捆：里面每条都变回没捆。 */
   unbundle(bundleId: string): number {
     this.ensureLoaded();
+    this.coordination.assertEditable(bundleId);
+    if (this.coordination.get(bundleId)) this.coordination.remove(bundleId);
     let n = 0;
     for (const r of this.records) {
       if (r.bundleId === bundleId) {
@@ -198,6 +285,15 @@ export class BookmarkStore {
     const inBundle = this.records.filter((r) => r.bundleId === target);
     const candidates = inBundle.length ? inBundle : this.records.filter((r) => r.id === target);
     if (!candidates.length) throw new Error(`找不到 ${target}（这一捆或这一条可能已经干完删掉了）`);
+    const bundleId = candidates[0].bundleId;
+    const controlled = this.coordination.get(bundleId);
+    if (controlled) {
+      this.coordination.claim(controlled.id, who);
+      const all = this.records.filter(r => r.bundleId === controlled.id);
+      const got = this.claimFrom(all, who);
+      return { ...got, position: got.record ? all.findIndex(r => r.id === got.record!.id) + 1 : 0,
+        total: all.length, bundleId: controlled.id, coordinator: controlled.coordinator };
+    }
     return this.claimFrom(candidates, who);
   }
 
@@ -208,7 +304,7 @@ export class BookmarkStore {
     if (!who) throw new Error("缺窗口名（--by）");
     const key = String(group ?? "").trim().toLowerCase();
     if (!key) throw new Error("缺组名（--to）");
-    return this.claimFrom(this.records.filter((r) => (r.assignee ?? "").toLowerCase() === key), who);
+    return this.claimFrom(this.records.filter((r) => (r.assignee ?? "").toLowerCase() === key && !this.coordination.get(r.bundleId)), who);
   }
 
   /** 领活的共同规矩：报告过的不算活；自己手里有没干完的还给它那条；别人领走的跳过。 */
@@ -252,12 +348,18 @@ export class BookmarkStore {
     if (record.claimedBy !== who) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     const words = String(text ?? "").trim();
     if (!words) throw new Error("报告是空的：用大白话写做了啥、改了哪些、怎么验的、还有啥没弄完");
+    const bundle = this.coordination.get(record.bundleId);
+    if (bundle && bundle.owner !== who) throw new Error('这捆不属于当前报告窗口');
     record.report = words;
     record.reportedBy = who;
     record.reportedAt = new Date().toISOString();
     record.claimedBy = null;
     record.claimedAt = null;
     this.save();
+    if (bundle) {
+      const allReported = this.records.filter(r => r.bundleId === bundle.id).every(r => Boolean(r.report));
+      this.coordination.report(bundle.id, id, who, words, allReported);
+    }
     return record;
   }
 
@@ -295,6 +397,7 @@ export class BookmarkStore {
     this.ensureLoaded();
     const gone = this.records.find((record) => record.id === id);
     if (!gone) return false;
+    this.coordination.assertEditable(gone.bundleId);
     this.records = this.records.filter((record) => record.id !== id);
     this.save();
     if (gone.dedupeKey) this.rememberRemoved(gone.dedupeKey);
@@ -361,6 +464,7 @@ export class BookmarkStore {
     const record = this.records.find((item) => item.id === id);
     if (!record) return null;
     const changed = (record.assignee ?? "").toLowerCase() !== (assignee ?? "").toLowerCase();
+    if (changed) this.coordination.assertEditable(record.bundleId);
     record.assignee = assignee ? String(assignee) : null;
     if (changed) {
       // 换了组：离开原来的捆，领活标记也作废（换了人干）。
@@ -379,6 +483,7 @@ export class BookmarkStore {
     this.ensureLoaded();
     const record = this.records.find((item) => item.id === id);
     if (!record) return null;
+    this.coordination.assertEditable(record.bundleId);
     const next = String(text ?? "").trim();
     if (!next) throw new Error("书签内容不能为空");
     record.attachments = reconcileImages(record.attachments, record.text, next);

@@ -13,6 +13,7 @@ import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { attachmentsRoot, bookmarkCliPortPath } from "../shared/paths";
 import { composeForAgent } from "./templates";
+import { parseDispatchArgs, type DispatchInput } from "./dispatch-cli";
 
 const log = createLogger("bookmark");
 
@@ -41,6 +42,8 @@ export interface CliClaim {
   total: number;
   remaining: number;
   busy: string[];
+  bundleId?: string;
+  coordinator?: string;
 }
 
 export interface CliStoreAdapter {
@@ -60,6 +63,8 @@ export interface CliStoreAdapter {
   mode?(): "day" | "sleep";
   /** 要求模板原文：coding = 「带编程」那份；没有返回 null。 */
   template?(name: "coding"): string | null;
+  dispatch?(input: DispatchInput): unknown;
+  bundleInfo?(id: string | null | undefined): { id: string; coordinator: string } | undefined;
 }
 
 export interface BookmarkCliDeps {
@@ -75,7 +80,8 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch";
+  payload?: DispatchInput;
   /** next/done/release/report 的对象：捆号或条目 id（next --to 组名时没有）。 */
   target?: string;
   /** 看板开窗时起的窗口名（如 Claude-3）。 */
@@ -104,6 +110,7 @@ const CLI_USAGE =
 /** 解析命令行参数。add/handoff 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
 export function parseCliArgs(argv: string[]): CliArgs {
   const command = argv[0];
+  if (command === 'dispatch') return { command, payload: parseDispatchArgs(argv), json: argv.includes('--json'), attach: [] };
   if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
   if (command !== "add" && command !== "list" && command !== "handoff" && command !== "remove") {
     throw new Error(CLI_USAGE);
@@ -225,11 +232,24 @@ function parseClaimArgs(command: "next" | "done" | "release" | "report", argv: s
 
 /** 领到活以后给 AI 看的整段话。🚨 所有 AI（Claude/Codex/Pi/Hermes）看到的都是这一份，规矩只在这里写一次。 */
 export function formatClaimMessage(
-  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep" },
+  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep"; cooperation?: boolean; bundleId?: string; coordinator?: string },
   ctx: { cli: string; target?: string; group?: string; by: string; coding: boolean },
 ): string {
   const run = (rest: string) => `node "${ctx.cli}" ${rest}`;
   const sleep = reply.mode === "sleep";
+  if (reply.cooperation) {
+    if (!reply.item) return `【看板派工】本捆没有待做条目，已报告的条目仍待审核；其他窗口在干：${reply.busy.join('、') || '无'}。停止，不删除记录、不自行打开其他助手。`;
+    return [
+      `【看板派工】${ctx.by} 已占住整捆 ${reply.bundleId}，一次只做当前第 ${reply.position}/${reply.total} 条。`,
+      reply.prompt ?? '',
+      `先读看板派工技能正本：${ctx.cli.replace(/scripts[\\/]bookmark-cli\.mjs$/, 'skills（AI用看板的说明书）/看板派工/SKILL.md')}。也可通过 dispatch skill 看板派工 查询。`,
+      '执行窗口由用户自己开。不要启动子助手、其他模型进程或后台工兵。只改任务单指定范围，先自测再交报告；不修改原始需求，不伪造用户同意。',
+      run(`report ${reply.item.id} --by "${ctx.by}" --text "改了哪些文件；运行了什么测试；结果；剩余问题"`),
+      '报告会留为待审核，并送入指定调度窗口的收件箱；不会删除任务或释放整捆。下一步只领本捆下一条：',
+      run(`next ${reply.bundleId} --by "${ctx.by}"`),
+      `需要换人时明确放回整捆：${run(`dispatch release ${reply.bundleId} --by "${ctx.by}"`)}`,
+    ].join('\n\n');
+  }
   if (!reply.item) {
     const busy = reply.busy.length ? `还有 ${reply.busy.join("、")} 在干。` : "";
     const what = ctx.group ? `${ctx.group} 组` : ctx.target;
@@ -307,6 +327,18 @@ export function handleCliRequest(
     return { status: 403, body: { ok: false, error: "token 不对（CLI 会自动读 cli-port.json，别手拼）" } };
   }
   const path = urlPath.split("?")[0];
+  if (method === 'POST' && path === '/dispatch') {
+    if (!ctx.store.dispatch) return { status: 501, body: { ok: false, error: '看板尚未接入派工功能' } };
+    try {
+      const result = ctx.store.dispatch((body ?? {}) as DispatchInput);
+      if (!['list', 'messages', 'skills', 'skill'].includes(String((body as DispatchInput)?.action))) {
+        try { ctx.onChanged?.(); } catch { /* 不影响数据结果 */ }
+      }
+      return { status: 200, body: result };
+    } catch (error) {
+      return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+    }
+  }
   if (method === "POST" && path === "/add") {
     const raw = (body ?? {}) as Record<string, unknown>;
     const text = String(raw.text ?? "").trim();
@@ -432,6 +464,9 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
           remaining: got.remaining,
           busy: got.busy,
           mode: store.mode?.() ?? "day",
+          cooperation: Boolean(got.bundleId),
+          bundleId: got.bundleId,
+          coordinator: got.coordinator,
         },
       };
     }
@@ -441,9 +476,10 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
       if (!store.report) return { status: 500, body: { ok: false, error: "看板还不支持 report（主进程未接线）" } };
       const text = String(raw.text ?? "").trim();
       if (!text) return { status: 400, body: { ok: false, error: "报告是空的：用大白话写做了啥、改了哪些、怎么验的、还有啥没弄完" } };
-      store.report(id, by, text);
+      const record = store.report(id, by, text);
+      const bundle = store.bundleInfo?.(record.bundleId);
       changed();
-      return { status: 200, body: { ok: true } };
+      return { status: 200, body: bundle ? { ok: true, cooperation: true, bundleId: bundle.id, coordinator: bundle.coordinator } : { ok: true } };
     }
     if (path === "/done") {
       if (!store.done) return { status: 500, body: { ok: false, error: "看板还不支持 done（主进程未接线）" } };

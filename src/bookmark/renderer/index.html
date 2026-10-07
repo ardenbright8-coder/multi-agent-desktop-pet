@@ -6,6 +6,7 @@
   <title>Agent 看板</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="inline-images.css" />
+  <link rel="stylesheet" href="dispatch.css" />
 </head>
 <body>
   <div id="app">
@@ -25,10 +26,19 @@
       </button>
       <button id="tab-groups" type="button" class="page-tab" data-page="groups">🤖 Agent 分组</button>
       <button id="tab-projects" type="button" class="page-tab" data-page="projects">📁 项目</button>
+      <button id="tab-skills" type="button" class="page-tab" data-page="skills">📖 技能</button>
       <button id="add-agent-btn" type="button" title="加一个分组" hidden>＋组</button>
     </nav>
 
     <!-- 看板：分组全部由 bookmark.js 渲染（按当前页签只画待定区或 agent 分组） -->
+    <div id="dispatch-toolbar" hidden>
+      <span id="dispatch-selected-count"></span>
+      <input id="dispatch-name" placeholder="这一捆的名字（如字幕任务）" aria-label="捆名" />
+      <label><input id="dispatch-cooperate" type="checkbox" /> 多人派工：占住整捆</label>
+      <input id="dispatch-coordinator" placeholder="调度窗口名（报告发给谁）" aria-label="调度窗口名" hidden />
+      <button id="dispatch-create" type="button">捆成一捆</button>
+      <button id="dispatch-clear" type="button">清除选择</button>
+    </div>
     <main id="board"></main>
 
     <footer id="board-foot">
@@ -62,6 +72,7 @@
     <div id="bm-toast" class="bm-toast" hidden></div>
   </div>
   <script src="inline-images.js"></script>
+  <script src="dispatch.js"></script>
   <script src="bookmark.js"></script>
 </body>
 </html>

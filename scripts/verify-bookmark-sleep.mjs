@@ -1,7 +1,7 @@
 // 书签看板「两档：日常档 / 睡觉档」界面验证（2026-09-24 设定18）：
 //   ① 标题栏有档位钮，默认「☀️ 日常档」
 //   ② 点一下切到「🌙 睡觉档」，存进 mode.json，重开还是睡觉档
-//   ③ 切到睡觉档马上看一眼：有活没人干的组（Claude）会开窗贴好领活那句——测试实例只报会怎么做、不真开窗
+//   ③ 睡觉档仅改变报告方式，不再自动开助手窗口（2026-10-07：用户自己开执行窗口）
 //   ④ 真敲命令：next --to Claude 领到第一条，领活说明是睡觉档那套（report、按组 next、交接单）
 //   ⑤ 真敲 report：条目标成「✅ 干完待审」、报告挂在条目下面、不删；「在干」标记没了
 //   ⑥ 再 next --to Claude 领到第二条（报告过的不再领）
@@ -74,6 +74,10 @@ try {
   const t0 = (await btn.count()) ? (await btn.textContent())?.trim() : null;
   check("① 标题栏有档位钮，默认日常档", t0 === "☀️ 日常档", `钮上写=${t0}`);
 
+  await page.evaluate(() => {
+    window.__sleepNudges = 0;
+    window.bookmark.onSleepNudged(() => window.__sleepNudges++);
+  });
   if (await btn.count()) await btn.click();
   const t1 = await waitFor(async () => ((await btn.textContent())?.trim() === "🌙 睡觉档" ? "🌙 睡觉档" : null), 5000);
   const modeFile = join(hubHome, "bookmark", "mode.json");
@@ -82,9 +86,10 @@ try {
 
   const toast = await waitFor(async () => {
     const text = (await page.locator("#bm-toast").textContent().catch(() => "")) ?? "";
-    return text.includes("Claude") ? text : null;
-  }, 8000);
-  check("③ 切到睡觉档马上给有活没人干的 Claude 组开窗贴好（测试实例不真开）", Boolean(toast), `提示=${toast ?? (await page.locator("#bm-toast").textContent().catch(() => ""))}`);
+    return text.includes("不自动开窗") ? text : null;
+  }, 2000);
+  const nudges = await page.evaluate(() => window.__sleepNudges);
+  check("③ 睡觉档不自动开助手，提示由用户自己开窗口", Boolean(toast) && nudges === 0, `提示=${toast} 开窗事件=${nudges}`);
 
   const n1 = runCli(["next", "--to", "Claude", "--by", "Claude-7"]);
   check("④ next --to Claude 领到第一条，说明是睡觉档那套",

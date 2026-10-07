@@ -12,4 +12,6 @@ clipboard.writeText = (text) => { copied = text; };
 clipboard.readText = () => copied;
 app.whenReady().then(() => {
   require("../dist/bookmark/panel-window").initBookmarkPanel({hotkey:false, resident:true, inbox:false, liveRestart:false});
+  // 隐藏宿主仍需渲染帧，避免 Playwright 等控件稳定时被后台节流卡住。
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.setBackgroundThrottling(false);
 });
