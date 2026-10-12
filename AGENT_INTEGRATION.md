@@ -140,7 +140,7 @@ node "...同上路径...\scripts\bookmark-cli.mjs" remove <条目id>
 
 看板“技能”页与 `dispatch skill 看板派工` 读取同一份正本：`skills（AI用看板的说明书）/看板派工/SKILL.md`。明确创建的派工捆才走多人协同，普通日常领活沿用下一节。
 
-- 手动成捆：Agent 分组页 Ctrl 点选同组任务，填写捆名；勾多人派工并填写调度窗口名。调度也可用 `dispatch bundle --ids ... --name ... --coordinator ...` 成捆。
+- 普通捆：Agent 分组页 Ctrl 点选同组任务，在选中的任务上右键「捆成一捆」。多人派工捆只走命令：`dispatch bundle --ids ... --name ... --coordinator ...`。
 - 用户自己开窗口，捆头只复制领取命令，不自动启动助手；`next <捆号> --by <窗口名>` 占住整捆、每次只给当前一条。
 - 报告使用原 `report`，报告后继续 `next`；待审不删、整捆不放。通知按调度窗口名留在收件箱，调度用 `dispatch messages` 或临时前台 `dispatch wait --seconds 120` 接收；不额外挂后台模型或声称空闲窗口会凭空被唤醒。
 - 完整流程、范围底线与验收清理命令只认上述技能正本；不使用子助手派工工具。

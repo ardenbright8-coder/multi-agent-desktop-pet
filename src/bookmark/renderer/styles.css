@@ -388,7 +388,7 @@ body {
   left: 10px;
   bottom: 46px;
   z-index: 60;
-  width: 240px;
+  width: 260px;
   background: rgba(250, 252, 246, 0.97);
   border: 1px solid rgba(201, 165, 76, 0.5);
   border-radius: 12px;
@@ -758,33 +758,67 @@ body {
 
 /* ── 捆一捆 + 在干（2026-09-24 设定15）──────────────────── */
 
-/* 捆头：一捆最上面那行（六个点 + 名字 + 谁在干），跟下面几条合成一个淡虚线框 */
+/* 捆（2026-10-12 设定21 改版）：不再画虚线框。一捆 = 一块微微浮起来的毛玻璃——
+   比普通白条亮一点、左边一道淡叶绿脊线、底下一点点影子；捆里各条之间只隔一道很淡的线。
+   要的是一眼看出「这几条是一块」，又不花。 */
 .bundle-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
-  padding: 2px 6px;
-  border: 1px dashed rgba(122, 156, 94, 0.55);
+  margin-top: 6px;
+  padding: 2px 6px 1px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-left: 3px solid rgba(122, 156, 94, 0.5);
   border-bottom: 0;
-  border-radius: 9px 9px 0 0;
-  background: rgba(122, 156, 94, 0.08);
-  font-size: 12.5px;
-  color: rgba(47, 62, 44, 0.7);
+  border-radius: 10px 10px 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(250, 253, 246, 0.74));
+  box-shadow: 0 -2px 8px -6px rgba(47, 62, 44, 0.25);
+  font-size: 12px;
+  color: rgba(47, 62, 44, 0.62);
   list-style: none;
 }
 .bundle-head .bundle-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bundle-head .bundle-ai { flex: none; font-size: 11px; opacity: 0.55; }
 .task.in-bundle {
   margin-bottom: 0;
   border-radius: 0;
-  border-left: 1px dashed rgba(122, 156, 94, 0.55);
-  border-right: 1px dashed rgba(122, 156, 94, 0.55);
+  background: rgba(250, 253, 246, 0.74);
+  border-left: 3px solid rgba(122, 156, 94, 0.5);
+  border-right: 1px solid rgba(255, 255, 255, 0.85);
+  border-top: 1px solid rgba(122, 156, 94, 0.1);
 }
 .task.in-bundle.bundle-last {
-  margin-bottom: 4px;
-  border-bottom: 1px dashed rgba(122, 156, 94, 0.55);
-  border-radius: 0 0 9px 9px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 4px 9px -5px rgba(47, 62, 44, 0.28);
 }
+
+/* 右键「捆成一捆」菜单里的捆名框 */
+.ctx-input {
+  display: block;
+  width: calc(100% - 8px);
+  margin: 2px 4px 4px;
+  padding: 4px 7px;
+  border: 1px solid rgba(122, 156, 94, 0.45);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #31402f;
+  font: inherit;
+  font-size: 13px;
+}
+.ctx-input:focus { outline: 2px solid rgba(122, 156, 94, 0.45); outline-offset: 0; }
+
+/* 设置浮层：AI 整理那一小块 */
+.settings-organizer { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(122, 156, 94, 0.22); display: grid; gap: 5px; }
+.settings-organizer .settings-row { justify-content: space-between; }
+.org-switch { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.org-switch input { accent-color: #6f8f5f; margin: 0; }
+#org-model, #org-add-name { flex: 1; min-width: 0; border: 1px solid rgba(122, 156, 94, 0.45); border-radius: 7px; background: rgba(255, 255, 255, 0.8); color: #31402f; font: inherit; font-size: 12.5px; padding: 2px 6px; }
+#org-add-row[hidden] { display: none; }
+.settings-open-btn.org-add { padding: 1px 8px; }
+.settings-open-btn:disabled { opacity: 0.6; cursor: default; }
+.org-status { font-size: 11.5px; color: rgba(47, 62, 44, 0.6); line-height: 1.35; overflow-wrap: anywhere; }
 
 /* 拖着一条压在别条正中间：要捆上了 */
 .task.bundle-target { outline: 2px solid rgba(122, 156, 94, 0.8); background: rgba(122, 156, 94, 0.18); }

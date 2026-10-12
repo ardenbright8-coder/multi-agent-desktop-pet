@@ -26,6 +26,16 @@ contextBridge.exposeInMainWorld("bookmark", {
   openTemplates: () => ipcRenderer.invoke("bookmark:templates:open"),
   bundle: (id: string, targetId: string) => ipcRenderer.invoke("bookmark:bundle", { id, targetId }),
   unbundle: (bundleId: string) => ipcRenderer.invoke("bookmark:unbundle", bundleId),
+  // 右键「捆成一捆」+ 捆名（设定21）
+  bundleSelected: (ids: string[], name: string) => ipcRenderer.invoke("bookmark:bundle-selected", { ids, name }),
+  bundleMeta: () => ipcRenderer.invoke("bookmark:bundle-meta") as Promise<Record<string, { name: string; by: "user" | "ai" }>>,
+  // AI 整理（设定21）：设置浮层读写、手动整理一次；整理完主进程发一句话过来
+  organizerGet: () => ipcRenderer.invoke("bookmark:organizer:get"),
+  organizerSet: (patch: { model?: string; addModel?: string; enabled?: boolean }) => ipcRenderer.invoke("bookmark:organizer:set", patch),
+  organizerRun: () => ipcRenderer.invoke("bookmark:organizer:run"),
+  onOrganized: (callback: (text: string) => void) => {
+    ipcRenderer.on("bookmark:organized", (_event, text) => callback(String(text ?? "")));
+  },
   release: (id: string) => ipcRenderer.invoke("bookmark:release", id),
   launchLine: (target: string, group: string, coding: boolean) =>
     ipcRenderer.invoke("bookmark:launch-line", { target, group, coding }) as Promise<{ line: string; label: string; opened: string | null; freshWindow: boolean; pasting: boolean; problem: string | null }>,

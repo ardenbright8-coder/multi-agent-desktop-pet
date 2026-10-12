@@ -16,6 +16,7 @@ let bmInsertDraft = null; // 右键插进来、还在写的那一行：{ groupKe
 let bmEditingId = null; // 点白条正在改的那条
 let bmInsertSaveTimer = null;
 let bmEditSaveTimer = null;
+let bmBundleMeta = {}; // 捆号 → { name, by: user/ai }（设定21：捆名、AI 捆的标个小机器人）
 
 function bmDotColor(name) {
   let hash = 0;
@@ -137,6 +138,12 @@ function bmInit() {
     bmToggleSettings();
   });
   bmAddTemplatesSettingRow();
+  bmAddOrganizerSettingRows();
+  window.bookmark.onOrganized?.((text) => {
+    bmToast(text, 6000);
+    void bmRefresh();
+    void bmPaintOrganizer();
+  });
   const slider = document.getElementById("opacity-slider");
   slider?.addEventListener("input", () => bmOnOpacityInput(Number(slider.value)));
   slider?.addEventListener("click", (event) => event.stopPropagation());
@@ -199,9 +206,11 @@ function bmInit() {
 
 async function bmRefresh() {
   try {
-    const [agents, records, dispatch] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
-      window.bookmark.dispatch ? window.bookmark.dispatch({ action: 'list' }) : Promise.resolve({ bundles: [] })]);
+    const [agents, records, dispatch, meta] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
+      window.bookmark.dispatch ? window.bookmark.dispatch({ action: 'list' }) : Promise.resolve({ bundles: [] }),
+      window.bookmark.bundleMeta ? window.bookmark.bundleMeta() : Promise.resolve({})]);
     bmDispatchBundles = new Map((dispatch.bundles || []).map(b => [b.id, b]));
+    bmBundleMeta = meta || {};
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
     // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
     if (bmDragActive || bmImagesBusy) {
@@ -532,6 +541,12 @@ function bmBuildTask(record, groupKey, order) {
   item.dataset.id = record.id;
   item.addEventListener("contextmenu", (event) => {
     event.preventDefault();
+    // 选中了两条以上、在选中的条目上右键 = 捆成一捆（设定21）；别的情况照旧弹这一条的菜单。
+    if (bmSelectedTasks.has(record.id) && bmSelectedTasks.size >= 2) {
+      event.stopPropagation();
+      bmShowSelectionMenu(item, event.clientY);
+      return;
+    }
     const rect = item.getBoundingClientRect();
     const place = event.clientY < rect.top + rect.height / 2 ? "above" : "below";
     bmShowCtxMenu(record, groupKey, item, place);
@@ -1577,10 +1592,19 @@ function bmBuildBundleHead(bundleId, members, groupKey) {
   head.appendChild(handle);
   const name = document.createElement("span");
   name.className = "bundle-name";
-  const first = members[0] ? members[0].text : "";
+  const first = members[0] ? members[0].text.replace(/\[图片:[^\]]*\]/g, "").trim() : "";
   const dispatch = bmDispatchBundles.get(bundleId);
-  name.textContent = dispatch ? `派工捆 · ${dispatch.name}` : (first.length > 16 ? `${first.slice(0, 16)}…` : first);
+  const meta = bmBundleMeta[bundleId];
+  name.textContent = dispatch ? `派工捆 · ${dispatch.name}` : meta ? meta.name : (first.length > 16 ? `${first.slice(0, 16)}…` : first);
   head.appendChild(name);
+  // AI 整理捆的（设定21）：捆名后面一个淡淡的小机器人。你手动改过这几条，AI 就不再碰。
+  if (meta && meta.by === "ai" && !dispatch) {
+    const ai = document.createElement("span");
+    ai.className = "bundle-ai";
+    ai.title = "AI 整理时捆的；你手动挪过、拆过的条目 AI 不再碰";
+    ai.textContent = "🤖";
+    head.appendChild(ai);
+  }
   const busy = dispatch?.owner ? [dispatch.owner] : [...new Set(members.map((r) => r.claimedBy).filter(Boolean))];
   if (busy.length) {
     const claim = document.createElement("span");
@@ -1638,6 +1662,101 @@ function bmAddTemplatesSettingRow() {
   row.appendChild(label);
   row.appendChild(btn);
   pop.appendChild(row);
+}
+
+// ── AI 整理（设定21）：设置浮层里一小块——开关、整理一次、选模型、自己加模型、上次整理的结果 ──
+
+function bmAddOrganizerSettingRows() {
+  const pop = document.getElementById("settings-popover");
+  if (!pop || pop.querySelector(".settings-organizer")) return;
+  const box = document.createElement("div");
+  box.className = "settings-organizer";
+  box.innerHTML = `
+    <div class="settings-row">
+      <label class="settings-label org-switch"><input type="checkbox" id="org-enabled" /> AI 整理捆</label>
+      <button type="button" class="settings-open-btn" id="org-run">整理一次</button>
+    </div>
+    <div class="settings-row">
+      <select id="org-model" aria-label="整理用的模型"></select>
+      <button type="button" class="settings-open-btn org-add" id="org-add" title="自己加一个模型">＋</button>
+    </div>
+    <div class="settings-row" id="org-add-row" hidden>
+      <input id="org-add-name" placeholder="模型名，回车加上" aria-label="新模型名" />
+    </div>
+    <div class="org-status" id="org-status"></div>`;
+  pop.appendChild(box);
+  box.addEventListener("click", (event) => event.stopPropagation());
+  const set = async (patch) => {
+    try {
+      bmPaintOrganizerState(await window.bookmark.organizerSet(patch));
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
+  };
+  box.querySelector("#org-enabled").addEventListener("change", (event) => { void set({ enabled: event.target.checked }); });
+  box.querySelector("#org-model").addEventListener("change", (event) => { void set({ model: event.target.value }); });
+  box.querySelector("#org-add").addEventListener("click", () => {
+    const row = box.querySelector("#org-add-row");
+    row.hidden = !row.hidden;
+    if (!row.hidden) box.querySelector("#org-add-name").focus();
+  });
+  box.querySelector("#org-add-name").addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.key === "Escape") box.querySelector("#org-add-row").hidden = true;
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const value = event.target.value.trim();
+    if (!value) return;
+    event.target.value = "";
+    box.querySelector("#org-add-row").hidden = true;
+    void set({ addModel: value });
+  });
+  box.querySelector("#org-run").addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "整理中…";
+    try {
+      bmPaintOrganizerState(await window.bookmark.organizerRun());
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "整理一次";
+    }
+  });
+  document.getElementById("settings-btn")?.addEventListener("click", () => { void bmPaintOrganizer(); });
+  void bmPaintOrganizer();
+}
+
+async function bmPaintOrganizer() {
+  if (!window.bookmark.organizerGet) return;
+  try {
+    bmPaintOrganizerState(await window.bookmark.organizerGet());
+  } catch {
+    /* 读不到就不画，不拦看板 */
+  }
+}
+
+function bmPaintOrganizerState(state) {
+  if (!state) return;
+  const select = document.getElementById("org-model");
+  if (!select) return;
+  select.textContent = "";
+  for (const m of state.models) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m.includes("/") ? m.slice(m.indexOf("/") + 1) : m;
+    opt.title = m;
+    select.appendChild(opt);
+  }
+  select.value = state.model;
+  document.getElementById("org-enabled").checked = Boolean(state.enabled);
+  const status = document.getElementById("org-status");
+  const every = `每 ${state.intervalHours} 小时一次`;
+  if (!state.hasKey) status.textContent = "还没填模型钥匙";
+  else if (state.running) status.textContent = "正在整理…";
+  else if (state.last) status.textContent = `${bmClock(Date.parse(state.last.at))} ${state.last.text.replace(/^AI 整理[：:]/, "")}`;
+  else status.textContent = state.enabled ? `开着，${every}` : "关着";
 }
 
 function bmHideCtxMenu() {

@@ -13,6 +13,8 @@ import { CoordinationStore } from "./coordination";
 import type { TaskBundle } from "./coordination";
 
 const log = createLogger("bookmark");
+/** 正文里的贴图标记，起捆名时去掉。 */
+const IMAGE_MARK = /\[图片:[^\]]*\]/g;
 
 export interface BookmarkInput {
   text: string;
@@ -50,6 +52,16 @@ export interface BookmarkRecord {
   reportedBy: string | null;
   reportedAt: string | null;
   createdAt: string;
+  /** AI 整理（设定21）：AI 看过这条的时间。看过就不再送给它，不管捆没捆。null = 新条目。 */
+  sortedAt: string | null;
+  /** 用户亲手动过这条的捆（捆进、拆出、拖进拖出）。手动的说了算：AI 永远不碰它。 */
+  userPinned: boolean;
+}
+
+/** 捆的名字和谁捆的（设定21）。多人派工捆的名字另在 coordination 里，这里也记一份给界面显示。 */
+export interface BundleMeta {
+  name: string;
+  by: "user" | "ai";
 }
 
 /** 领活结果：record 为 null 表示没活可领（busy 是正在干的窗口名）。position/total 是这条在捆里第几条/共几条。 */
@@ -80,32 +92,96 @@ export class BookmarkStore {
     return this.coordination.list().filter(b => this.records.some(r => r.bundleId === b.id));
   }
 
-  /** 成捆只调整归属和位置，原文、图片、报告保持不变。顺序沿用当前看板顺序。 */
-  createTaskBundle(ids: string[], name: string, coordinator?: string): TaskBundle {
+  /** 成捆只调整归属和位置，原文、图片、报告保持不变。顺序沿用当前看板顺序。
+   *  以最后一次为准（设定21）：选中的条目原来在别的捆里，就从原捆拿出来进新捆，原捆只剩一条就散掉。
+   *  by=user（看板上手动捆，默认）会把这几条标成「用户动过」，AI 以后不碰。 */
+  createTaskBundle(ids: string[], name: string, coordinator?: string, by: "user" | "ai" = "user"): TaskBundle {
     this.ensureLoaded();
     const chosen = new Set(ids);
     const items = this.records.filter(r => chosen.has(r.id));
-    if (!chosen.size || items.length !== chosen.size) throw new Error('选中的任务不存在或列表为空');
-    if (!items[0].assignee || items.some(r => r.kind !== 'note' || groupKeyOf(r) !== groupKeyOf(items[0]))) {
-      throw new Error('只能把同一个助手分组里的普通任务捆起来');
+    if (chosen.size < 2 || items.length !== chosen.size) throw new Error('至少选两条还在的任务才能成捆');
+    if (items.some(r => groupKeyOf(r) !== groupKeyOf(items[0])) || groupKeyOf(items[0]) === 'inbox') {
+      throw new Error('只能把同一个分组里的任务捆起来（待定区不捆）');
+    }
+    if (coordinator && (!items[0].assignee || items.some(r => r.kind !== 'note'))) {
+      throw new Error('多人派工捆只能捆助手分组里的普通任务');
     }
     for (const r of items) {
       this.coordination.assertEditable(r.bundleId);
       if (r.claimedBy || r.report) throw new Error('在干或待审核的任务不能重新成捆');
-      if (r.bundleId) throw new Error('选中任务已在捆里，先拆开原捆再组合');
     }
     const id = `b-${randomUUID().slice(0, 8)}`;
-    const title = name.trim() || items[0].text.slice(0, 24);
+    const title = name.trim() || items[0].text.replace(IMAGE_MARK, '').trim().slice(0, 16) || '一捆';
     const result: TaskBundle = coordinator
       ? this.coordination.add(id, title, items[0].assignee!, coordinator)
-      : { id, name: title, group: items[0].assignee!, coordinator: '', owner: null, status: '待领取' };
+      : { id, name: title, group: items[0].assignee ?? '交接单', coordinator: '', owner: null, status: '待领取' };
     const at = this.records.indexOf(items[0]);
     const rest = this.records.filter(r => !chosen.has(r.id));
-    items.forEach(r => { r.bundleId = id; });
+    items.forEach(r => {
+      r.bundleId = id;
+      if (by === 'user') r.userPinned = true;
+    });
     rest.splice(at, 0, ...items);
     this.records = rest;
+    this.setBundleMeta(id, { name: title, by });
+    this.dissolveLoneBundles();
     this.save();
     return result;
+  }
+
+  /** 捆名和谁捆的：界面捆头显示用。没登记过的捆（旧捆、拖出来的捆）不在里面，界面用第一条开头当名字。 */
+  bundleMeta(): Record<string, BundleMeta> {
+    this.ensureLoaded();
+    return { ...this.loadMeta() };
+  }
+
+  // ── AI 整理（设定21）：只许这三个口子改捆，规矩在代码里卡死，AI 说什么都越不过去 ──
+
+  /** 这几条 AI 看过了：以后不再送给它。 */
+  markSorted(ids: string[]): void {
+    this.ensureLoaded();
+    const set = new Set(ids);
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const r of this.records) if (set.has(r.id) && !r.sortedAt) { r.sortedAt = now; n += 1; }
+    if (n) this.save();
+  }
+
+  /** AI 能动的条目：散着、用户没动过、没人在干、没报告。 */
+  aiMovable(record: BookmarkRecord | undefined): record is BookmarkRecord {
+    return Boolean(record && !record.bundleId && !record.userPinned && !record.claimedBy && !record.report);
+  }
+
+  /** AI 能往里加条目的捆：还在、不是多人派工捆、里面没人在干、没报告。 */
+  aiOpenBundle(bundleId: string): boolean {
+    this.ensureLoaded();
+    if (this.coordination.get(bundleId)) return false;
+    const members = this.records.filter(r => r.bundleId === bundleId);
+    return members.length >= 2 && members.every(r => !r.claimedBy && !r.report);
+  }
+
+  /** AI 把一条新条目放进已有的捆（捆到最后）。不合规矩直接抛错，整理那边接住跳过这一条。 */
+  aiJoinBundle(id: string, bundleId: string): void {
+    this.ensureLoaded();
+    const item = this.records.find(r => r.id === id);
+    if (!this.aiMovable(item)) throw new Error('这条 AI 不能动');
+    if (!this.aiOpenBundle(bundleId)) throw new Error('这一捆 AI 不能往里加');
+    const first = this.records.find(r => r.bundleId === bundleId)!;
+    if (groupKeyOf(first) !== groupKeyOf(item)) throw new Error('不是同一组');
+    this.records.splice(this.records.indexOf(item), 1);
+    let last = -1;
+    this.records.forEach((r, i) => { if (r.bundleId === bundleId) last = i; });
+    this.records.splice(last + 1, 0, item);
+    item.bundleId = bundleId;
+    this.save();
+  }
+
+  /** AI 开一个新捆：每条都必须是 AI 能动的、同一组。 */
+  aiCreateBundle(ids: string[], name: string): string {
+    this.ensureLoaded();
+    const items = ids.map(id => this.records.find(r => r.id === id));
+    if (items.length < 2 || !items.every(r => this.aiMovable(r))) throw new Error('有条目 AI 不能动');
+    return this.createTaskBundle(ids, name, undefined, 'ai').id;
   }
 
   /** 协同入口只在明确指定的分组和调度窗口范围选捆，不捞其他任务。 */
@@ -181,6 +257,8 @@ export class BookmarkStore {
       reportedBy: null,
       reportedAt: null,
       createdAt: new Date().toISOString(),
+      sortedAt: null,
+      userPinned: false,
     };
     this.records.unshift(record);
     this.save();
@@ -208,6 +286,8 @@ export class BookmarkStore {
       reportedBy: null,
       reportedAt: null,
       createdAt: new Date().toISOString(),
+      sortedAt: null,
+      userPinned: false,
     };
     const index = anchorId ? this.records.findIndex((item) => item.id === anchorId) : -1;
     if (index < 0) this.records.unshift(record);
@@ -232,7 +312,9 @@ export class BookmarkStore {
     }
     if (place === "below") to += 1;
     this.records.splice(to, 0, item);
+    const before = item.bundleId;
     this.settleBundleAfterMove(item);
+    if (item.bundleId !== before) item.userPinned = true;
     this.dissolveLoneBundles();
     this.save();
     return item;
@@ -255,6 +337,8 @@ export class BookmarkStore {
     this.records.forEach((r, i) => { if (r.bundleId === bundle) last = i; });
     this.records.splice(last + 1, 0, item);
     item.bundleId = bundle;
+    item.userPinned = true;
+    target.userPinned = true;
     this.dissolveLoneBundles();
     this.save();
     return item;
@@ -269,6 +353,7 @@ export class BookmarkStore {
     for (const r of this.records) {
       if (r.bundleId === bundleId) {
         r.bundleId = null;
+        r.userPinned = true;
         n += 1;
       }
     }
@@ -471,6 +556,8 @@ export class BookmarkStore {
       record.bundleId = null;
       record.claimedBy = null;
       record.claimedAt = null;
+      record.sortedAt = null;
+      record.userPinned = false;
       this.dissolveLoneBundles();
     }
     this.save();
@@ -523,6 +610,8 @@ export class BookmarkStore {
           report: typeof record.report === "string" ? record.report : null,
           reportedBy: typeof record.reportedBy === "string" ? record.reportedBy : null,
           reportedAt: typeof record.reportedAt === "string" ? record.reportedAt : null,
+          sortedAt: typeof record.sortedAt === "string" ? record.sortedAt : null,
+          userPinned: record.userPinned === true,
         }));
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;
@@ -539,7 +628,55 @@ export class BookmarkStore {
 
   private save(): void {
     writeJsonAtomic(this.path, this.records);
+    this.pruneMeta();
   }
+
+  // ── 捆名（设定21）：存 bookmarks.json.bundle-meta.json，坏档当空的，不拦看板 ──
+
+  private meta: Record<string, BundleMeta> | null = null;
+
+  private metaPath(): string {
+    return `${this.path}.bundle-meta.json`;
+  }
+
+  private loadMeta(): Record<string, BundleMeta> {
+    if (this.meta) return this.meta;
+    try {
+      const parsed: unknown = existsSync(this.metaPath()) ? JSON.parse(readFileSync(this.metaPath(), "utf8").replace(/^\uFEFF/, "")) : {};
+      const out: Record<string, BundleMeta> = {};
+      if (parsed && typeof parsed === "object") {
+        for (const [id, v] of Object.entries(parsed as Record<string, unknown>)) {
+          const m = v as Partial<BundleMeta> | null;
+          if (m && typeof m.name === "string") out[id] = { name: m.name, by: m.by === "ai" ? "ai" : "user" };
+        }
+      }
+      this.meta = out;
+    } catch {
+      this.meta = {};
+    }
+    return this.meta;
+  }
+
+  private setBundleMeta(id: string, value: BundleMeta): void {
+    this.loadMeta()[id] = value;
+    this.metaDirty = true;
+  }
+
+  private pruneMeta(): void {
+    const meta = this.loadMeta();
+    const alive = new Set(this.records.map((r) => r.bundleId).filter(Boolean));
+    let changed = false;
+    for (const id of Object.keys(meta)) if (!alive.has(id)) { delete meta[id]; changed = true; }
+    if (!changed && !this.metaDirty) return;
+    this.metaDirty = false;
+    try {
+      writeJsonAtomic(this.metaPath(), meta);
+    } catch (error) {
+      log.出事("捆名存不下来（捆还在，只是名字回落成第一条开头）", error, "store");
+    }
+  }
+
+  private metaDirty = false;
 }
 
 /** 看板上在同一组的判据：派给谁（大小写不敏感）；没派的交接单一组、没派的普通条目一组。 */

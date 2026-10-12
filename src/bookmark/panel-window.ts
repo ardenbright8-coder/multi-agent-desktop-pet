@@ -12,11 +12,11 @@
 
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell } from "electron";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
-import { bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
+import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
 import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_ZORDER_FLAGS, pinToggleSteps } from "./dock";
 import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
@@ -32,6 +32,7 @@ import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
+import { formatSummary, parseOrganizerConfig, runOrganizer, shortSummary, type FetchFn, type OrganizerConfig } from "./organizer";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -323,6 +324,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
       log.出事("收信模块启动失败（看板仍可用，只是收不到手机消息）", error, "inbox");
     }
   }
+  if (options?.resident && !process.env.AGENT_PET_HUB_HOME) startOrganizerTimer();
   if (options?.resident) {
     try {
       const win = ensurePanel();
@@ -769,6 +771,33 @@ function registerIpc(): void {
     clipboard.writeText(text);
     return text;
   });
+  // 右键「捆成一捆」（设定21）：看板上手动捆的，以最后一次为准，AI 以后不碰这几条。
+  ipcMain.handle("bookmark:bundle-selected", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { ids?: unknown; name?: unknown };
+    const ids = Array.isArray(raw.ids) ? raw.ids.map((x) => String(x ?? "")) : [];
+    return requireStore().createTaskBundle(ids, String(raw.name ?? ""));
+  });
+  ipcMain.handle("bookmark:bundle-meta", () => requireStore().bundleMeta());
+  // AI 整理（设定21）：设置浮层读写、手动整理一次。钥匙不回给界面，只说有没有。
+  ipcMain.handle("bookmark:organizer:get", () => organizerStatus());
+  ipcMain.handle("bookmark:organizer:set", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { model?: unknown; addModel?: unknown; enabled?: unknown };
+    const config = readOrganizerConfig();
+    const added = String(raw.addModel ?? "").trim();
+    if (added) {
+      if (/\s/.test(added) || added.length > 120) throw new Error("模型名不能带空格，最长 120 字");
+      if (!config.models.includes(added)) config.models.push(added);
+      config.model = added;
+    }
+    if (typeof raw.model === "string" && config.models.includes(raw.model)) config.model = raw.model;
+    if (typeof raw.enabled === "boolean") config.enabled = raw.enabled;
+    writeOrganizerConfig(config);
+    return organizerStatus();
+  });
+  ipcMain.handle("bookmark:organizer:run", async () => {
+    await runOrganizerOnce("手动");
+    return organizerStatus();
+  });
   // 捆一捆 / 拆开 / 放回去（设定15）
   ipcMain.handle("bookmark:bundle", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { id?: unknown; targetId?: unknown };
@@ -957,6 +986,89 @@ function nextWindowLabel(group: string): string {
     log.出事("launch-seq.json 写盘失败（窗口名可能重复，不影响使用）", error, "cli");
   }
   return `${group.replace(/\s+/g, "") || "Agent"}-${seq}`;
+}
+
+// ── AI 整理（设定21）：桌宠开起来 30 秒整理一次，之后每隔 intervalHours 一次；没新条目就不调模型 ──
+
+const ORGANIZER_FILE = "organizer.json";
+const ORGANIZER_LOG = "AI整理记录.md";
+let organizerRunning = false;
+let organizerLast: { at: string; text: string } | null = null;
+let organizerTimer: NodeJS.Timeout | null = null;
+
+function readOrganizerConfig(): OrganizerConfig {
+  const file = join(bookmarkDataDirectory(), ORGANIZER_FILE);
+  try {
+    return parseOrganizerConfig(existsSync(file) ? JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, "")) : {});
+  } catch (error) {
+    log.出事("AI 整理设置读不出来，按默认来（钥匙为空就不整理）", error, "organizer");
+    return parseOrganizerConfig({});
+  }
+}
+
+function writeOrganizerConfig(config: OrganizerConfig): void {
+  writeJsonAtomic(join(bookmarkDataDirectory(), ORGANIZER_FILE), config);
+}
+
+function organizerStatus() {
+  const c = readOrganizerConfig();
+  return { models: c.models, model: c.model, enabled: c.enabled, hasKey: Boolean(c.apiKey), intervalHours: c.intervalHours, running: organizerRunning, last: organizerLast };
+}
+
+/** 走 Electron 自己的网络栈：跟着系统代理走，Clash 开着也能连上。 */
+const organizerFetch: FetchFn = async (url, init) => {
+  const res = await net.fetch(url, { method: init.method, headers: init.headers, body: init.body, signal: init.signal });
+  return { ok: res.ok, status: res.status, text: () => res.text() };
+};
+
+async function runOrganizerOnce(reason: string): Promise<void> {
+  if (organizerRunning) return;
+  const config = readOrganizerConfig();
+  if (reason !== "手动" && !config.enabled) return;
+  if (!config.apiKey) {
+    organizerLast = { at: new Date().toISOString(), text: "AI 整理：还没填模型钥匙" };
+    return;
+  }
+  organizerRunning = true;
+  try {
+    const summary = await runOrganizer({ store: requireStore(), agents: requireRoster().list(), config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot() });
+    const record = formatSummary(summary);
+    if (record) {
+      try {
+        appendFileSync(join(bookmarkDataDirectory(), ORGANIZER_LOG), record, "utf8");
+      } catch (error) {
+        log.出事("AI 整理记录写不进去", error, "organizer");
+      }
+    }
+    organizerLast = { at: summary.at, text: shortSummary(summary) };
+    log.记(`${reason}整理：${organizerLast.text}`, "organizer");
+    if (summary.changed) notifyInboxChanged();
+    if (summary.groups.length || reason === "手动") notifyOrganized(organizerLast.text);
+  } catch (error) {
+    organizerLast = { at: new Date().toISOString(), text: `AI 整理没成：${error instanceof Error ? error.message : error}` };
+    log.出事(`${reason}整理失败`, error, "organizer");
+    if (reason === "手动") notifyOrganized(organizerLast.text);
+  } finally {
+    organizerRunning = false;
+  }
+}
+
+function startOrganizerTimer(): void {
+  const schedule = (ms: number) => {
+    organizerTimer = setTimeout(() => {
+      void runOrganizerOnce("定时").finally(() => schedule(readOrganizerConfig().intervalHours * 3600_000));
+    }, ms);
+    organizerTimer.unref?.();
+  };
+  schedule(30_000);
+}
+
+function notifyOrganized(text: string): void {
+  try {
+    if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:organized", text);
+  } catch {
+    /* 面板不在就算了 */
+  }
 }
 
 function requireRoster(): AgentRoster {

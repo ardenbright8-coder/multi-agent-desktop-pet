@@ -12,7 +12,8 @@
 | 文件 | 管什么 |
 |---|---|
 | `coordination.ts` / `dispatch-cli.ts` | 明确启用的多人派工：每捆一个窗口、逐条领取、调度收件箱、用户验收后清理；普通捆不登记，不启动模型或后台工兵 |
-| `skills.ts` / `renderer/dispatch.js/.css` | 读取项目技能正本；Ctrl多选成捆、技能页、协同捆复制领取命令；不替用户打开执行窗口 |
+| `skills.ts` / `renderer/dispatch.js/.css` | 读取项目技能正本；Ctrl 多选后右键「捆成一捆」（设定21，以最后一次为准）、技能页、协同捆复制领取命令；不替用户打开执行窗口 |
+| `organizer.ts` | AI 整理捆（设定21）：每组新条目出题给 Command Code 套餐的便宜模型（默认 DeepSeek V4.1 Flash），回 JSON 后逐条过筛，只走 store 的 `aiJoinBundle` / `aiCreateBundle`；规矩正文 `ORGANIZER_RULES`（写给弱模型：先贴项目名再归捆）。定时器和设置读写在 panel-window（`organizer.json`、`AI整理记录.md`，都在看板数据夹）；验证 `scripts/verify-bookmark-organize.mjs` |
 | `store.ts` | 本地库：增删查改（updateText 改正文/链接，输入行自动存档用）、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；条目带 `detail`（详情，交接单等长内容）与 `kind`（note 普通 / handoff 交接单），旧库读入自动补齐默认；JSON 原子写；捆一捆与 AI 领活（设定15）：`bundleId/claimedBy/claimedAt`、`bundleWith`/`claimNext`/`done`（必须带用户原话）/`release` |
 | `appearance.ts` | 看板外观纯函数：透明度解析/夹取（范围 0.30–0.95，默认 0.6，坏档回落默认）；存取 IO 在 panel-window（appearance.json） |
 | `zoom.ts` | 看板字号纯函数（设定20）：档位 50%–200% 一档 10%、zoom.json 解析、哪个键算调字号；接线在 panel-window `wireBoardZoom`（看板窗口 before-input-event + zoom-changed，🚨 不走 globalShortcut） |
@@ -94,6 +95,7 @@ BookmarkStore（testkit 单测用）
    图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（打开就能标、一套流水号、自动存不动原图、撤销、拖动编号、删光清附属文件、改字框里能标、交给 AI 带编号清单；隐藏窗口）。
 7. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点；组框拖不动、标题行无条数无折叠、小加号贴组名、交接单专区同底）
 8. `node scripts/verify-bookmark-launch-paste.mjs` 过（🚨 真机真窗口：假快捷方式指向假 AI 程序 `scripts/bookmark-fake-agent.ps1`，外加 powershell 复制改名 `ChatGPT.exe` 冒充 Codex 跑 `scripts/bookmark-fake-desktop-agent.ps1`；真开窗、真按 Ctrl+N / Ctrl+V；验收到的字＝启动句、没有回车。跑的半分钟别碰键盘鼠标，抢了最前面看板按规矩不贴，这关就红）。只动了启动 Agent 才必跑
+8b. `node scripts/verify-bookmark-organize.mjs` 过（右键成捆、最后一次为准、剩一条散、交接单专区捆、设置浮层 AI 整理）
 9. `node scripts/verify-bookmark-insert.mjs` 过（每组第一格空白框、没有加号；点进去光标在框里；写了点别处 / 回车落到第二格、框清空，回车后能接着写；打字中途重画不丢；写进哪组落哪组；交接单专区小加号）
 10. `node scripts/verify-bookmark-sleep.mjs` 过（两档：档位钮、切睡觉档存档/重开还在/马上给没人干的组开窗、真敲 `next --to` 和 `report`、干完待审块、「可以，删掉」、切回日常档说明回到 done；隐藏窗口）
 11. 上机人工验：F1 置顶/沉回最底、毛玻璃质感、记一条（不点钮、边写边自己现身）/删一条/改交给谁、托盘「书签台（随手记）」入口（=置顶开关）；真机看板里 Ctrl+R 应编译并整程序重开（版本戳变，可出现「🌲 已换新」）

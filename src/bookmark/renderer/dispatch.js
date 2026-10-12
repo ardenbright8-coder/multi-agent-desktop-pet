@@ -1,5 +1,8 @@
-// 看板派工界面：Ctrl选任务、两种成捆、技能查看。只生成领取命令，不开助手窗口。
+// 看板派工界面：Ctrl 点选任务、右键「捆成一捆」、技能查看。只生成领取命令，不开助手窗口。
+// 2026-10-12 用户拍板（设定21）：顶上那条「已选 N 条 / 捆名 / 多人派工」工具栏撤掉，改成选中后右键弹菜单；
+// 以最后一次为准——选中的条目原来在别的捆里，就从原捆拿出来进新捆。多人派工捆照旧走命令行 dispatch bundle。
 const bmSelectedTasks = new Set();
+let bmSelectedGroup = null;
 let bmDispatchRecords = [];
 let bmDispatchBundles = new Map();
 let bmSkillRenderGeneration = 0;
@@ -7,16 +10,15 @@ let bmSkillRenderGeneration = 0;
 function bmRefreshDispatchSelection() {
   const ids = new Set(bmDispatchRecords.map(r => r.id));
   for (const id of bmSelectedTasks) if (!ids.has(id)) bmSelectedTasks.delete(id);
+  if (!bmSelectedTasks.size || bmCurrentPage !== 'groups') { bmSelectedTasks.clear(); bmSelectedGroup = null; }
   document.querySelectorAll('.task[data-id]').forEach(el => {
     el.classList.toggle('dispatch-selected', bmSelectedTasks.has(el.dataset.id));
     el.setAttribute('aria-selected', String(bmSelectedTasks.has(el.dataset.id)));
   });
-  const toolbar = document.getElementById('dispatch-toolbar');
-  toolbar.hidden = !bmSelectedTasks.size || bmCurrentPage !== 'groups';
-  document.getElementById('dispatch-selected-count').textContent = `已选 ${bmSelectedTasks.size} 条`;
 }
 function bmClearDispatchSelection() {
   bmSelectedTasks.clear();
+  bmSelectedGroup = null;
   bmRefreshDispatchSelection();
 }
 function bmInitDispatch() {
@@ -28,42 +30,67 @@ function bmInitDispatch() {
     const row = event.target.closest('.task[data-id]');
     if (!row || bmCurrentPage !== 'groups') return;
     const record = bmDispatchRecords.find(r => r.id === row.dataset.id);
-    if (!record || record.kind === 'handoff' || !record.assignee) return;
+    const group = row.closest('.group')?.dataset.group ?? null;
+    if (!record || !group) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const selected = bmDispatchRecords.find(r => bmSelectedTasks.has(r.id));
-    if (selected && selected.assignee.toLowerCase() !== record.assignee.toLowerCase()) {
-      bmToast('一次只选同一个助手分组的任务；先捆好这一批再选下一批');
+    if (bmSelectedTasks.size && bmSelectedGroup !== group) {
+      bmToast('一次只选同一个分组的；先捆好这一批再选下一批');
       return;
     }
-    if (record.claimedBy || record.report || record.bundleId) {
-      bmToast('这条已在捆里、在干或待审核；先放回或拆开原捆');
+    if (record.claimedBy || record.report || bmDispatchBundles.has(record.bundleId)) {
+      bmToast('这条在干、待审核或在多人派工捆里，先放回再捆');
       return;
     }
     if (bmSelectedTasks.has(record.id)) bmSelectedTasks.delete(record.id);
     else bmSelectedTasks.add(record.id);
+    bmSelectedGroup = bmSelectedTasks.size ? group : null;
     bmRefreshDispatchSelection();
   }, true);
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') bmClearDispatchSelection();
   });
-  document.getElementById('dispatch-clear').addEventListener('click', bmClearDispatchSelection);
-  document.getElementById('dispatch-create').addEventListener('click', async () => {
+}
+
+/** 选中两条以上、在选中的条目上右键：弹「捆成一捆」（菜单以后往这里加项）。 */
+function bmShowSelectionMenu(anchor, clientY) {
+  const menu = document.getElementById('ctx-menu');
+  menu.textContent = '';
+  const title = document.createElement('div');
+  title.className = 'ctx-title';
+  title.textContent = `已选 ${bmSelectedTasks.size} 条`;
+  menu.appendChild(title);
+  const name = document.createElement('input');
+  name.className = 'ctx-input';
+  name.placeholder = '捆名（可不填）';
+  name.setAttribute('aria-label', '捆名');
+  name.maxLength = 24;
+  menu.appendChild(name);
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'ctx-item';
+  go.textContent = '捆成一捆';
+  const submit = async () => {
     try {
-      const coop = document.getElementById('dispatch-cooperate').checked;
-      const coordinator = document.getElementById('dispatch-coordinator').value.trim();
-      if (coop && !coordinator) throw new Error('填写调度窗口名；任务报告会留给这个名字对应的调度者');
-      const reply = await window.bookmark.dispatch({ action: 'bundle', ids: [...bmSelectedTasks],
-        name: document.getElementById('dispatch-name').value.trim(), coordinator: coop ? coordinator : undefined });
+      await window.bookmark.bundleSelected([...bmSelectedTasks], name.value.trim());
+      bmHideCtxMenu();
       bmClearDispatchSelection();
-      document.getElementById('dispatch-name').value = '';
       await bmRefresh();
-      bmToast(`已生成${coop ? '多人派工捆' : '普通捆'}：${reply.bundle.name}。继续选另一批可生成第二捆`, 5000);
     } catch (e) { bmShowError(bmErrorText(e)); }
+  };
+  go.addEventListener('click', () => { void submit(); });
+  name.addEventListener('keydown', event => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') { event.preventDefault(); void submit(); }
+    if (event.key === 'Escape') bmHideCtxMenu();
   });
-  document.getElementById('dispatch-cooperate').addEventListener('change', event => {
-    document.getElementById('dispatch-coordinator').hidden = !event.target.checked;
-  });
+  menu.appendChild(go);
+  menu.hidden = false;
+  const panelRect = document.getElementById('app').getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  const y = typeof clientY === 'number' ? clientY : rect.top;
+  menu.style.left = `${Math.max(6, Math.min(rect.left - panelRect.left + 40, panelRect.width - 174))}px`;
+  menu.style.top = `${Math.max(6, Math.min(y - panelRect.top, panelRect.height - 130))}px`;
 }
 
 function bmShowDispatchBundleMenu(bundle, menu) {
