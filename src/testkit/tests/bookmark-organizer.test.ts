@@ -48,6 +48,9 @@ test("设置：默认两个模型、自己加的模型留着、坏值回落默�
   assert.equal(c.model, "my/model");
   assert.equal(c.intervalHours, 2);
   assert.equal(c.enabled, true);
+  assert.equal(c.effort, "high", "默认高档（用户：两个小模型开到高档）");
+  assert.equal(parseOrganizerConfig({ effort: "max" }).effort, "max");
+  assert.equal(parseOrganizerConfig({ effort: "乱填" }).effort, "high");
   assert.equal(parseOrganizerConfig(null).model, "deepseek/deepseek-v4.1-flash");
 });
 
@@ -159,6 +162,8 @@ test("跑一轮：开新捆、放进已有捆，用户动过的不碰；第二�
     const body = JSON.parse(calls[0]);
     assert.equal(body.model, "deepseek/deepseek-v4.1-flash");
     assert.match(body.messages[0].content, /项目名/);
+    assert.equal(body.reasoning_effort, "high");
+    assert.equal(body.max_tokens, 32000, "高档给足输出上限，别让思考吃光");
 
     const again = await runOrganizer({ store, agents: ["Claude"], config, now: NOW, fetchFn: fakeModel({}, calls) });
     assert.equal(calls.length, 1, "没新条目就不花钱");
@@ -192,4 +197,22 @@ test("在干的捆、多人派工捆，AI 不往里加", () =>
     store.claimNext(x, "窗口1");
     assert.equal(store.aiOpenBundle(plain.id), false);
     assert.throws(() => store.aiJoinBundle(z, plain.id));
+  }));
+
+test("改过的整理规矩会送给模型；全部重来只拆 AI 的捆、用户的不碰", () =>
+  withStore(async (store) => {
+    const [a, b, c, d] = seed(store, ["一", "二", "三", "四"]);
+    store.createTaskBundle([c, d], "用户捆");
+    const calls: string[] = [];
+    await runOrganizer({ store, agents: ["Claude"], config, now: NOW, rules: "我自己写的规矩",
+      fetchFn: fakeModel({ create: [{ name: "一二这件事", items: ["N1", "N2"] }], join: [], skip: [] }, calls) });
+    assert.equal(JSON.parse(calls[0]).messages[0].content, "我自己写的规矩");
+    const aiBundle = store.list().find((r) => r.id === a)!.bundleId!;
+    assert.ok(aiBundle);
+    assert.equal(store.aiResetAll(), 1);
+    const rows = store.list();
+    assert.equal(rows.find((r) => r.id === a)!.bundleId, null);
+    assert.equal(rows.find((r) => r.id === a)!.sortedAt, null, "又当新条目");
+    assert.ok(rows.find((r) => r.id === c)!.bundleId, "用户捆还在");
+    assert.equal(rows.find((r) => r.id === b)!.userPinned, false);
   }));

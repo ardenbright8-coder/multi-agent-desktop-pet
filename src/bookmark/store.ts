@@ -137,6 +137,22 @@ export class BookmarkStore {
 
   // ── AI 整理（设定21）：只许这三个口子改捆，规矩在代码里卡死，AI 说什么都越不过去 ──
 
+  /** 全部重来（设定21，用户测规矩用）：拆掉 AI 捆的捆（有人在干的不拆），用户没动过的条目都变回「没看过」。
+   *  用户手动捆的、动过的一条不碰。返回拆了几捆。 */
+  aiResetAll(): number {
+    this.ensureLoaded();
+    const meta = this.loadMeta();
+    let split = 0;
+    for (const [id, m] of Object.entries(meta)) {
+      if (m.by !== "ai" || !this.aiOpenBundle(id)) continue;
+      for (const r of this.records) if (r.bundleId === id) r.bundleId = null;
+      split += 1;
+    }
+    for (const r of this.records) if (!r.userPinned) r.sortedAt = null;
+    this.save();
+    return split;
+  }
+
   /** 这几条 AI 看过了：以后不再送给它。 */
   markSorted(ids: string[]): void {
     this.ensureLoaded();

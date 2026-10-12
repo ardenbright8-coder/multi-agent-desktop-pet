@@ -31,8 +31,10 @@ contextBridge.exposeInMainWorld("bookmark", {
   bundleMeta: () => ipcRenderer.invoke("bookmark:bundle-meta") as Promise<Record<string, { name: string; by: "user" | "ai" }>>,
   // AI 整理（设定21）：设置浮层读写、手动整理一次；整理完主进程发一句话过来
   organizerGet: () => ipcRenderer.invoke("bookmark:organizer:get"),
-  organizerSet: (patch: { model?: string; addModel?: string; enabled?: boolean }) => ipcRenderer.invoke("bookmark:organizer:set", patch),
+  organizerSet: (patch: { model?: string; addModel?: string; enabled?: boolean; intervalHours?: number; effort?: string; rules?: string }) =>
+    ipcRenderer.invoke("bookmark:organizer:set", patch),
   organizerRun: () => ipcRenderer.invoke("bookmark:organizer:run"),
+  organizerReset: () => ipcRenderer.invoke("bookmark:organizer:reset"),
   onOrganized: (callback: (text: string) => void) => {
     ipcRenderer.on("bookmark:organized", (_event, text) => callback(String(text ?? "")));
   },

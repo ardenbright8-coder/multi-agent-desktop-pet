@@ -13,7 +13,7 @@
 |---|---|
 | `coordination.ts` / `dispatch-cli.ts` | 明确启用的多人派工：每捆一个窗口、逐条领取、调度收件箱、用户验收后清理；普通捆不登记，不启动模型或后台工兵 |
 | `skills.ts` / `renderer/dispatch.js/.css` | 读取项目技能正本；Ctrl 多选后右键「捆成一捆」（设定21，以最后一次为准）、技能页、协同捆复制领取命令；不替用户打开执行窗口 |
-| `organizer.ts` | AI 整理捆（设定21）：每组新条目出题给 Command Code 套餐的便宜模型（默认 DeepSeek V4.1 Flash），回 JSON 后逐条过筛，只走 store 的 `aiJoinBundle` / `aiCreateBundle`；规矩正文 `ORGANIZER_RULES`（写给弱模型：先贴项目名再归捆）。定时器和设置读写在 panel-window（`organizer.json`、`AI整理记录.md`，都在看板数据夹）；验证 `scripts/verify-bookmark-organize.mjs` |
+| `organizer.ts` | AI 整理捆（设定21）：每组新条目出题给 Command Code 套餐的便宜模型（默认 DeepSeek V4.1 Flash），回 JSON 后逐条过筛，只走 store 的 `aiJoinBundle` / `aiCreateBundle`；规矩正文 `ORGANIZER_RULES`（写给弱模型：先贴项目名再归捆）。定时器和设置读写在 panel-window（`organizer.json` 设置和钥匙、`AI整理规矩.md` 用户改过的规矩、`AI整理记录.md`，都在看板数据夹）；界面是设置浮层一行入口＋弹窗口（`bmOpenOrganizerDialog`，保存/取消）；验证 `scripts/verify-bookmark-organize.mjs` |
 | `store.ts` | 本地库：增删查改（updateText 改正文/链接，输入行自动存档用）、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；条目带 `detail`（详情，交接单等长内容）与 `kind`（note 普通 / handoff 交接单），旧库读入自动补齐默认；JSON 原子写；捆一捆与 AI 领活（设定15）：`bundleId/claimedBy/claimedAt`、`bundleWith`/`claimNext`/`done`（必须带用户原话）/`release` |
 | `appearance.ts` | 看板外观纯函数：透明度解析/夹取（范围 0.30–0.95，默认 0.6，坏档回落默认）；存取 IO 在 panel-window（appearance.json） |
 | `zoom.ts` | 看板字号纯函数（设定20）：档位 50%–200% 一档 10%、zoom.json 解析、哪个键算调字号；接线在 panel-window `wireBoardZoom`（看板窗口 before-input-event + zoom-changed，🚨 不走 globalShortcut） |

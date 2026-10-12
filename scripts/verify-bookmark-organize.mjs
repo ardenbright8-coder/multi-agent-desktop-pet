@@ -87,27 +87,78 @@ try {
   assert.equal(await page.locator('.handoff-zone .bundle-head').count(), 1, '交接单专区也能捆');
   assert.equal(await page.locator('.bundle-ai').count(), 0, '手动捆的没有小机器人');
 
-  // ⑥ 设置浮层：AI 整理那一块
+  // ⑥ 设置浮层贴着右上角齿轮弹；AI 整理只占一行，点「设置…」弹窗口，保存才生效、取消丢掉
   await page.locator('#settings-btn').click();
-  await page.waitForFunction(() => document.querySelectorAll('#org-model option').length >= 2);
-  const options = await page.locator('#org-model option').allInnerTexts();
-  assert.deepEqual(options.slice(0, 2), ['deepseek-v4.1-flash', 'glm-5.3-flash']);
-  assert.match(await page.locator('#org-status').innerText(), /还没填模型钥匙/);
-  await page.locator('#org-add').click();
-  await page.locator('#org-add-name').fill('my/test-model');
-  await page.locator('#org-add-name').press('Enter');
-  await page.waitForFunction(() => document.querySelector('#org-model').value === 'my/test-model');
-  await page.locator('#org-model').selectOption('z-ai/glm-5.3-flash');
-  await page.waitForFunction(async () => (await window.bookmark.organizerGet()).model === 'z-ai/glm-5.3-flash');
-  await page.locator('#org-run').click();
-  await page.waitForFunction(() => /钥匙/.test(document.querySelector('#org-status').textContent));
+  const gear = await page.locator('#settings-btn').boundingBox();
+  const popBox = await page.locator('#settings-popover').boundingBox();
+  assert.ok(popBox.y >= gear.y + gear.height && popBox.y < gear.y + gear.height + 20, '浮层就在齿轮下面');
+  assert.ok(Math.abs((popBox.x + popBox.width) - (gear.x + gear.width)) < 16, '浮层右边对齐齿轮');
+  await page.waitForFunction(() => document.querySelector('#org-brief')?.textContent === '没填钥匙');
+  assert.equal(await page.locator('#settings-popover select, #settings-popover textarea').count(), 0, '一级只放一行，不摊开');
   await page.screenshot({ path: join(out, '设置浮层.png') });
-  await page.locator('#settings-btn').click();
+  await page.locator('#org-open').click();
+  await page.waitForSelector('#org-dialog');
+  assert.equal(await page.locator('#settings-popover').isHidden(), true);
+  const opts = await page.locator('#org-dlg-model option').allInnerTexts();
+  assert.deepEqual(opts.slice(0, 2), ['deepseek/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash']);
+  assert.equal(await page.locator('#org-dlg-effort').inputValue(), 'high');
+  assert.equal(await page.locator('#org-dlg-hours').inputValue(), '2');
+  assert.match(await page.locator('#org-dlg-rules').inputValue(), /项目名/);
+  assert.match(await page.locator('#org-dlg-status').innerText(), /还没填模型钥匙/);
+  await page.screenshot({ path: join(out, '设置窗口.png') });
+  // 改了点取消：什么都没存
+  await page.locator('#org-dlg-hours').fill('5');
+  assert.equal(await page.locator('#org-dlg-run').isDisabled(), true, '有改动没保存不让整理');
+  await page.locator('#org-dlg-cancel').click();
+  assert.equal(await page.locator('#org-dialog').count(), 0);
+  assert.equal((await page.evaluate(() => window.bookmark.organizerGet())).intervalHours, 2);
+  // 改了点保存：加模型、换档位、改间隔、改规矩都存上
+  await page.evaluate(() => bmOpenOrganizerDialog());
+  await page.waitForSelector('#org-dialog');
+  await page.locator('#org-dlg-add').click();
+  await page.locator('#org-dlg-add-name').fill('my/test-model');
+  await page.locator('#org-dlg-add-name').press('Enter');
+  await page.locator('#org-dlg-effort').selectOption('max');
+  await page.locator('#org-dlg-hours').fill('3');
+  await page.locator('#org-dlg-rules').fill('测试用规矩');
+  await page.locator('#org-dlg-save').click();
+  await page.waitForFunction(() => !document.querySelector('#org-dialog'));
+  const saved = await page.evaluate(() => window.bookmark.organizerGet());
+  assert.equal(saved.model, 'my/test-model');
+  assert.equal(saved.effort, 'max');
+  assert.equal(saved.intervalHours, 3);
+  assert.equal(saved.rules, '测试用规矩');
+  // 恢复默认 + 保存＝回到默认规矩
+  await page.evaluate(() => bmOpenOrganizerDialog());
+  await page.waitForSelector('#org-dialog');
+  await page.locator('#org-dlg-default').click();
+  await page.locator('#org-dlg-save').click();
+  await page.waitForFunction(() => !document.querySelector('#org-dialog'));
+  assert.equal((await page.evaluate(() => window.bookmark.organizerGet())).rulesIsDefault, true);
+  // Esc 关窗口
+  await page.evaluate(() => bmOpenOrganizerDialog());
+  await page.waitForSelector('#org-dialog');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#org-dialog').count(), 0);
+
+  // ⑦ 拖进捆中间：缝撑在捆里面，不把捆撕开（缝在条目里是内边距，不是外边距）
+  await page.evaluate(() => bmRefresh());
+  const inner = await page.evaluate(() => {
+    const members = [...document.querySelectorAll('.task.in-bundle')];
+    const mid = members.find(el => !el.classList.contains('bundle-last') && el.previousElementSibling?.classList.contains('in-bundle'));
+    mid.classList.add('gap-above');
+    const cs = getComputedStyle(mid);
+    const r = { marginTop: cs.marginTop, paddingTop: cs.paddingTop };
+    mid.classList.remove('gap-above');
+    return r;
+  });
+  assert.equal(inner.marginTop, '0px', '捆里的缝不用外边距');
+  assert.equal(inner.paddingTop, '30px', '捆里的缝是捆自己撑开的');
 
   await page.setViewportSize({ width: 520, height: 900 });
   await page.screenshot({ path: join(out, '捆的样子.png') });
   assert.deepEqual(errors, []);
-  console.log('ORGANIZE_UI_OK right-click-bundle last-wins lone-dissolve handoff-bundle settings-models no-key-hint');
+  console.log('ORGANIZE_UI_OK right-click-bundle last-wins lone-dissolve handoff-bundle popover-under-gear dialog-save-cancel gap-inside-bundle');
 } finally {
   if (app) await app.close();
 }

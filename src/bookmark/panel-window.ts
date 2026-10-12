@@ -12,7 +12,7 @@
 
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
@@ -32,7 +32,7 @@ import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
-import { formatSummary, parseOrganizerConfig, runOrganizer, shortSummary, type FetchFn, type OrganizerConfig } from "./organizer";
+import { EFFORTS, formatSummary, ORGANIZER_RULES, parseOrganizerConfig, runOrganizer, shortSummary, type Effort, type FetchFn, type OrganizerConfig } from "./organizer";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -780,8 +780,9 @@ function registerIpc(): void {
   ipcMain.handle("bookmark:bundle-meta", () => requireStore().bundleMeta());
   // AI 整理（设定21）：设置浮层读写、手动整理一次。钥匙不回给界面，只说有没有。
   ipcMain.handle("bookmark:organizer:get", () => organizerStatus());
+  // 设置窗口点「保存」一次交一整份；只改传了的项。规矩改成跟默认一样＝删掉自己的那份，回到默认。
   ipcMain.handle("bookmark:organizer:set", (_event, payload: unknown) => {
-    const raw = (payload ?? {}) as { model?: unknown; addModel?: unknown; enabled?: unknown };
+    const raw = (payload ?? {}) as { model?: unknown; addModel?: unknown; enabled?: unknown; intervalHours?: unknown; effort?: unknown; rules?: unknown };
     const config = readOrganizerConfig();
     const added = String(raw.addModel ?? "").trim();
     if (added) {
@@ -791,8 +792,30 @@ function registerIpc(): void {
     }
     if (typeof raw.model === "string" && config.models.includes(raw.model)) config.model = raw.model;
     if (typeof raw.enabled === "boolean") config.enabled = raw.enabled;
+    if (raw.intervalHours !== undefined) {
+      const hours = Number(raw.intervalHours);
+      if (!Number.isFinite(hours) || hours < 0.25 || hours > 48) throw new Error("隔多久整理：填 0.25 到 48 小时");
+      config.intervalHours = hours;
+    }
+    if (typeof raw.effort === "string") {
+      if (!EFFORTS.includes(raw.effort as Effort)) throw new Error("思考档位只认 low / high / max");
+      config.effort = raw.effort as Effort;
+    }
+    if (typeof raw.rules === "string") writeOrganizerRules(raw.rules);
+    const intervalChanged = config.intervalHours !== readOrganizerConfig().intervalHours;
     writeOrganizerConfig(config);
+    if (intervalChanged && organizerTimer) {
+      clearTimeout(organizerTimer);
+      startOrganizerTimer(config.intervalHours * 3600_000);
+    }
     return organizerStatus();
+  });
+  // 全部重来（测规矩用）：拆掉 AI 捆的、用户没动过的都变回没看过；不调模型，用户自己点「整理一次」。
+  ipcMain.handle("bookmark:organizer:reset", () => {
+    const split = requireStore().aiResetAll();
+    log.记(`AI 整理全部重来：拆了 ${split} 个 AI 捆的捆`, "organizer");
+    notifyInboxChanged();
+    return { split, status: organizerStatus() };
   });
   ipcMain.handle("bookmark:organizer:run", async () => {
     await runOrganizerOnce("手动");
@@ -1012,7 +1035,39 @@ function writeOrganizerConfig(config: OrganizerConfig): void {
 
 function organizerStatus() {
   const c = readOrganizerConfig();
-  return { models: c.models, model: c.model, enabled: c.enabled, hasKey: Boolean(c.apiKey), intervalHours: c.intervalHours, running: organizerRunning, last: organizerLast };
+  const rules = readOrganizerRules();
+  return {
+    models: c.models, model: c.model, enabled: c.enabled, hasKey: Boolean(c.apiKey), intervalHours: c.intervalHours,
+    effort: c.effort, efforts: EFFORTS, rules, defaultRules: ORGANIZER_RULES, rulesIsDefault: rules === ORGANIZER_RULES,
+    rulesPath: join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE), running: organizerRunning, last: organizerLast,
+  };
+}
+
+/** 整理规矩（给模型的提示词）：用户改过就存 AI整理规矩.md，没改过用代码里的默认。 */
+const ORGANIZER_RULES_FILE = "AI整理规矩.md";
+
+function readOrganizerRules(): string {
+  const file = join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE);
+  try {
+    const text = existsSync(file) ? readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").trim() : "";
+    return text || ORGANIZER_RULES;
+  } catch (error) {
+    log.出事("整理规矩读不出来，先用默认的", error, "organizer");
+    return ORGANIZER_RULES;
+  }
+}
+
+function writeOrganizerRules(text: string): void {
+  const file = join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE);
+  const clean = text.replace(/\r\n/g, "\n").trim();
+  if (!clean || clean === ORGANIZER_RULES) {
+    rmSync(file, { force: true });
+    return;
+  }
+  if (clean.length > 20000) throw new Error("整理规矩太长了（最多两万字）");
+  mkdirSync(bookmarkDataDirectory(), { recursive: true });
+  writeFileSync(`${file}.tmp`, clean, "utf8");
+  renameSync(`${file}.tmp`, file);
 }
 
 /** 走 Electron 自己的网络栈：跟着系统代理走，Clash 开着也能连上。 */
@@ -1031,7 +1086,7 @@ async function runOrganizerOnce(reason: string): Promise<void> {
   }
   organizerRunning = true;
   try {
-    const summary = await runOrganizer({ store: requireStore(), agents: requireRoster().list(), config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot() });
+    const summary = await runOrganizer({ store: requireStore(), agents: requireRoster().list(), config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot(), rules: readOrganizerRules() });
     const record = formatSummary(summary);
     if (record) {
       try {
@@ -1053,14 +1108,14 @@ async function runOrganizerOnce(reason: string): Promise<void> {
   }
 }
 
-function startOrganizerTimer(): void {
+function startOrganizerTimer(firstMs = 30_000): void {
   const schedule = (ms: number) => {
     organizerTimer = setTimeout(() => {
       void runOrganizerOnce("定时").finally(() => schedule(readOrganizerConfig().intervalHours * 3600_000));
     }, ms);
     organizerTimer.unref?.();
   };
-  schedule(30_000);
+  schedule(firstMs);
 }
 
 function notifyOrganized(text: string): void {

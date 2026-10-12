@@ -24,7 +24,14 @@ export interface OrganizerConfig {
   model: string;
   enabled: boolean;
   intervalHours: number;
+  /** 思考档位：low / high / max（2026-10-12 用户：两个小模型开到高档，能手动调）。 */
+  effort: Effort;
 }
+
+export type Effort = "low" | "high" | "max";
+export const EFFORTS: Effort[] = ["low", "high", "max"];
+/** 档位越高思考越长，输出上限跟着放，免得思考吃光上限、正文为空。 */
+const MAX_TOKENS: Record<Effort, number> = { low: 16000, high: 32000, max: 64000 };
 
 export function parseOrganizerConfig(raw: unknown): OrganizerConfig {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -39,6 +46,7 @@ export function parseOrganizerConfig(raw: unknown): OrganizerConfig {
     model,
     enabled: r.enabled !== false,
     intervalHours: Number.isFinite(hours) && hours >= 0.25 && hours <= 48 ? hours : 2,
+    effort: EFFORTS.includes(r.effort as Effort) ? (r.effort as Effort) : "high",
   };
 }
 
@@ -305,6 +313,8 @@ export interface RunDeps {
   now?: number;
   minAgeMs?: number;
   timeoutMs?: number;
+  /** 用户在设置里改过的整理规矩；不传用默认 ORGANIZER_RULES。 */
+  rules?: string;
 }
 
 function dataUrl(file: string): string {
@@ -313,7 +323,7 @@ function dataUrl(file: string): string {
   return `data:${mime};base64,${readFileSync(file).toString("base64")}`;
 }
 
-export async function askModel(task: GroupTask, config: OrganizerConfig, fetchFn: FetchFn, timeoutMs = 120000): Promise<string> {
+export async function askModel(task: GroupTask, config: OrganizerConfig, fetchFn: FetchFn, timeoutMs = 300000, rules = ORGANIZER_RULES): Promise<string> {
   const parts: unknown[] = [{ type: "text", text: task.text }];
   for (const img of task.images) {
     try {
@@ -332,12 +342,12 @@ export async function askModel(task: GroupTask, config: OrganizerConfig, fetchFn
       body: JSON.stringify({
         model: config.model,
         messages: [
-          { role: "system", content: ORGANIZER_RULES },
+          { role: "system", content: rules },
           { role: "user", content: parts.length === 1 ? task.text : parts },
         ],
-        // 两家都是先思考再答：上限给足，思考压到低档（2026-10-12 实测 4000 全被思考吃光、正文为空）。
-        max_tokens: 16000,
-        reasoning_effort: "low",
+        // 两家都是先思考再答：上限按档位给足（2026-10-12 实测上限 4000 全被思考吃光、正文为空）。
+        max_tokens: MAX_TOKENS[config.effort],
+        reasoning_effort: config.effort,
         temperature: 0.1,
       }),
       signal: controller.signal,
@@ -371,7 +381,7 @@ export async function runOrganizer(deps: RunDeps): Promise<OrganizeSummary> {
     summary.groups.push(result);
     let plan: CleanPlan;
     try {
-      plan = validatePlan(parsePlanText(await askModel(task, config, deps.fetchFn, deps.timeoutMs)), task);
+      plan = validatePlan(parsePlanText(await askModel(task, config, deps.fetchFn, deps.timeoutMs, deps.rules?.trim() || ORGANIZER_RULES)), task);
     } catch (error) {
       // 模型没回好：这组这次不算看过，下一轮再试。
       result.error = error instanceof Error ? error.message : String(error);
