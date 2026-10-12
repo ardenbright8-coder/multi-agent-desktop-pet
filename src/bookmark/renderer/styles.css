@@ -463,25 +463,26 @@ body {
 
 /* ── 加Agent 输入行 ──────────────────────────────── */
 
+/* 2026-10-12 用户：底下一整条太占地方 → 点「＋组」就在顶上页签栏里变出一个小框 */
 #add-agent-row {
-  display: flex;
+  margin-left: auto;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-top: 1px dashed rgba(201, 165, 76, 0.35);
-  background: rgba(255, 255, 255, 0.3);
+  gap: 4px;
+  -webkit-app-region: no-drag;
 }
 
 #add-agent-row[hidden] { display: none; }
 
 #new-agent-name {
-  flex: 1;
+  width: 120px;
   background: rgba(255, 255, 255, 0.65);
   border: 1px solid rgba(201, 165, 76, 0.4);
   border-radius: 8px;
   color: inherit;
   font: inherit;
-  padding: 4px 9px;
+  font-size: 12.5px;
+  padding: 1px 7px;
 }
 
 #new-agent-name:focus { outline: 1px solid rgba(201, 165, 76, 0.75); }
@@ -489,8 +490,8 @@ body {
 #new-agent-ok, #new-agent-cancel {
   border: 0;
   border-radius: 8px;
-  padding: 4px 12px;
-  font-size: 13px;
+  padding: 1px 8px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -742,7 +743,6 @@ body {
 
 #add-agent-btn { border-color: rgba(122, 156, 94, 0.6); color: #4d6b3a; }
 #add-agent-btn:hover { background: rgba(122, 156, 94, 0.12); }
-#add-agent-row { border-top-color: rgba(122, 156, 94, 0.3); }
 
 #ctx-menu, #proj-pop { border-color: rgba(122, 156, 94, 0.45); }
 .ctx-item.back:hover { background: rgba(122, 156, 94, 0.14); }
@@ -785,6 +785,9 @@ body {
   color: rgba(47, 62, 44, 0.62);
   list-style: none;
 }
+/* 捆头六个点跟条目的一样淡、一样大（2026-10-12 用户：上面那栏的点口味太重，跟下边不统一） */
+.bundle-head .handle { border: 0; background: transparent; color: rgba(47, 62, 44, 0.35); cursor: pointer; font: inherit; font-size: 13px; padding: 2px 2px; letter-spacing: 1px; flex: none; }
+.bundle-head .handle:hover { color: rgba(47, 62, 44, 0.75); }
 .bundle-head .bundle-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bundle-head .bundle-ai { flex: none; font-size: 11px; opacity: 0.55; }
 .task.in-bundle {
@@ -842,8 +845,8 @@ body {
 .org-val { display: inline-flex; align-items: center; gap: 5px; }
 .org-val input { accent-color: #6f8f5f; margin: 0; }
 #org-dlg-hours { width: 64px; }
-#org-dlg-hours, #org-dlg-model, #org-dlg-effort, #org-dlg-add-name, #org-dlg-rules { border: 1px solid rgba(122, 156, 94, 0.45); border-radius: 7px; background: rgba(255, 255, 255, 0.85); color: #31402f; font: inherit; font-size: 13px; padding: 3px 7px; }
-#org-dlg-model, #org-dlg-add-name { flex: 1; min-width: 160px; }
+#org-dlg-hours, #org-dlg-model, #org-dlg-effort, .org-model-form input { border: 1px solid rgba(122, 156, 94, 0.45); border-radius: 7px; background: rgba(255, 255, 255, 0.85); color: #31402f; font: inherit; font-size: 13px; padding: 3px 7px; }
+#org-dlg-model { flex: 1; min-width: 150px; }
 .org-rules-head { display: flex; align-items: center; gap: 7px; }
 .org-hint { flex: 1; min-width: 0; font-size: 11.5px; color: rgba(47, 62, 44, 0.55); line-height: 1.35; }
 /* 设置窗口两页：整理捆 / 规矩 */
@@ -881,7 +884,48 @@ body {
 .ledger-tag.s-mine { background: rgba(122, 156, 94, 0.2); color: #3d5a2c; }
 .ledger-tag.s-busy, .ledger-tag.s-review { background: rgba(111, 143, 180, 0.18); color: #3f5a78; }
 .ledger-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.org-run-line { padding-top: 4px; border-top: 1px dashed rgba(122, 156, 94, 0.25); }
+.org-run-line { padding-top: 6px; border-top: 1px dashed rgba(122, 156, 94, 0.25); }
+/* 第四版：整理捆页收紧，下面整块是整理记录 */
+.bm-dialog-body.org-pane { display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
+.org-pane .org-line { flex: none; }
+.org-model-form { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, 0.6); border: 1px solid rgba(122, 156, 94, 0.25); }
+.org-model-form[hidden] { display: none; }
+.org-model-form label { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: rgba(47, 62, 44, 0.7); }
+.org-model-form label input { flex: 1; min-width: 0; }
+.org-mf-foot { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; }
+.org-mf-foot .bm-btn { padding: 2px 12px; font-size: 12.5px; }
+.org-mf-foot [hidden] { display: none; }
+.org-mf-msg { flex: 1; min-width: 0; font-size: 12px; color: rgba(47, 62, 44, 0.6); line-height: 1.35; overflow-wrap: anywhere; }
+.org-mf-msg.ok { color: #4d6b3a; }
+.org-mf-msg.bad { color: #b0524f; }
+.org-records-head { flex: none; display: flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600; color: rgba(47, 62, 44, 0.7); padding-top: 2px; }
+.org-records { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.org-rec-empty { color: rgba(47, 62, 44, 0.5); padding: 6px 2px; }
+.org-rec-run { color: rgba(47, 62, 44, 0.48); font-size: 11.5px; padding: 6px 2px 2px; }
+.org-rec-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 2px 6px; border-radius: 6px; cursor: default; }
+.org-rec-row:hover, .org-rec-row.bubble-pinned { background: rgba(122, 156, 94, 0.12); }
+.org-rec-tag { flex: none; font-size: 11px; padding: 0 6px; border-radius: 999px; background: rgba(47, 62, 44, 0.07); color: rgba(47, 62, 44, 0.65); }
+.org-rec-tag.t-开新捆, .org-rec-tag.t-放进 { background: rgba(122, 156, 94, 0.2); color: #3d5a2c; }
+.org-rec-tag.t-提示 { background: rgba(224, 145, 60, 0.18); color: #9a5c1c; }
+.org-rec-tag.t-没成 { background: rgba(176, 82, 79, 0.15); color: #9a3f3c; }
+.org-rec-tag.t-全部重来, .org-rec-tag.t-撤销重来 { background: rgba(111, 143, 180, 0.18); color: #3f5a78; }
+.org-rec-group { flex: none; color: rgba(47, 62, 44, 0.55); font-size: 12px; }
+.org-rec-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 小圆圈 ⓘ：碰到冒气泡 */
+.bm-info { flex: none; display: inline-flex; align-items: center; justify-content: center; margin-left: 3px; color: rgba(47, 62, 44, 0.45); font-size: 13px; font-weight: 400; cursor: help; border-radius: 50%; line-height: 1; }
+.bm-info:hover, .bm-info.bubble-pinned { color: #4d6b3a; }
+/* 气泡：盖在设置窗口上面也看得见 */
+#bm-bubble { position: fixed; z-index: 200; padding: 7px 10px; border-radius: 10px; background: rgba(250, 252, 246, 0.98); border: 1px solid rgba(122, 156, 94, 0.45); box-shadow: 0 8px 24px rgba(47, 62, 44, 0.22); color: #31402f; font-size: 12.5px; line-height: 1.5; }
+#bm-bubble[hidden] { display: none; }
+.bm-bubble-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.bm-bubble-text:empty { display: none; }
+.bm-hint-bubble { display: grid; gap: 4px; }
+.bm-hint-what { font-weight: 600; color: #9a5c1c; }
+.bm-hint-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 2px; font-size: 11.5px; color: rgba(47, 62, 44, 0.5); }
+/* 看板条目右边的小橙点：AI 检查觉得可能放错了（跟左边六个点差不多分量，不抢眼） */
+.bm-hint-dot { flex: none; align-self: center; width: 14px; height: 14px; padding: 0; border: 0; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.bm-hint-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: rgba(224, 145, 60, 0.85); box-shadow: 0 0 0 2px rgba(224, 145, 60, 0.15); }
+.bm-hint-dot:hover::before, .bm-hint-dot.bubble-pinned::before { background: #e0913c; box-shadow: 0 0 0 3px rgba(224, 145, 60, 0.22); }
 .org-status { flex: 1; min-width: 0; font-size: 12px; color: rgba(47, 62, 44, 0.62); line-height: 1.35; overflow-wrap: anywhere; }
 
 /* 拖着一条压在别条正中间：要捆上了 */

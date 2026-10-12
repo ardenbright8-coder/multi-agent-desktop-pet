@@ -29,13 +29,22 @@ contextBridge.exposeInMainWorld("bookmark", {
   // 右键「捆成一捆」+ 捆名（设定21）
   bundleSelected: (ids: string[], name: string) => ipcRenderer.invoke("bookmark:bundle-selected", { ids, name }),
   bundleMeta: () => ipcRenderer.invoke("bookmark:bundle-meta") as Promise<Record<string, { name: string; by: "user" | "ai" }>>,
-  // AI 整理（设定21）：设置浮层读写、手动整理一次；整理完主进程发一句话过来
+  // AI 整理（设定21）：设置窗口读写、整理一次（整理＋检查）、全部重来 / 撤销、模型加改删测、记录、小橙点；
+  // 整理开始（空串）和整理完主进程各发一声过来
   organizerGet: () => ipcRenderer.invoke("bookmark:organizer:get"),
-  organizerSet: (patch: { model?: string; addModel?: string; enabled?: boolean; intervalHours?: number; effort?: string; rules?: string }) =>
+  organizerSet: (patch: { current?: string; enabled?: boolean; intervalHours?: number; effort?: string; rules?: string; checkRules?: string }) =>
     ipcRenderer.invoke("bookmark:organizer:set", patch),
+  organizerModel: (payload: { action: "add" | "update" | "remove"; id?: string; provider?: string; baseUrl?: string; apiKey?: string; model?: string }) =>
+    ipcRenderer.invoke("bookmark:organizer:model", payload),
+  organizerTestModel: (payload: { id?: string; provider?: string; baseUrl?: string; apiKey?: string; model?: string }) =>
+    ipcRenderer.invoke("bookmark:organizer:test-model", payload) as Promise<{ ok: boolean; text: string }>,
   organizerRun: () => ipcRenderer.invoke("bookmark:organizer:run"),
   organizerReset: () => ipcRenderer.invoke("bookmark:organizer:reset"),
+  organizerUndoReset: () => ipcRenderer.invoke("bookmark:organizer:undo-reset"),
   organizerLedger: () => ipcRenderer.invoke("bookmark:organizer:ledger"),
+  organizerRecords: () => ipcRenderer.invoke("bookmark:organizer:records"),
+  organizerHints: () => ipcRenderer.invoke("bookmark:organizer:hints"),
+  organizerDismiss: (itemId: string) => ipcRenderer.invoke("bookmark:organizer:dismiss", itemId),
   boardRules: () => ipcRenderer.invoke("bookmark:board-rules"),
   onOrganized: (callback: (text: string) => void) => {
     ipcRenderer.on("bookmark:organized", (_event, text) => callback(String(text ?? "")));

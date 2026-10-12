@@ -65,7 +65,7 @@ shared（谁都不依赖）
 
 0. **提交时自动查**：`.githooks/pre-commit` 跑边界检查和类型检查，几秒。新克隆的库先跑一次 `git config core.hooksPath .githooks` 才生效
 1. `node 检查边界.mjs` → 退出码 0
-2. `npm test` → 全过。2026-10-01 基线：147 + 4 项，连跑三轮一致
+2. `npm test` → 全过。2026-10-12 基线：182 + 4 项，连跑三轮一致
 3. 动了界面的，再跑 `npm run controls`、`npm run lifecycle`、`npm run smoke`。controls 基线 `buttons=14 dynamic=6 inputs=4 window=12`
 
 🚨 **`npm test` 和所有 `npm run` 测试都会先清空 `dist/` 再重建，而桌面图标跑的就是 `dist/`。** 用户的桌宠开着时跑测试，等于在它脚底下换地板。跑之前看一眼有没有 `--skip-integration-install` 那个 electron 进程在跑；在跑就提醒用户，或者跑完提醒他重开一次桌宠。

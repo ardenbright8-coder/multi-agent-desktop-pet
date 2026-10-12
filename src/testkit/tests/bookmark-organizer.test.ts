@@ -8,15 +8,27 @@ import { join } from "node:path";
 import test from "node:test";
 import { BookmarkStore } from "../../bookmark/store";
 import {
+  activeModel,
+  buildCheckTask,
   buildGroupTask,
   buildLedger,
+  chat,
+  checkModelInput,
+  cleanBaseUrl,
   groupsForOrganizer,
+  hardRulesText,
+  liveHintBook,
+  organizeRows,
   parseOrganizerConfig,
   parsePlanText,
+  pruneRunRecords,
+  runChecker,
   runOrganizer,
   shortSummary,
+  validateCheck,
   validatePlan,
   type FetchFn,
+  type HintBook,
 } from "../../bookmark/organizer";
 
 const LONG_AGO = Date.parse("2026-01-01T00:00:00Z");
@@ -43,16 +55,46 @@ function fakeModel(reply: unknown, calls: string[] = []): FetchFn {
 
 const config = parseOrganizerConfig({ apiKey: "测试钥匙" });
 
-test("设置：默认两个模型、自己加的模型留着、坏值回落默认", () => {
-  const c = parseOrganizerConfig({ models: ["my/model"], model: "my/model", intervalHours: 999 });
-  assert.deepEqual(c.models, ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "my/model"]);
-  assert.equal(c.model, "my/model");
+test("设置：老格式（一个地址一把钥匙）搬成新格式，默认两个排前面、自己加的留着、坏值回落默认", () => {
+  const c = parseOrganizerConfig({ apiKey: "k", models: ["my/model"], model: "my/model", intervalHours: 999 });
+  assert.deepEqual(c.models.map((m) => m.model), ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash", "my/model"]);
+  assert.ok(c.models.every((m) => m.provider === "Command Code" && m.apiKey === "k"), "原来的钥匙原样搬过去");
+  assert.equal(activeModel(c).model, "my/model");
   assert.equal(c.intervalHours, 2);
   assert.equal(c.enabled, true);
   assert.equal(c.effort, "high", "默认高档（用户：两个小模型开到高档）");
   assert.equal(parseOrganizerConfig({ effort: "max" }).effort, "max");
   assert.equal(parseOrganizerConfig({ effort: "乱填" }).effort, "high");
-  assert.equal(parseOrganizerConfig(null).model, "deepseek/deepseek-v4.1-flash");
+  assert.equal(activeModel(parseOrganizerConfig(null)).model, "deepseek/deepseek-v4.1-flash");
+});
+
+test("设置：新格式每个模型自带地址和钥匙；地址整段贴也认；加模型要填全", () => {
+  const c = parseOrganizerConfig({
+    current: "ds",
+    models: [
+      { id: "cc", provider: "Command Code", baseUrl: "https://api.commandcode.ai/provider/v1", apiKey: "a", model: "deepseek/deepseek-v4.1-flash" },
+      { id: "ds", provider: "DeepSeek 官方", baseUrl: "https://api.deepseek.com/v1/chat/completions/", apiKey: "b", model: "deepseek-chat" },
+      { id: "bad", provider: "坏的", baseUrl: "不是地址", apiKey: "c", model: "x" },
+    ],
+  });
+  assert.equal(c.models.length, 2, "地址不像样的丢掉");
+  assert.equal(activeModel(c).baseUrl, "https://api.deepseek.com/v1");
+  assert.equal(activeModel(c).apiKey, "b");
+  assert.equal(cleanBaseUrl("https://x.com/v1/"), "https://x.com/v1");
+  assert.throws(() => checkModelInput({ provider: "x", baseUrl: "https://x.com/v1", model: "m" }, true), /钥匙/);
+  assert.throws(() => checkModelInput({ provider: "x", baseUrl: "x.com", apiKey: "k", model: "m" }, true), /http/);
+  assert.equal(checkModelInput({ provider: "x", baseUrl: "https://x.com/v1", model: "m" }, false).apiKey, "", "改的时候钥匙留空＝不改");
+});
+
+test("有的家不认思考档位（回 400）：去掉再试一次", async () => {
+  const bodies: string[] = [];
+  const picky: FetchFn = async (_url, init) => {
+    bodies.push(init.body);
+    if (JSON.parse(init.body).reasoning_effort) return { ok: false, status: 400, text: async () => JSON.stringify({ error: "Unrecognized request argument supplied: reasoning_effort" }) };
+    return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: "好" } }] }) };
+  };
+  assert.equal(await chat(activeModel(config), [], "high", picky), "好");
+  assert.equal(bodies.length, 2);
 });
 
 test("手动成捆以最后一次为准：C 从旧捆出来进新捆，旧捆剩一条就散", () =>
@@ -147,8 +189,12 @@ test("跑一轮：开新捆、放进已有捆，用户动过的不碰；第二�
     const calls: string[] = [];
     const summary = await runOrganizer({
       store, agents: ["Claude"], config, now: NOW,
-      fetchFn: fakeModel({ create: [{ name: "Markdown脑图新建", items: ["N1", "N2"] }], join: [{ item: "N3", bundle: "B1" }], skip: [] }, calls),
+      fetchFn: fakeModel({ create: [{ name: "Markdown脑图新建", items: ["N1", "N2"], why: "都在说脑图新建" }], join: [{ item: "N3", bundle: "B1", why: "也是库管理面板" }], skip: [] }, calls),
     });
+    const recRows = organizeRows(summary, store.list());
+    assert.deepEqual(recRows.map((r) => r.action), ["开新捆", "放进"]);
+    assert.equal(recRows[0].why, "都在说脑图新建", "理由带进记录（鼠标碰到那行冒出来）");
+    assert.deepEqual(recRows[0].itemIds, [a, b]);
     const rows = store.list();
     const byId = (id: string) => rows.find((r) => r.id === id)!;
     assert.ok(byId(a).bundleId && byId(a).bundleId === byId(b).bundleId);
@@ -163,6 +209,7 @@ test("跑一轮：开新捆、放进已有捆，用户动过的不碰；第二�
     const body = JSON.parse(calls[0]);
     assert.equal(body.model, "deepseek/deepseek-v4.1-flash");
     assert.match(body.messages[0].content, /项目名/);
+    assert.match(body.messages[0].content, /why/, "规矩里要它写理由");
     assert.equal(body.reasoning_effort, "high");
     assert.equal(body.max_tokens, 32000, "高档给足输出上限，别让思考吃光");
 
@@ -200,37 +247,103 @@ test("在干的捆、多人派工捆，AI 不往里加", () =>
     assert.throws(() => store.aiJoinBundle(z, plain.id));
   }));
 
-test("改过的整理规矩会送给模型；全部重来只拆 AI 的捆、用户的不碰", () =>
+test("改过的整理规矩会送给模型；全部重来连你捆的一起拆（在干的不拆），撤销能回原样", () =>
   withStore(async (store) => {
-    const [a, b, c, d] = seed(store, ["一", "二", "三", "四"]);
-    store.createTaskBundle([c, d], "用户捆");
+    const [a, , c, d, e, f] = seed(store, ["一", "二", "三", "四", "五", "六"]);
+    const userBundle = store.createTaskBundle([c, d], "用户捆").id;
+    const busyBundle = store.createTaskBundle([e, f], "在干的捆").id;
+    store.claimNext(e, "窗口1");
     const calls: string[] = [];
     await runOrganizer({ store, agents: ["Claude"], config, now: NOW, rules: "我自己写的规矩",
       fetchFn: fakeModel({ create: [{ name: "一二这件事", items: ["N1", "N2"] }], join: [], skip: [] }, calls) });
     assert.equal(JSON.parse(calls[0]).messages[0].content, "我自己写的规矩");
-    const aiBundle = store.list().find((r) => r.id === a)!.bundleId!;
-    assert.ok(aiBundle);
-    assert.equal(store.aiResetAll(), 1);
+    assert.ok(store.list().find((r) => r.id === a)!.bundleId);
+    const snap = () => store.list().map((r) => `${r.id}:${r.bundleId}:${r.userPinned}:${Boolean(r.sortedAt)}`);
+    const before = snap();
+    assert.equal(store.canUndoReset(), false);
+    assert.equal(store.aiResetAll(), 2, "AI 捆的和你捆的都拆，在干的那捆不算");
     const rows = store.list();
-    assert.equal(rows.find((r) => r.id === a)!.bundleId, null);
-    assert.equal(rows.find((r) => r.id === a)!.sortedAt, null, "又当新条目");
-    assert.ok(rows.find((r) => r.id === c)!.bundleId, "用户捆还在");
-    assert.equal(rows.find((r) => r.id === b)!.userPinned, false);
+    const byId = (id: string) => rows.find((r) => r.id === id)!;
+    assert.equal(byId(a).bundleId, null);
+    assert.equal(byId(c).bundleId, null, "你捆的也拆了");
+    assert.equal(byId(c).userPinned, false, "你动过的也解锁");
+    assert.equal(byId(c).sortedAt, null, "又当新条目");
+    assert.equal(byId(e).bundleId, busyBundle, "在干的捆不碰");
+    assert.ok(store.canUndoReset());
+    const later = store.add({ text: "重来以后新来的", assignee: "Claude" }).id;
+    assert.equal(store.undoReset(), 5, "在干的那条本来就没动，不用搬");
+    assert.deepEqual(snap().filter((s) => !s.startsWith(later)), before, "撤销回到原样");
+    assert.equal(store.list().find((r) => r.id === c)!.bundleId, userBundle);
+    assert.equal(store.bundleMeta()[userBundle].name, "用户捆", "捆名也回来");
+    assert.ok(store.list().some((r) => r.id === later), "新来的还在");
+    assert.equal(store.canUndoReset(), false, "撤销一次就用掉了");
+    assert.throws(() => store.undoReset(), /撤不了/);
   }));
+
+test("检查：连你捆的一起看，只给提示不挪；编号不对的丢掉；点过「知道了」不再提；看板没变不再花钱", () =>
+  withStore(async (store) => {
+    const [a, b, c, d] = seed(store, ["看板 F1 置顶", "看板搜索框", "酒馆出图偏色", "酒馆套餐"]);
+    store.createTaskBundle([a, b, c], "Agent看板");
+    const [g] = groupsForOrganizer(store.list(), ["Claude"]);
+    const task = buildCheckTask(g, { meta: store.bundleMeta(), openBundle: (x) => store.aiOpenBundle(x) })!;
+    assert.match(task.text, /B1「Agent看板」[^]*I3 酒馆出图偏色[^]*散着的条目[^]*I4 酒馆套餐/);
+    const clean = validateCheck({ hints: [{ item: "I3", to: "散着", why: "讲的是酒馆" }, { item: "I1", to: "B1" }, { item: "I9", to: "B1" }, { item: "I4", to: "散着" }] }, task);
+    assert.equal(clean.hints.length, 1, "已经在 B1 不许 to B1、编的编号、散着的 to 散着，都丢");
+    assert.equal(clean.hints[0].itemId, c);
+    assert.equal(clean.hints[0].text, "可能不属于「Agent看板」捆");
+
+    const calls: string[] = [];
+    const reply = fakeModel({ hints: [{ item: "I3", to: "散着", why: "讲的是酒馆" }] }, calls);
+    const empty: HintBook = { hints: [], dismissed: [], checked: {} };
+    const r1 = await runChecker({ store, agents: ["Claude"], config, fetchFn: reply, book: empty });
+    assert.equal(r1.newHints, 1);
+    assert.equal(r1.book.hints[0].itemId, c);
+    assert.equal(r1.rows[0].action, "提示");
+    assert.equal(store.list().find((r) => r.id === c)!.bundleId, store.list().find((r) => r.id === a)!.bundleId, "一条都没挪");
+    const r2 = await runChecker({ store, agents: ["Claude"], config, fetchFn: reply, book: r1.book });
+    assert.equal(calls.length, 1, "看板没变不再问");
+    assert.equal(r2.checkedGroups, 0);
+
+    // 点「知道了」以后挪了别的条目，这组重查；这条还在原地 → 不再提示
+    const dismissed: HintBook = { ...r2.book, hints: [], dismissed: [{ itemId: c, placement: r2.book.hints[0].placement }] };
+    store.move(d, a, "above");
+    const r3 = await runChecker({ store, agents: ["Claude"], config, fetchFn: reply, book: dismissed });
+    assert.equal(calls.length, 2, "看板变了就重查");
+    assert.equal(r3.newHints, 0, "点过知道了的不再提");
+    // 这条挪了地方：「知道了」作废
+    store.unbundle(store.list().find((r) => r.id === c)!.bundleId!);
+    assert.equal(liveHintBook(r3.book, store.list()).dismissed.length, 0);
+  }));
+
+test("记录：条目删光的行去掉、最多留 50 次、新的在前；程序卡死的规矩拿常数拼", () => {
+  const runs = Array.from({ length: 60 }, (_, i) => ({
+    at: new Date(Date.parse("2026-10-01T00:00:00Z") + i * 60000).toISOString(),
+    model: "m",
+    rows: [{ group: "Claude", action: "放进" as const, title: `第 ${i} 次`, why: "", itemIds: [i >= 55 ? "删了的" : "还在的"] }],
+  }));
+  const kept = pruneRunRecords(runs, new Set(["还在的"]));
+  assert.equal(kept.length, 50);
+  assert.equal(kept[0].rows[0].title, "第 54 次", "新的在前，删了的那几次没了");
+  assert.match(hardRulesText(), /3 分钟/);
+  assert.match(hardRulesText(), /杂项/);
+});
 
 test("账本：跟着看板现算，看过 / 没看过 / 你动过 / 捆，本月几轮", () =>
   withStore((store) => {
     const [a, b, c] = seed(store, ["一", "二", "三"]);
     store.createTaskBundle([a, b], "你的捆");
     store.markSorted([c]);
-    const log = ["## 2026-10-12 07:26 · m", "- Claude：没动", "", "## 2026-09-30 10:00 · m", ""].join(String.fromCharCode(10));
-    const ledger = buildLedger(store.list(), ["Claude"], store.bundleMeta(), log, Date.parse("2026-10-12T12:00:00"));
+    const runs = [
+      { at: new Date(2026, 9, 12, 7, 26).toISOString(), model: "m", rows: [] },
+      { at: new Date(2026, 8, 30, 10, 0).toISOString(), model: "m", rows: [] },
+    ];
+    const ledger = buildLedger(store.list(), ["Claude"], store.bundleMeta(), runs, new Date(2026, 9, 12, 12).getTime());
     assert.equal(ledger.runsThisMonth, 1);
-    assert.equal(ledger.lastRun, "2026-09-30 10:00 · m");
+    assert.equal(ledger.lastRun, "2026-10-12 07:26 · m");
     const g = ledger.groups[0];
     assert.equal(g.counts["你动过"], 2);
     assert.equal(g.counts["看过"], 1);
     assert.deepEqual(g.bundles, [{ name: "你的捆", by: "user", count: 2 }]);
     store.remove(c);
-    assert.equal(buildLedger(store.list(), ["Claude"], store.bundleMeta(), "").groups[0].items.length, 2, "删了账本里也没了");
+    assert.equal(buildLedger(store.list(), ["Claude"], store.bundleMeta(), []).groups[0].items.length, 2, "删了账本里也没了");
   }));

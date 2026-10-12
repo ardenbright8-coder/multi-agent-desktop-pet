@@ -2,7 +2,7 @@
 // 坏档不挡路：挪到 .corrupt-<时间戳> 存证后空库重来（照 events\event-journal 的先例）。
 
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
@@ -62,6 +62,14 @@ export interface BookmarkRecord {
 export interface BundleMeta {
   name: string;
   by: "user" | "ai";
+}
+
+/** 全部重来前存的原样（撤销重来用）。 */
+interface ResetSnapshot {
+  at: string;
+  order: string[];
+  rows: { id: string; bundleId: string | null; sortedAt: string | null; userPinned: boolean; group: string }[];
+  meta: Record<string, BundleMeta>;
 }
 
 /** 领活结果：record 为 null 表示没活可领（busy 是正在干的窗口名）。position/total 是这条在捆里第几条/共几条。 */
@@ -137,20 +145,95 @@ export class BookmarkStore {
 
   // ── AI 整理（设定21）：只许这三个口子改捆，规矩在代码里卡死，AI 说什么都越不过去 ──
 
-  /** 全部重来（设定21，用户测规矩用）：拆掉 AI 捆的捆（有人在干的不拆），用户没动过的条目都变回「没看过」。
-   *  用户手动捆的、动过的一条不碰。返回拆了几捆。 */
+  /** 全部重来（设定21 第四版，2026-10-12 用户：全部推倒重来，不管我动没动过）：所有捆拆开，
+   *  条目都变回「没看过、没动过」。有人在干、写了报告、多人派工占住的捆和条目不碰（挪了会搅乱正在干活的 AI）。
+   *  拆之前存一份原样，撤销重来用。返回拆了几捆。 */
   aiResetAll(): number {
     this.ensureLoaded();
-    const meta = this.loadMeta();
-    let split = 0;
-    for (const [id, m] of Object.entries(meta)) {
-      if (m.by !== "ai" || !this.aiOpenBundle(id)) continue;
-      for (const r of this.records) if (r.bundleId === id) r.bundleId = null;
-      split += 1;
+    const busy = (r: BookmarkRecord) => Boolean(r.claimedBy || r.report);
+    const locked = new Set<string>();
+    for (const r of this.records) {
+      if (!r.bundleId) continue;
+      if (this.coordination.get(r.bundleId) || busy(r)) locked.add(r.bundleId);
     }
-    for (const r of this.records) if (!r.userPinned) r.sortedAt = null;
+    const snapshot: ResetSnapshot = {
+      at: new Date().toISOString(),
+      order: this.records.map((r) => r.id),
+      rows: this.records.map((r) => ({ id: r.id, bundleId: r.bundleId, sortedAt: r.sortedAt, userPinned: r.userPinned, group: groupKeyOf(r) })),
+      meta: { ...this.loadMeta() },
+    };
+    writeJsonAtomic(this.undoPath(), snapshot);
+    const split = new Set<string>();
+    for (const r of this.records) {
+      if (busy(r) || (r.bundleId && locked.has(r.bundleId))) continue;
+      if (r.bundleId) split.add(r.bundleId);
+      r.bundleId = null;
+      r.userPinned = false;
+      r.sortedAt = null;
+    }
     this.save();
-    return split;
+    return split.size;
+  }
+
+  /** 有没有能撤销的「全部重来」。 */
+  canUndoReset(): boolean {
+    return existsSync(this.undoPath());
+  }
+
+  /** 下一次整理开始前调：撤销的机会过期了。 */
+  dropResetUndo(): void {
+    rmSync(this.undoPath(), { force: true });
+  }
+
+  /** 撤销重来：条目回到重来前的捆、顺序、看没看过、动没动过。重来以后新来的条目留在原地；
+   *  这期间被领走、写了报告、换了组的不往回搬。返回搬回去几条。 */
+  undoReset(): number {
+    this.ensureLoaded();
+    let snap: ResetSnapshot;
+    try {
+      snap = JSON.parse(readFileSync(this.undoPath(), "utf8")) as ResetSnapshot;
+    } catch {
+      throw new Error("没有能撤销的全部重来（下一次整理以后就撤不了了）");
+    }
+    const rows = new Map(snap.rows.map((r) => [r.id, r]));
+    const rank = new Map(snap.order.map((id, i) => [id, i]));
+    const restorable = (r: BookmarkRecord) => rows.has(r.id) && !r.claimedBy && !r.report && !this.coordination.get(r.bundleId);
+    const slots: number[] = [];
+    this.records.forEach((r, i) => { if (restorable(r)) slots.push(i); });
+    const back = slots.map((i) => this.records[i]).sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+    slots.forEach((slot, k) => { this.records[slot] = back[k]; });
+    for (const r of back) {
+      const s = rows.get(r.id)!;
+      r.bundleId = s.group === groupKeyOf(r) ? s.bundleId : null;
+      r.sortedAt = s.sortedAt;
+      r.userPinned = s.userPinned;
+    }
+    const meta = this.loadMeta();
+    for (const [id, m] of Object.entries(snap.meta ?? {})) meta[id] = m;
+    this.metaDirty = true;
+    this.dissolveLoneBundles();
+    this.compactBundles();
+    this.save();
+    this.dropResetUndo();
+    return back.length;
+  }
+
+  /** 一捆的条目挨在一起：从这捆第一条的位置往下排。 */
+  private compactBundles(): void {
+    const out: BookmarkRecord[] = [];
+    const done = new Set<string>();
+    for (const r of this.records) {
+      if (!r.bundleId) out.push(r);
+      else if (!done.has(r.bundleId)) {
+        done.add(r.bundleId);
+        out.push(...this.records.filter((x) => x.bundleId === r.bundleId));
+      }
+    }
+    this.records = out;
+  }
+
+  private undoPath(): string {
+    return `${this.path}.reset-undo.json`;
   }
 
   /** 这几条 AI 看过了：以后不再送给它。 */

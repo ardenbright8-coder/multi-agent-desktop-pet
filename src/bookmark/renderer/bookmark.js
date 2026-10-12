@@ -17,6 +17,7 @@ let bmEditingId = null; // 点白条正在改的那条
 let bmInsertSaveTimer = null;
 let bmEditSaveTimer = null;
 let bmBundleMeta = {}; // 捆号 → { name, by: user/ai }（设定21：捆名、AI 捆的标个小机器人）
+let bmHints = new Map(); // 条目 id → AI 检查的提示（第四版：条目右边挂小橙点）
 
 function bmDotColor(name) {
   let hash = 0;
@@ -139,8 +140,9 @@ function bmInit() {
   });
   bmAddTemplatesSettingRow();
   bmAddOrganizerSettingRows();
+  // 整理开始（空串）和整理完都会来一声：刷新小橙点和设置窗口；完了才弹一句。
   window.bookmark.onOrganized?.((text) => {
-    bmToast(text, 6000);
+    if (text && text !== "没有新条目要整理") bmToast(text, 6000);
     void bmRefresh();
     void bmPaintOrganizer();
   });
@@ -206,9 +208,11 @@ function bmInit() {
 
 async function bmRefresh() {
   try {
-    const [agents, records, dispatch, meta] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
+    const [agents, records, dispatch, meta, hints] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
       window.bookmark.dispatch ? window.bookmark.dispatch({ action: 'list' }) : Promise.resolve({ bundles: [] }),
-      window.bookmark.bundleMeta ? window.bookmark.bundleMeta() : Promise.resolve({})]);
+      window.bookmark.bundleMeta ? window.bookmark.bundleMeta() : Promise.resolve({}),
+      window.bookmark.organizerHints ? window.bookmark.organizerHints().catch(() => []) : Promise.resolve([])]);
+    bmHints = new Map((Array.isArray(hints) ? hints : []).map((h) => [h.itemId, h]));
     bmDispatchBundles = new Map((dispatch.bundles || []).map(b => [b.id, b]));
     bmBundleMeta = meta || {};
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
@@ -254,7 +258,8 @@ async function bmRefresh() {
 }
 
 function bmErrorText(error) {
-  return error && error.message ? String(error.message) : "未知错误";
+  // 主进程抛的错会被 Electron 包一层「Error invoking remote method '…': Error: 」，给人看只留后面那句。
+  return error && error.message ? String(error.message).replace(/^Error invoking remote method '[^']*': (?:Error: )?/, "") : "未知错误";
 }
 
 // ── 分组计算 ─────────────────────────────────────────────
@@ -317,6 +322,7 @@ function bmSwitchPage(page) {
   bmOpenComposerGroup = null; // 切页收起正在展开的输入行
   bmToggleAddAgentRow(false); // 收起加Agent 行（幂等）
   document.getElementById("add-agent-btn").hidden = page !== "groups";
+  if (page !== "groups") document.getElementById("add-agent-row").hidden = true;
   document.querySelectorAll("#page-tabs .page-tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.page === page);
   });
@@ -712,6 +718,9 @@ function bmBuildTask(record, groupKey, order) {
     claim.textContent = `🔄 ${record.claimedBy} 在干`;
     item.appendChild(claim);
   }
+  // AI 检查觉得放错了（第四版）：右边一个小橙点，碰到冒气泡，点「知道了」就不再提。
+  const hint = bmHints.get(record.id);
+  if (hint) item.appendChild(bmBuildHintDot(record, hint));
   // 行尾复制（2026-09-24 用户拍板：给他自己用，拿去别处商量；常显、平时淡一点）：点一下就复制这条的文字。
   const copy = document.createElement("button");
   copy.type = "button";
@@ -1690,10 +1699,15 @@ function bmAddTemplatesSettingRow() {
 }
 
 // ── AI 整理（设定21）：设置浮层里只占一行（名字＋现在什么状态＋「设置…」），
-// 点开弹一个窗口，里面改开关、隔多久、模型、思考档位、整理规矩（给 AI 的提示词），点「保存」才生效，「取消」丢掉。
+// 点开弹一个窗口，里面改开关、隔多久、模型、思考档位、整理 / 检查规矩（给 AI 的提示词），点「保存」才生效，「取消」丢掉。
 // 2026-10-12 用户：「一级目录点开以后会有二级……弹出来一个窗口……保存或者取消」。
+// 第四版（2026-10-12 用户）：两个钮（整理一次＝整理＋检查、全部重来＋撤销）；长说明收进 ⓘ 气泡；
+// 下面空白放整理记录，一行一件事，鼠标碰到那行冒气泡说为什么；模型能加别家（名字＋地址＋钥匙＋模型名）。
 
-const BM_EFFORT_LABELS = { low: "低（快，想得少）", high: "高（推荐）", max: "最大（最慢，想得最多）" };
+const BM_EFFORT_LABELS = { low: "思考：低", high: "思考：高（推荐）", max: "思考：最大" };
+const BM_TIP_AUTO = "开着时，桌宠打开半分钟后整理一次，之后按这个间隔。每次＝整理新条目＋检查一遍；看板上没变化的组不检查，不花钱。";
+const BM_TIP_RUN = "整理一次：先把新条目捆好，再检查一遍，放错的在看板条目右边挂个小橙点（只提示，一条都不挪）。\n全部重来：所有捆全拆开，你动过的也一样，马上重新整理＋检查；在下一次整理之前，能点「撤销重来」回到原样。\n有 AI 正在干的、等你审的捆，两个钮都不碰。";
+const BM_TIP_RECORDS = "一行一件事。鼠标碰到那行，冒气泡说 AI 为什么这么改；点一下气泡就一直开着。\n条目干完删掉，跟它有关的记录一起删；最多留 50 次。";
 let bmOrgState = null;
 
 function bmAddOrganizerSettingRows() {
@@ -1725,6 +1739,15 @@ async function bmPaintOrganizer() {
   if (brief) brief.textContent = bmOrgBrief(bmOrgState);
   const status = document.getElementById("org-dlg-status");
   if (status) status.textContent = bmOrgLastText(bmOrgState);
+  const undo = document.getElementById("org-dlg-undo");
+  if (undo) undo.hidden = !bmOrgState.canUndo;
+  const run = document.getElementById("org-dlg-run");
+  if (run && !run.dataset.dirty) {
+    run.disabled = Boolean(bmOrgState.running);
+    run.textContent = bmOrgState.running ? "整理中…" : "整理一次";
+  }
+  const box = document.getElementById("org-records");
+  if (box && window.bookmark.organizerRecords) bmPaintRecords(box, await window.bookmark.organizerRecords().catch(() => []));
 }
 
 function bmOrgBrief(state) {
@@ -1734,10 +1757,24 @@ function bmOrgBrief(state) {
 }
 
 function bmOrgLastText(state) {
-  if (!state.hasKey) return "还没填模型钥匙";
-  if (state.running) return "正在整理…";
+  if (!state.hasKey) return "还没填模型钥匙：点「改」填上";
+  if (state.running) return "正在整理…（一组要一两分钟）";
   if (state.last) return `上次 ${bmClock(Date.parse(state.last.at))}：${state.last.text.replace(/^AI 整理[：:]/, "")}`;
   return "还没整理过";
+}
+
+/** 小圆圈 ⓘ：鼠标碰到冒气泡，点一下气泡一直开着。 */
+function bmInfoDot(text) {
+  const dot = document.createElement("span");
+  dot.className = "bm-info";
+  dot.textContent = "ⓘ";
+  bmBindBubble(dot, () => {
+    const p = document.createElement("div");
+    p.className = "bm-bubble-text";
+    p.textContent = text;
+    return p;
+  });
+  return dot;
 }
 
 async function bmOpenOrganizerDialog(page) {
@@ -1762,21 +1799,37 @@ async function bmOpenOrganizerDialog(page) {
         </nav>
         <button type="button" class="bm-dialog-x" title="取消">×</button>
       </header>
-      <div class="bm-dialog-body" data-pane="settings">
-        <label class="org-line"><span class="org-key">自动整理</span>
-          <span class="org-val"><input type="checkbox" id="org-dlg-enabled" /> 开着时，桌宠打开半分钟后整理一次，之后每隔</span>
-          <input type="number" id="org-dlg-hours" min="0.25" max="48" step="0.25" /> 小时一次</label>
+      <div class="bm-dialog-body org-pane" data-pane="settings">
+        <div class="org-line"><span class="org-key">自动整理</span>
+          <label class="org-val"><input type="checkbox" id="org-dlg-enabled" /> 每</label>
+          <input type="number" id="org-dlg-hours" min="0.25" max="48" step="0.25" /> 小时<span id="org-tip-auto"></span></div>
         <div class="org-line"><span class="org-key">模型</span>
           <select id="org-dlg-model"></select>
+          <select id="org-dlg-effort" title="思考档位：越高想得越久"></select>
+          <button type="button" class="settings-open-btn" id="org-dlg-edit" title="改这个模型的名字、地址、钥匙">改</button>
           <button type="button" class="settings-open-btn" id="org-dlg-add">＋ 加模型</button></div>
-        <div class="org-line" id="org-dlg-add-row" hidden><span class="org-key"></span>
-          <input id="org-dlg-add-name" placeholder="模型名，比如 z-ai/glm-5.3-flash，回车加进下拉" /></div>
-        <div class="org-line"><span class="org-key">思考档位</span><select id="org-dlg-effort"></select></div>
+        <div class="org-model-form" id="org-model-form" hidden>
+          <label>名字<input id="org-mf-provider" placeholder="随便起，比如 DeepSeek 官方" /></label>
+          <label>地址<input id="org-mf-url" placeholder="https://api.deepseek.com/v1" /></label>
+          <label>钥匙<input id="org-mf-key" type="password" autocomplete="off" /></label>
+          <label>模型名<input id="org-mf-model" placeholder="deepseek-chat" /></label>
+          <div class="org-mf-foot">
+            <span class="org-mf-msg" id="org-mf-msg"></span>
+            <button type="button" class="settings-open-btn" id="org-mf-test">测一下</button>
+            <button type="button" class="settings-open-btn" id="org-mf-remove">删掉</button>
+            <button type="button" class="settings-open-btn" id="org-mf-close">收起</button>
+            <button type="button" class="bm-btn primary" id="org-mf-save">加进去</button>
+          </div>
+        </div>
         <div class="org-line org-run-line">
           <span class="org-status" id="org-dlg-status"></span>
-          <button type="button" class="settings-open-btn" id="org-dlg-run" title="用已经保存的设置，马上整理一次">整理一次</button>
-          <button type="button" class="settings-open-btn" id="org-dlg-reset" title="测规矩用：拆掉 AI 捆的捆，没动过的条目都当新的重看；你手动捆的、动过的不碰">全部重来</button>
+          <span id="org-tip-run"></span>
+          <button type="button" class="settings-open-btn" id="org-dlg-run">整理一次</button>
+          <button type="button" class="settings-open-btn" id="org-dlg-reset">全部重来</button>
+          <button type="button" class="settings-open-btn" id="org-dlg-undo" hidden>撤销重来</button>
         </div>
+        <div class="org-records-head">整理记录<span id="org-tip-records"></span></div>
+        <div class="org-records" id="org-records"></div>
       </div>
       <div class="bm-dialog-body rules-pane" data-pane="rules" hidden>
         <ul class="rules-list" id="org-rules-list"></ul>
@@ -1795,6 +1848,9 @@ async function bmOpenOrganizerDialog(page) {
     </div>`;
   document.getElementById("app").appendChild(shade);
   const $ = (id) => shade.querySelector(`#${id}`);
+  $("org-tip-auto").replaceWith(bmInfoDot(BM_TIP_AUTO));
+  $("org-tip-run").replaceWith(bmInfoDot(BM_TIP_RUN));
+  $("org-tip-records").replaceWith(bmInfoDot(BM_TIP_RECORDS));
 
   // ── 两页切换 ──
   const showTab = (tab) => {
@@ -1806,19 +1862,19 @@ async function bmOpenOrganizerDialog(page) {
   // ── 整理捆页 ──
   $("org-dlg-enabled").checked = Boolean(state.enabled);
   $("org-dlg-hours").value = String(state.intervalHours);
-  const models = [...state.models];
+  let models = [...state.models];
   const fillModels = (chosen) => {
     const select = $("org-dlg-model");
     select.textContent = "";
     for (const m of models) {
       const opt = document.createElement("option");
-      opt.value = m;
-      opt.textContent = m;
+      opt.value = m.id;
+      opt.textContent = m.hasKey ? m.label : `${m.label}（没填钥匙）`;
       select.appendChild(opt);
     }
     select.value = chosen;
   };
-  fillModels(state.model);
+  fillModels(state.current);
   for (const e of state.efforts) {
     const opt = document.createElement("option");
     opt.value = e;
@@ -1827,9 +1883,12 @@ async function bmOpenOrganizerDialog(page) {
   }
   $("org-dlg-effort").value = state.effort;
   $("org-dlg-status").textContent = bmOrgLastText(state);
+  $("org-dlg-undo").hidden = !state.canUndo;
+  if (window.bookmark.organizerRecords) bmPaintRecords($("org-records"), await window.bookmark.organizerRecords().catch(() => []));
 
-  // ── 规矩页：左边按类排，右边看全文；只有整理规矩能改 ──
-  let organizerRules = state.rules;
+  // ── 规矩页：左边按类排，右边看全文；整理规矩、检查规矩能改 ──
+  const edits = { organizer: state.rules, checker: state.checkRules };
+  const defaults = { organizer: state.defaultRules, checker: state.defaultCheckRules };
   let current = null;
   const list = $("org-rules-list");
   const items = [...rules.map((r) => ({ ...r })), { key: "ledger", group: "账本", title: "AI 整理账本", note: "", text: "", editable: false }];
@@ -1849,24 +1908,25 @@ async function bmOpenOrganizerDialog(page) {
     li.addEventListener("click", () => pick(r.key));
     list.appendChild(li);
   }
+  const keepEdit = () => { if (current && current.key in edits) edits[current.key] = $("org-rule-text").value; };
   const pick = (key) => {
-    if (current && current.key === "organizer") organizerRules = $("org-rule-text").value;
+    keepEdit();
     current = items.find((r) => r.key === key) ?? items[0];
     list.querySelectorAll(".rules-item").forEach((li) => li.classList.toggle("active", li.dataset.key === current.key));
     $("org-rule-title").textContent = current.title;
     const isLedger = current.key === "ledger";
     $("org-ledger").hidden = !isLedger;
     $("org-rule-text").hidden = isLedger;
-    $("org-dlg-default").hidden = current.key !== "organizer";
+    $("org-dlg-default").hidden = !(current.key in edits);
     if (isLedger) {
-      $("org-rule-note").textContent = "跟着看板现算：条目干完删掉，账本里也就没了。AI 只整理「没看过」的；「你动过」的永远不碰";
+      $("org-rule-note").textContent = "跟着看板现算：条目干完删掉，账本里也就没了。「整理一次」只看「没看过」的、不碰「你动过」的；「全部重来」全部重新排";
       bmPaintLedger($("org-ledger"), ledger);
       return;
     }
     $("org-rule-note").textContent = current.note;
     $("org-rule-text").readOnly = !current.editable;
     $("org-rule-text").classList.toggle("readonly", !current.editable);
-    $("org-rule-text").value = current.key === "organizer" ? organizerRules : current.text;
+    $("org-rule-text").value = current.key in edits ? edits[current.key] : current.text;
   };
   pick("organizer");
 
@@ -1875,27 +1935,31 @@ async function bmOpenOrganizerDialog(page) {
   const markDirty = () => {
     dirty = true;
     $("org-dlg-run").disabled = true;
+    $("org-dlg-run").dataset.dirty = "1";
     $("org-dlg-run").title = "有改动还没保存：先点保存，再整理";
   };
-  shade.querySelectorAll("[data-pane=settings] input, [data-pane=settings] select").forEach((el) => {
+  shade.querySelectorAll(".org-line input, .org-line select").forEach((el) => {
     el.addEventListener("input", markDirty);
     el.addEventListener("change", markDirty);
   });
   $("org-rule-text").addEventListener("input", () => { if (current && current.editable) markDirty(); });
   $("org-dlg-default").addEventListener("click", () => {
-    $("org-rule-text").value = state.defaultRules;
-    organizerRules = state.defaultRules;
+    if (!current || !(current.key in edits)) return;
+    $("org-rule-text").value = defaults[current.key];
+    edits[current.key] = defaults[current.key];
     markDirty();
   });
 
   const close = () => {
+    bmHideBubble(true);
     shade.remove();
     document.removeEventListener("keydown", onKey, true);
   };
   const onKey = (event) => {
     if (event.key === "Escape") {
       event.stopPropagation();
-      close();
+      if (bmBubblePinned) bmHideBubble(true);
+      else close();
     }
   };
   document.addEventListener("keydown", onKey, true);
@@ -1903,37 +1967,98 @@ async function bmOpenOrganizerDialog(page) {
   $("org-dlg-cancel").addEventListener("click", close);
   shade.querySelector(".bm-dialog-x").addEventListener("click", close);
 
-  $("org-dlg-add").addEventListener("click", () => {
-    $("org-dlg-add-row").hidden = !$("org-dlg-add-row").hidden;
-    if (!$("org-dlg-add-row").hidden) $("org-dlg-add-name").focus();
+  // ── 模型：加 / 改 / 删 / 测一下，马上存（钥匙不在界面里等「保存」）──
+  let formId = null; // null＝在加新的，有值＝在改这个
+  const formMsg = (text, ok) => {
+    $("org-mf-msg").textContent = text;
+    $("org-mf-msg").classList.toggle("ok", ok === true);
+    $("org-mf-msg").classList.toggle("bad", ok === false);
+  };
+  const openForm = (entry) => {
+    formId = entry ? entry.id : null;
+    $("org-mf-provider").value = entry ? entry.provider : "";
+    $("org-mf-url").value = entry ? entry.baseUrl : "";
+    $("org-mf-key").value = "";
+    $("org-mf-key").placeholder = entry && entry.hasKey ? "已填（不改就留空）" : "粘贴钥匙";
+    $("org-mf-model").value = entry ? entry.model : "";
+    $("org-mf-save").textContent = entry ? "存好" : "加进去";
+    $("org-mf-remove").hidden = !entry || models.length <= 1;
+    formMsg(entry ? "" : "哪家都行，只要是 OpenAI 那种接口（DeepSeek、智谱、Kimi、阿里百炼、OpenRouter 都是）", null);
+    $("org-model-form").hidden = false;
+    $(entry ? "org-mf-key" : "org-mf-provider").focus();
+  };
+  const formValues = () => ({
+    id: formId ?? undefined,
+    provider: $("org-mf-provider").value.trim(),
+    baseUrl: $("org-mf-url").value.trim(),
+    apiKey: $("org-mf-key").value.trim(),
+    model: $("org-mf-model").value.trim(),
   });
-  $("org-dlg-add-name").addEventListener("keydown", (event) => {
-    if (event.isComposing || event.key !== "Enter") return;
-    event.preventDefault();
-    const name = event.target.value.trim();
-    if (!name) return;
-    if (/\s/.test(name)) {
-      bmShowError("模型名不能带空格");
+  const afterModelChange = (next) => {
+    const chosen = $("org-dlg-model").value;
+    state.models = next.models;
+    models = [...next.models];
+    fillModels(formId === null ? next.current : models.some((m) => m.id === chosen) ? chosen : next.current);
+    state.current = next.current;
+    $("org-dlg-status").textContent = bmOrgLastText(next);
+    void bmPaintOrganizer();
+  };
+  shade.querySelectorAll(".org-model-form input").forEach((el) => el.addEventListener("input", () => { if ($("org-mf-msg").classList.contains("bad")) formMsg("", null); }));
+  $("org-dlg-add").addEventListener("click", () => openForm(null));
+  $("org-dlg-edit").addEventListener("click", () => openForm(models.find((m) => m.id === $("org-dlg-model").value) ?? null));
+  $("org-mf-close").addEventListener("click", () => { $("org-model-form").hidden = true; });
+  $("org-mf-test").addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    formMsg("正在问它一句…", null);
+    try {
+      const r = await window.bookmark.organizerTestModel(formValues());
+      formMsg(r.text, r.ok);
+    } catch (error) {
+      formMsg(bmErrorText(error), false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $("org-mf-save").addEventListener("click", async () => {
+    try {
+      const next = await window.bookmark.organizerModel({ action: formId ? "update" : "add", ...formValues() });
+      afterModelChange(next);
+      $("org-model-form").hidden = true;
+      bmToast(formId ? "模型改好了" : "模型加好了，已经换成它", 2500);
+    } catch (error) {
+      formMsg(bmErrorText(error), false);
+    }
+  });
+  $("org-mf-remove").addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = "1";
+      btn.textContent = "确定删？";
       return;
     }
-    if (!models.includes(name)) models.push(name);
-    fillModels(name);
-    event.target.value = "";
-    $("org-dlg-add-row").hidden = true;
-    markDirty();
+    delete btn.dataset.armed;
+    btn.textContent = "删掉";
+    try {
+      const next = await window.bookmark.organizerModel({ action: "remove", id: formId });
+      formId = null;
+      afterModelChange(next);
+      $("org-model-form").hidden = true;
+    } catch (error) {
+      formMsg(bmErrorText(error), false);
+    }
   });
 
   $("org-dlg-save").addEventListener("click", async () => {
-    if (current && current.key === "organizer") organizerRules = $("org-rule-text").value;
-    const model = $("org-dlg-model").value;
+    keepEdit();
     const patch = {
+      current: $("org-dlg-model").value,
       enabled: $("org-dlg-enabled").checked,
       intervalHours: Number($("org-dlg-hours").value),
       effort: $("org-dlg-effort").value,
-      rules: organizerRules,
+      rules: edits.organizer,
+      checkRules: edits.checker,
     };
-    if (state.models.includes(model)) patch.model = model;
-    else patch.addModel = model;
     try {
       bmOrgState = await window.bookmark.organizerSet(patch);
       close();
@@ -1952,18 +2077,20 @@ async function bmOpenOrganizerDialog(page) {
     $("org-dlg-status").textContent = "正在整理…（一组要一两分钟）";
     try {
       bmOrgState = await window.bookmark.organizerRun();
-      $("org-dlg-status").textContent = bmOrgLastText(bmOrgState);
     } catch (error) {
       bmShowError(bmErrorText(error));
     } finally {
-      btn.disabled = false;
-      btn.textContent = "整理一次";
+      await bmPaintOrganizer();
     }
   });
 
   let resetArmed = false;
   $("org-dlg-reset").addEventListener("click", async (event) => {
     const btn = event.currentTarget;
+    if (dirty) {
+      bmShowError("有改动还没保存：先点保存，再全部重来");
+      return;
+    }
     if (!resetArmed) {
       resetArmed = true;
       btn.textContent = "确定？再点一下";
@@ -1971,16 +2098,186 @@ async function bmOpenOrganizerDialog(page) {
     }
     resetArmed = false;
     btn.textContent = "全部重来";
+    btn.disabled = true;
+    $("org-dlg-run").disabled = true;
+    $("org-dlg-status").textContent = "全部拆开了，正在重新整理…（一组要一两分钟）";
     try {
-      const res = await window.bookmark.organizerReset();
-      $("org-dlg-status").textContent = `拆了 ${res.split} 个 AI 捆的捆，条目都当新的了。点「整理一次」让它重新捆`;
+      bmOrgState = await window.bookmark.organizerReset();
       await bmRefresh();
     } catch (error) {
       bmShowError(bmErrorText(error));
+    } finally {
+      btn.disabled = false;
+      await bmPaintOrganizer();
+    }
+  });
+
+  $("org-dlg-undo").addEventListener("click", async () => {
+    try {
+      bmOrgState = await window.bookmark.organizerUndoReset();
+      await bmRefresh();
+      bmToast("撤销了，回到全部重来之前的样子", 3000);
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    } finally {
+      await bmPaintOrganizer();
     }
   });
 
   showTab(page === "rules" ? "rules" : "settings");
+}
+
+/** 整理记录：每次一个小标题，一行一件事；鼠标碰到那行冒气泡说为什么。 */
+function bmPaintRecords(box, runs) {
+  box.textContent = "";
+  if (!Array.isArray(runs) || !runs.length) {
+    const empty = document.createElement("div");
+    empty.className = "org-rec-empty";
+    empty.textContent = "还没有记录。点「整理一次」，干了啥会一行一行列在这里";
+    box.appendChild(empty);
+    return;
+  }
+  for (const run of runs) {
+    const head = document.createElement("div");
+    head.className = "org-rec-run";
+    const d = new Date(Date.parse(run.at));
+    head.textContent = `${d.getMonth() + 1}-${d.getDate()} ${bmClock(d.getTime())}${run.model ? ` · ${run.model}` : ""}`;
+    box.appendChild(head);
+    for (const row of run.rows) {
+      const line = document.createElement("div");
+      line.className = "org-rec-row";
+      const tag = document.createElement("span");
+      tag.className = `org-rec-tag t-${row.action}`;
+      tag.textContent = row.action;
+      const group = document.createElement("span");
+      group.className = "org-rec-group";
+      group.textContent = row.group;
+      const title = document.createElement("span");
+      title.className = "org-rec-title";
+      title.textContent = row.title;
+      line.append(tag, group, title);
+      bmBindBubble(line, () => {
+        const p = document.createElement("div");
+        p.className = "bm-bubble-text";
+        p.textContent = `为什么：${row.why || "没写"}`;
+        return p;
+      });
+      box.appendChild(line);
+    }
+  }
+}
+
+// ── 气泡（第四版）：鼠标碰到冒出来，移开收起；点一下就一直开着，点别处或 Esc 收起 ──
+
+let bmBubblePinned = false;
+let bmBubbleAnchor = null;
+let bmBubbleHideTimer = null;
+
+function bmBubbleEl() {
+  let el = document.getElementById("bm-bubble");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "bm-bubble";
+    el.hidden = true;
+    el.addEventListener("mouseenter", () => window.clearTimeout(bmBubbleHideTimer));
+    el.addEventListener("mouseleave", () => { if (!bmBubblePinned) bmHideBubbleSoon(); });
+    el.addEventListener("click", (event) => event.stopPropagation());
+    document.getElementById("app").appendChild(el);
+    document.addEventListener("click", () => { if (bmBubblePinned) bmHideBubble(true); });
+  }
+  return el;
+}
+
+function bmShowBubble(anchor, content) {
+  const el = bmBubbleEl();
+  window.clearTimeout(bmBubbleHideTimer);
+  bmBubbleAnchor = anchor;
+  el.textContent = "";
+  el.appendChild(content);
+  el.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const w = Math.min(320, window.innerWidth - 16);
+  el.style.maxWidth = `${w}px`;
+  const box = el.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - box.width - 8));
+  const below = r.bottom + 6 + box.height <= window.innerHeight - 8;
+  el.style.left = `${left}px`;
+  el.style.top = `${below ? r.bottom + 6 : Math.max(8, r.top - box.height - 6)}px`;
+}
+
+function bmHideBubbleSoon() {
+  window.clearTimeout(bmBubbleHideTimer);
+  bmBubbleHideTimer = window.setTimeout(() => bmHideBubble(false), 220);
+}
+
+function bmHideBubble(force) {
+  if (bmBubblePinned && !force) return;
+  bmBubblePinned = false;
+  bmBubbleAnchor?.classList.remove("bubble-pinned");
+  bmBubbleAnchor = null;
+  const el = document.getElementById("bm-bubble");
+  if (el) el.hidden = true;
+}
+
+/** 给一个东西挂气泡：make() 每次现做气泡里的内容。 */
+function bmBindBubble(anchor, make) {
+  anchor.addEventListener("mouseenter", () => {
+    if (bmBubblePinned && bmBubbleAnchor !== anchor) return;
+    if (bmBubbleAnchor !== anchor) bmShowBubble(anchor, make());
+    else window.clearTimeout(bmBubbleHideTimer);
+  });
+  anchor.addEventListener("mouseleave", () => { if (!bmBubblePinned) bmHideBubbleSoon(); });
+  anchor.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (bmBubblePinned && bmBubbleAnchor === anchor) {
+      bmHideBubble(true);
+      return;
+    }
+    bmHideBubble(true);
+    bmShowBubble(anchor, make());
+    bmBubblePinned = true;
+    anchor.classList.add("bubble-pinned");
+  });
+}
+
+/** 看板条目右边的小橙点：AI 检查觉得这条可能放错了。气泡里说放哪、为什么，点「知道了」就不再提。 */
+function bmBuildHintDot(record, hint) {
+  const dot = document.createElement("button");
+  dot.type = "button";
+  dot.className = "bm-hint-dot";
+  dot.setAttribute("aria-label", `AI 提示：${hint.text}`);
+  bmBindBubble(dot, () => {
+    const wrap = document.createElement("div");
+    wrap.className = "bm-hint-bubble";
+    const what = document.createElement("div");
+    what.className = "bm-hint-what";
+    what.textContent = `AI 觉得：这条${hint.text}`;
+    const why = document.createElement("div");
+    why.className = "bm-bubble-text";
+    why.textContent = hint.why ? `为什么：${hint.why}` : "";
+    const foot = document.createElement("div");
+    foot.className = "bm-hint-foot";
+    const note = document.createElement("span");
+    note.textContent = "只是提示，挪不挪你定";
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "settings-open-btn";
+    ok.textContent = "知道了";
+    ok.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      bmHideBubble(true);
+      try {
+        await window.bookmark.organizerDismiss(record.id);
+      } catch (error) {
+        bmShowError(bmErrorText(error));
+      }
+      await bmRefresh();
+    });
+    foot.append(note, ok);
+    wrap.append(what, why, foot);
+    return wrap;
+  });
+  return dot;
 }
 
 const BM_LEDGER_CLASS = { 没看过: "s-new", 看过: "s-seen", 你动过: "s-mine", 在干: "s-busy", 待审: "s-review" };

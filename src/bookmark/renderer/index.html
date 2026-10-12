@@ -28,6 +28,12 @@
       <button id="tab-projects" type="button" class="page-tab" data-page="projects">📁 项目</button>
       <button id="tab-skills" type="button" class="page-tab" data-page="skills">📖 技能</button>
       <button id="add-agent-btn" type="button" title="加一个分组" hidden>＋组</button>
+      <!-- 加分组：点「＋组」就在这一栏变出小框（2026-10-12 用户：底下一整条太占地方） -->
+      <span id="add-agent-row" hidden>
+        <input id="new-agent-name" type="text" maxlength="24" placeholder="新分组名字" />
+        <button id="new-agent-ok" type="button">添加</button>
+        <button id="new-agent-cancel" type="button">取消</button>
+      </span>
     </nav>
 
     <!-- 看板：分组全部由 bookmark.js 渲染（按当前页签只画待定区或 agent 分组） -->
@@ -47,12 +53,6 @@
       </div>
     </div>
 
-    <!-- 加Agent 的内联输入行 -->
-    <div id="add-agent-row" hidden>
-      <input id="new-agent-name" type="text" maxlength="24" placeholder="Agent 名字（如 Codex）" />
-      <button id="new-agent-ok" type="button">添加</button>
-      <button id="new-agent-cancel" type="button">取消</button>
-    </div>
 
     <!-- 右键/点手柄弹出的派给菜单（内容由 js 填） -->
     <div id="ctx-menu" hidden></div>

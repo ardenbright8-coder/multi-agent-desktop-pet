@@ -12,7 +12,7 @@
 
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
@@ -32,7 +32,11 @@ import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
-import { buildLedger, EFFORTS, formatSummary, ORGANIZER_RULES, parseOrganizerConfig, runOrganizer, shortSummary, type Effort, type FetchFn, type OrganizerConfig } from "./organizer";
+import {
+  activeModel, buildCheckTask, buildGroupTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText, liveHintBook, modelLabel,
+  ORGANIZER_RULES, organizeRows, parseHintBook, parseOrganizerConfig, parseRunRecords, pruneRunRecords, runChecker, runOrganizer, shortSummary, testModel,
+  type Effort, type FetchFn, type HintBook, type OrganizerConfig, type RecordRow, type RunRecord,
+} from "./organizer";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -778,19 +782,13 @@ function registerIpc(): void {
     return requireStore().createTaskBundle(ids, String(raw.name ?? ""));
   });
   ipcMain.handle("bookmark:bundle-meta", () => requireStore().bundleMeta());
-  // AI 整理（设定21）：设置浮层读写、手动整理一次。钥匙不回给界面，只说有没有。
+  // AI 整理（设定21）：设置窗口读写、手动整理一次、全部重来 / 撤销、提示「知道了」。钥匙不回给界面，只说有没有。
   ipcMain.handle("bookmark:organizer:get", () => organizerStatus());
   // 设置窗口点「保存」一次交一整份；只改传了的项。规矩改成跟默认一样＝删掉自己的那份，回到默认。
   ipcMain.handle("bookmark:organizer:set", (_event, payload: unknown) => {
-    const raw = (payload ?? {}) as { model?: unknown; addModel?: unknown; enabled?: unknown; intervalHours?: unknown; effort?: unknown; rules?: unknown };
+    const raw = (payload ?? {}) as { current?: unknown; enabled?: unknown; intervalHours?: unknown; effort?: unknown; rules?: unknown; checkRules?: unknown };
     const config = readOrganizerConfig();
-    const added = String(raw.addModel ?? "").trim();
-    if (added) {
-      if (/\s/.test(added) || added.length > 120) throw new Error("模型名不能带空格，最长 120 字");
-      if (!config.models.includes(added)) config.models.push(added);
-      config.model = added;
-    }
-    if (typeof raw.model === "string" && config.models.includes(raw.model)) config.model = raw.model;
+    if (typeof raw.current === "string" && config.models.some((m) => m.id === raw.current)) config.current = raw.current;
     if (typeof raw.enabled === "boolean") config.enabled = raw.enabled;
     if (raw.intervalHours !== undefined) {
       const hours = Number(raw.intervalHours);
@@ -801,7 +799,8 @@ function registerIpc(): void {
       if (!EFFORTS.includes(raw.effort as Effort)) throw new Error("思考档位只认 low / high / max");
       config.effort = raw.effort as Effort;
     }
-    if (typeof raw.rules === "string") writeOrganizerRules(raw.rules);
+    if (typeof raw.rules === "string") writeRulesFile(ORGANIZER_RULES_FILE, raw.rules, ORGANIZER_RULES);
+    if (typeof raw.checkRules === "string") writeRulesFile(CHECK_RULES_FILE, raw.checkRules, CHECK_RULES);
     const intervalChanged = config.intervalHours !== readOrganizerConfig().intervalHours;
     writeOrganizerConfig(config);
     if (intervalChanged && organizerTimer) {
@@ -810,25 +809,88 @@ function registerIpc(): void {
     }
     return organizerStatus();
   });
-  // 规矩页（设定21）：看板里所有给 AI 的规矩摆在一处，用户能看、整理规矩能改，别的只读并说清在哪改。
+  // 模型（2026-10-12 用户：换别家 AI 也能加）：加、改、删马上存（钥匙不该在界面里留着等「保存」）。
+  ipcMain.handle("bookmark:organizer:model", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { action?: unknown; id?: unknown; provider?: unknown; baseUrl?: unknown; apiKey?: unknown; model?: unknown };
+    const config = readOrganizerConfig();
+    const id = String(raw.id ?? "");
+    if (raw.action === "add") {
+      const v = checkModelInput(raw, true);
+      const entry = { id: `m-${Date.now().toString(36)}`, ...v };
+      config.models.push(entry);
+      config.current = entry.id;
+    } else if (raw.action === "update") {
+      const entry = config.models.find((m) => m.id === id);
+      if (!entry) throw new Error("这个模型已经没了");
+      const v = checkModelInput(raw, false);
+      Object.assign(entry, { provider: v.provider, baseUrl: v.baseUrl, model: v.model }, v.apiKey ? { apiKey: v.apiKey } : {});
+    } else if (raw.action === "remove") {
+      if (config.models.length <= 1) throw new Error("至少留一个模型");
+      config.models = config.models.filter((m) => m.id !== id);
+      if (config.current === id) config.current = config.models[0].id;
+    } else {
+      throw new Error("不认识的操作");
+    }
+    writeOrganizerConfig(config);
+    return organizerStatus();
+  });
+  // 「测一下」：表里填的（钥匙留空就用这个模型存着的那把）发一句最短的话。
+  ipcMain.handle("bookmark:organizer:test-model", async (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { id?: unknown; provider?: unknown; baseUrl?: unknown; apiKey?: unknown; model?: unknown };
+    const saved = readOrganizerConfig().models.find((m) => m.id === String(raw.id ?? ""));
+    const v = checkModelInput({ ...raw, apiKey: String(raw.apiKey ?? "").trim() || saved?.apiKey || "" }, true);
+    try {
+      const reply = await testModel({ id: "test", ...v }, organizerFetch);
+      return { ok: true, text: `通了，它回：${reply}` };
+    } catch (error) {
+      return { ok: false, text: `没通：${error instanceof Error ? error.message : error}` };
+    }
+  });
+  // 规矩页（设定21）：看板里所有给 AI 的规矩摆在一处，用户能看、整理 / 检查规矩能改，别的只读并说清在哪改。
   ipcMain.handle("bookmark:board-rules", () => boardRulesList(skillRoot));
   // 账本（设定21）：跟着看板现算，条目删了账本里也就没了。
-  ipcMain.handle("bookmark:organizer:ledger", () => {
-    const file = join(bookmarkDataDirectory(), ORGANIZER_LOG);
-    let text = "";
-    try {
-      text = existsSync(file) ? readFileSync(file, "utf8") : "";
-    } catch {
-      /* 记录读不了就当没有 */
+  ipcMain.handle("bookmark:organizer:ledger", () => buildLedger(requireStore().list(), requireRoster().list(), requireStore().bundleMeta(), readRunRecords()));
+  // 整理记录：一行一件事，理由放气泡。
+  ipcMain.handle("bookmark:organizer:records", () => readRunRecords());
+  // 看板上的小橙点：条目 id → 提示。
+  ipcMain.handle("bookmark:organizer:hints", () => readHintBook().hints);
+  ipcMain.handle("bookmark:organizer:dismiss", (_event, itemId: unknown) => {
+    const id = String(itemId ?? "");
+    const book = readHintBook();
+    const hint = book.hints.find((h) => h.itemId === id);
+    if (hint) {
+      book.hints = book.hints.filter((h) => h.itemId !== id);
+      book.dismissed.push({ itemId: id, placement: hint.placement });
+      writeHintBook(book);
     }
-    return buildLedger(requireStore().list(), requireRoster().list(), requireStore().bundleMeta(), text);
+    return book.hints;
   });
-  // 全部重来（测规矩用）：拆掉 AI 捆的、用户没动过的都变回没看过；不调模型，用户自己点「整理一次」。
-  ipcMain.handle("bookmark:organizer:reset", () => {
+  // 全部重来：先存原样，所有捆拆开（你动过的也一样），然后马上整理＋检查。
+  ipcMain.handle("bookmark:organizer:reset", async () => {
+    if (organizerRunning) throw new Error("正在整理，等这一轮完了再点");
     const split = requireStore().aiResetAll();
-    log.记(`AI 整理全部重来：拆了 ${split} 个 AI 捆的捆`, "organizer");
+    try {
+      copyFileSync(hintBookPath(), `${hintBookPath()}.before-reset`);
+    } catch {
+      rmSync(`${hintBookPath()}.before-reset`, { force: true }); // 原来没有提示本，撤销时也就没有
+    }
+    writeHintBook({ hints: [], dismissed: [], checked: {} });
+    log.记(`AI 整理全部重来：拆了 ${split} 个捆`, "organizer");
     notifyInboxChanged();
-    return { split, status: organizerStatus() };
+    await runOrganizerOnce("全部重来", [{ group: "全部", action: "全部重来", title: `全部重来：拆了 ${split} 个捆，所有条目重新整理`, why: "你点了「全部重来」。重来前的样子存着，下一次整理之前能撤销", itemIds: requireStore().list().map((r) => r.id) }]);
+    return organizerStatus();
+  });
+  ipcMain.handle("bookmark:organizer:undo-reset", () => {
+    if (organizerRunning) throw new Error("正在整理，等这一轮完了再点");
+    const n = requireStore().undoReset();
+    const saved = `${hintBookPath()}.before-reset`;
+    if (existsSync(saved)) renameSync(saved, hintBookPath());
+    else writeHintBook({ hints: [], dismissed: [], checked: {} });
+    appendRunRecord({ at: new Date().toISOString(), model: "", rows: [{ group: "全部", action: "撤销重来", title: `撤销重来：${n} 条回到原来的样子`, why: "你点了「撤销重来」", itemIds: requireStore().list().map((r) => r.id) }] });
+    log.记(`撤销全部重来：搬回 ${n} 条`, "organizer");
+    organizerLast = { at: new Date().toISOString(), text: `撤销重来：${n} 条回到原样` };
+    notifyInboxChanged();
+    return organizerStatus();
   });
   ipcMain.handle("bookmark:organizer:run", async () => {
     await runOrganizerOnce("手动");
@@ -1025,9 +1087,11 @@ function nextWindowLabel(group: string): string {
 }
 
 // ── AI 整理（设定21）：桌宠开起来 30 秒整理一次，之后每隔 intervalHours 一次；没新条目就不调模型 ──
+// 第四版（2026-10-12）：整理完接着检查（看板没变的组不查）；全部重来存原样能撤销；记录、提示存 JSON，条目删了跟着删。
 
 const ORGANIZER_FILE = "organizer.json";
-const ORGANIZER_LOG = "AI整理记录.md";
+const RECORDS_FILE = "AI整理记录.json";
+const HINTS_FILE = "AI整理提示.json";
 let organizerRunning = false;
 let organizerLast: { at: string; text: string } | null = null;
 let organizerTimer: NodeJS.Timeout | null = null;
@@ -1035,7 +1099,7 @@ let organizerTimer: NodeJS.Timeout | null = null;
 function readOrganizerConfig(): OrganizerConfig {
   const file = join(bookmarkDataDirectory(), ORGANIZER_FILE);
   try {
-    return parseOrganizerConfig(existsSync(file) ? JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, "")) : {});
+    return parseOrganizerConfig(existsSync(file) ? JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) : {});
   } catch (error) {
     log.出事("AI 整理设置读不出来，按默认来（钥匙为空就不整理）", error, "organizer");
     return parseOrganizerConfig({});
@@ -1048,12 +1112,59 @@ function writeOrganizerConfig(config: OrganizerConfig): void {
 
 function organizerStatus() {
   const c = readOrganizerConfig();
-  const rules = readOrganizerRules();
+  const rules = readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES);
+  const checkRules = readRulesFile(CHECK_RULES_FILE, CHECK_RULES);
   return {
-    models: c.models, model: c.model, enabled: c.enabled, hasKey: Boolean(c.apiKey), intervalHours: c.intervalHours,
-    effort: c.effort, efforts: EFFORTS, rules, defaultRules: ORGANIZER_RULES, rulesIsDefault: rules === ORGANIZER_RULES,
-    rulesPath: join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE), running: organizerRunning, last: organizerLast,
+    models: c.models.map((m) => ({ id: m.id, provider: m.provider, baseUrl: m.baseUrl, model: m.model, hasKey: Boolean(m.apiKey), label: modelLabel(m) })),
+    current: c.current, enabled: c.enabled, hasKey: Boolean(activeModel(c).apiKey), intervalHours: c.intervalHours,
+    effort: c.effort, efforts: EFFORTS,
+    rules, defaultRules: ORGANIZER_RULES, rulesIsDefault: rules === ORGANIZER_RULES,
+    checkRules, defaultCheckRules: CHECK_RULES, checkRulesIsDefault: checkRules === CHECK_RULES,
+    running: organizerRunning, last: organizerLast, canUndo: requireStore().canUndoReset(),
   };
+}
+
+// ── 整理记录 / 提示本：读的时候顺手把删掉的条目清出去 ──
+
+function readJsonFile(name: string): unknown {
+  const file = join(bookmarkDataDirectory(), name);
+  try {
+    return existsSync(file) ? JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) : null;
+  } catch (error) {
+    log.出事(`${name} 读不出来，当空的`, error, "organizer");
+    return null;
+  }
+}
+
+function readRunRecords(): RunRecord[] {
+  const raw = parseRunRecords(readJsonFile(RECORDS_FILE));
+  const pruned = pruneRunRecords(raw, new Set(requireStore().list().map((r) => r.id)));
+  if (JSON.stringify(pruned) !== JSON.stringify(raw)) writeJsonAtomic(join(bookmarkDataDirectory(), RECORDS_FILE), pruned);
+  return pruned;
+}
+
+function appendRunRecord(run: RunRecord): void {
+  if (!run.rows.length) return;
+  try {
+    writeJsonAtomic(join(bookmarkDataDirectory(), RECORDS_FILE), pruneRunRecords([run, ...readRunRecords()], new Set(requireStore().list().map((r) => r.id))));
+  } catch (error) {
+    log.出事("AI 整理记录写不进去", error, "organizer");
+  }
+}
+
+function hintBookPath(): string {
+  return join(bookmarkDataDirectory(), HINTS_FILE);
+}
+
+function readHintBook(): HintBook {
+  const raw = parseHintBook(readJsonFile(HINTS_FILE));
+  const live = liveHintBook(raw, requireStore().list());
+  if (live.hints.length !== raw.hints.length || live.dismissed.length !== raw.dismissed.length) writeHintBook(live);
+  return live;
+}
+
+function writeHintBook(book: HintBook): void {
+  writeJsonAtomic(hintBookPath(), book);
 }
 
 /** 规矩页的一份份规矩：示例窗口名、示例条目都是假的，只为让用户看到 AI 实际收到的那段话长什么样。 */
@@ -1066,7 +1177,10 @@ function boardRulesList(skillRoot: string) {
   const base = { item, prompt: "（这里是那条任务的原文、图片、要求模板）", position: 1, total: 3, remaining: 2, busy: [] as string[] };
   const inCode = "写在程序里，要改跟 AI 说一声";
   const rules: { key: string; group: string; title: string; note: string; text: string; editable: boolean }[] = [
-    { key: "organizer", group: "AI 整理捆", title: "整理规矩", note: "整理模型照这个把新条目捆起来。能直接改，改完点保存", text: readOrganizerRules(), editable: true },
+    { key: "organizer", group: "AI 整理捆", title: "整理规矩", note: "整理模型照这个把新条目捆起来。能直接改，改完点保存", text: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES), editable: true },
+    { key: "checker", group: "AI 整理捆", title: "检查规矩", note: "整理完照这个挑放错的、挂小橙点，一条都不挪。能直接改，改完点保存", text: readRulesFile(CHECK_RULES_FILE, CHECK_RULES), editable: true },
+    { key: "hard", group: "AI 整理捆", title: "程序卡死的规矩", note: `程序直接拿代码里的数拼出来的，跟真执行的一样。${inCode}`, text: hardRulesText(), editable: false },
+    { key: "question", group: "AI 整理捆", title: "AI 每次收到的题目", note: "拿你看板现在的条目现做的：上面两份规矩之外，AI 就只收到这些", text: questionPreview(), editable: false },
     { key: "claim-day", group: "AI 领到活时看到的", title: "日常档", note: `一条和一捆一样：干完讲给你听，你说可以才删。${inCode}`,
       text: formatClaimMessage({ ...base, mode: "day" }, { cli, target: "b-示例捆", by: "Claude-3", coding: false }), editable: false },
     { key: "claim-sleep", group: "AI 领到活时看到的", title: "睡觉档", note: `干完写报告挂在条目下，你早上看了说可以再删。${inCode}`,
@@ -1087,28 +1201,51 @@ function boardRulesList(skillRoot: string) {
   return rules;
 }
 
-/** 整理规矩（给模型的提示词）：用户改过就存 AI整理规矩.md，没改过用代码里的默认。 */
-const ORGANIZER_RULES_FILE = "AI整理规矩.md";
+/** 规矩页「AI 每次收到的题目」：拿看板现在第一组有条目的，现做整理题和检查题。 */
+function questionPreview(): string {
+  const store = requireStore();
+  const groups = groupsForOrganizer(store.list(), requireRoster().list());
+  const opts = { meta: store.bundleMeta(), openBundle: (id: string) => store.aiOpenBundle(id) };
+  for (const g of groups) {
+    const organize = buildGroupTask(g, { ...opts, now: Date.now(), previewAll: true });
+    const check = buildCheckTask(g, opts);
+    if (!organize && !check) continue;
+    return [
+      `下面拿「${g.label}」组现做。每组单独发一份，图片另附。`,
+      "",
+      "━━ 整理题（散着的都当新条目，好让你看全格式；真整理时你动过的不送）━━",
+      organize ? organize.text : "（这组现在没有能整理的条目）",
+      "",
+      "━━ 检查题 ━━",
+      check ? check.text : "（这组没有捆，不用检查）",
+    ].join("\n");
+  }
+  return "看板上现在没有能整理的条目，等有了再来看。";
+}
 
-function readOrganizerRules(): string {
-  const file = join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE);
+/** 整理规矩 / 检查规矩（给模型的提示词）：用户改过就存成 md，没改过用代码里的默认。 */
+const ORGANIZER_RULES_FILE = "AI整理规矩.md";
+const CHECK_RULES_FILE = "AI检查规矩.md";
+
+function readRulesFile(name: string, fallback: string): string {
+  const file = join(bookmarkDataDirectory(), name);
   try {
-    const text = existsSync(file) ? readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").trim() : "";
-    return text || ORGANIZER_RULES;
+    const text = existsSync(file) ? readFileSync(file, "utf8").replace(/^﻿/, "").replace(/\r\n/g, "\n").trim() : "";
+    return text || fallback;
   } catch (error) {
-    log.出事("整理规矩读不出来，先用默认的", error, "organizer");
-    return ORGANIZER_RULES;
+    log.出事(`${name} 读不出来，先用默认的`, error, "organizer");
+    return fallback;
   }
 }
 
-function writeOrganizerRules(text: string): void {
-  const file = join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE);
+function writeRulesFile(name: string, text: string, fallback: string): void {
+  const file = join(bookmarkDataDirectory(), name);
   const clean = text.replace(/\r\n/g, "\n").trim();
-  if (!clean || clean === ORGANIZER_RULES) {
+  if (!clean || clean === fallback) {
     rmSync(file, { force: true });
     return;
   }
-  if (clean.length > 20000) throw new Error("整理规矩太长了（最多两万字）");
+  if (clean.length > 20000) throw new Error("规矩太长了（最多两万字）");
   mkdirSync(bookmarkDataDirectory(), { recursive: true });
   writeFileSync(`${file}.tmp`, clean, "utf8");
   renameSync(`${file}.tmp`, file);
@@ -1120,35 +1257,53 @@ const organizerFetch: FetchFn = async (url, init) => {
   return { ok: res.ok, status: res.status, text: () => res.text() };
 };
 
-async function runOrganizerOnce(reason: string): Promise<void> {
+/** 整理一次＝整理新条目＋检查一遍（2026-10-12 用户：是一个工作流）。lead 是全部重来那一行，放这次记录最前面。 */
+async function runOrganizerOnce(reason: string, lead: RecordRow[] = []): Promise<void> {
   if (organizerRunning) return;
   const config = readOrganizerConfig();
-  if (reason !== "手动" && !config.enabled) return;
-  if (!config.apiKey) {
+  if (reason === "定时" && !config.enabled) return;
+  if (!activeModel(config).apiKey) {
     organizerLast = { at: new Date().toISOString(), text: "AI 整理：还没填模型钥匙" };
+    if (lead.length) {
+      appendRunRecord({ at: organizerLast.at, model: "", rows: lead });
+      notifyOrganized(organizerLast.text);
+    }
     return;
   }
+  // 全部重来的撤销机会只到下一次整理之前。
+  if (reason !== "全部重来") requireStore().dropResetUndo();
   organizerRunning = true;
+  notifyOrganized("");
+  const store = requireStore();
+  const agents = requireRoster().list();
+  const rows: RecordRow[] = [...lead];
+  let model = modelLabel(activeModel(config));
   try {
-    const summary = await runOrganizer({ store: requireStore(), agents: requireRoster().list(), config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot(), rules: readOrganizerRules() });
-    const record = formatSummary(summary);
-    if (record) {
-      try {
-        appendFileSync(join(bookmarkDataDirectory(), ORGANIZER_LOG), record, "utf8");
-      } catch (error) {
-        log.出事("AI 整理记录写不进去", error, "organizer");
-      }
-    }
-    organizerLast = { at: summary.at, text: shortSummary(summary) };
-    log.记(`${reason}整理：${organizerLast.text}`, "organizer");
+    const summary = await runOrganizer({ store, agents, config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot(), rules: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES) });
+    model = summary.model;
+    rows.push(...organizeRows(summary, store.list()));
     if (summary.changed) notifyInboxChanged();
-    if (summary.groups.length || reason === "手动") notifyOrganized(organizerLast.text);
+    let text = shortSummary(summary);
+    try {
+      const check = await runChecker({ store, agents, config, fetchFn: organizerFetch, book: readHintBook(), rules: readRulesFile(CHECK_RULES_FILE, CHECK_RULES) });
+      writeHintBook(check.book);
+      rows.push(...check.rows);
+      for (const e of check.errors) rows.push({ group: e.split("：")[0], action: "没成", title: "这组没检查成，下一轮再查", why: e, itemIds: [] });
+      if (check.newHints) text += `；检查出 ${check.newHints} 条可能放错（看板上的小橙点）`;
+      else if (check.checkedGroups) text += "；检查过了，没有放错的";
+    } catch (error) {
+      log.出事(`${reason}检查失败`, error, "organizer");
+      text += `；检查没成：${error instanceof Error ? error.message : error}`;
+    }
+    organizerLast = { at: summary.at, text };
+    log.记(`${reason}整理：${text}`, "organizer");
   } catch (error) {
     organizerLast = { at: new Date().toISOString(), text: `AI 整理没成：${error instanceof Error ? error.message : error}` };
     log.出事(`${reason}整理失败`, error, "organizer");
-    if (reason === "手动") notifyOrganized(organizerLast.text);
   } finally {
     organizerRunning = false;
+    appendRunRecord({ at: new Date().toISOString(), model, rows });
+    notifyOrganized(organizerLast?.text ?? "");
   }
 }
 
@@ -1162,6 +1317,7 @@ function startOrganizerTimer(firstMs = 30_000): void {
   schedule(firstMs);
 }
 
+/** 整理开始（text 空）、整理完都发一声：设置窗口刷新记录、看板刷新小橙点。 */
 function notifyOrganized(text: string): void {
   try {
     if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:organized", text);
