@@ -103,10 +103,23 @@ try {
   assert.deepEqual(opts.slice(0, 2), ['deepseek/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash']);
   assert.equal(await page.locator('#org-dlg-effort').inputValue(), 'high');
   assert.equal(await page.locator('#org-dlg-hours').inputValue(), '2');
-  assert.match(await page.locator('#org-dlg-rules').inputValue(), /项目名/);
   assert.match(await page.locator('#org-dlg-status').innerText(), /还没填模型钥匙/);
   await page.screenshot({ path: join(out, '设置窗口.png') });
+  // 规矩页：左边按类排，整理规矩能改，领活规矩只读，最底下是账本
+  await page.locator('.bm-dialog-tab[data-tab="rules"]').click();
+  const ruleNames = await page.locator('.rules-item').allInnerTexts();
+  for (const want of ['整理规矩', '日常档', '睡觉档', '多人派工（占住整捆）', '看板派工', '交接单', 'AI 整理账本']) assert.ok(ruleNames.includes(want), `规矩页有「${want}」`);
+  assert.match(await page.locator('#org-rule-text').inputValue(), /项目名/);
+  assert.equal(await page.locator('#org-rule-text').evaluate(el => el.readOnly), false, '整理规矩能改');
+  await page.locator('.rules-item', { hasText: /^日常档$/ }).click();
+  assert.match(await page.locator('#org-rule-text').inputValue(), /用户亲口说「可以」以后/);
+  assert.equal(await page.locator('#org-rule-text').evaluate(el => el.readOnly), true, '领活规矩只读');
+  await page.screenshot({ path: join(out, '规矩页.png') });
+  await page.locator('.rules-item', { hasText: 'AI 整理账本' }).click();
+  assert.match(await page.locator('#org-ledger').innerText(), /Claude[\s\S]*你动过/);
+  await page.screenshot({ path: join(out, '账本.png') });
   // 改了点取消：什么都没存
+  await page.locator('.bm-dialog-tab[data-tab="settings"]').click();
   await page.locator('#org-dlg-hours').fill('5');
   assert.equal(await page.locator('#org-dlg-run').isDisabled(), true, '有改动没保存不让整理');
   await page.locator('#org-dlg-cancel').click();
@@ -120,7 +133,8 @@ try {
   await page.locator('#org-dlg-add-name').press('Enter');
   await page.locator('#org-dlg-effort').selectOption('max');
   await page.locator('#org-dlg-hours').fill('3');
-  await page.locator('#org-dlg-rules').fill('测试用规矩');
+  await page.locator('.bm-dialog-tab[data-tab="rules"]').click();
+  await page.locator('#org-rule-text').fill('测试用规矩');
   await page.locator('#org-dlg-save').click();
   await page.waitForFunction(() => !document.querySelector('#org-dialog'));
   const saved = await page.evaluate(() => window.bookmark.organizerGet());
@@ -131,6 +145,7 @@ try {
   // 恢复默认 + 保存＝回到默认规矩
   await page.evaluate(() => bmOpenOrganizerDialog());
   await page.waitForSelector('#org-dialog');
+  await page.locator('.bm-dialog-tab[data-tab="rules"]').click();
   await page.locator('#org-dlg-default').click();
   await page.locator('#org-dlg-save').click();
   await page.waitForFunction(() => !document.querySelector('#org-dialog'));
@@ -146,6 +161,7 @@ try {
   const inner = await page.evaluate(() => {
     const members = [...document.querySelectorAll('.task.in-bundle')];
     const mid = members.find(el => !el.classList.contains('bundle-last') && el.previousElementSibling?.classList.contains('in-bundle'));
+    mid.style.transition = 'none'; // 撑开有 0.12 秒动画，量的是终点
     mid.classList.add('gap-above');
     const cs = getComputedStyle(mid);
     const r = { marginTop: cs.marginTop, paddingTop: cs.paddingTop };
@@ -154,6 +170,17 @@ try {
   });
   assert.equal(inner.marginTop, '0px', '捆里的缝不用外边距');
   assert.equal(inner.paddingTop, '30px', '捆里的缝是捆自己撑开的');
+
+  // ⑧ 带链接的长文：板上露的是字，链接只占一行（网站名＋路径，问号后面不要）
+  const linkId = await page.evaluate(async () => {
+    const nl = String.fromCharCode(10);
+    const text = ['思考了 1m 17s', '', '...', '', '结论先说 你这套路线没错 https://huggingface.co/kohya-ss/x.safetensors?download=true&utm_source=chatgpt.com'].join(nl);
+    const r = await window.bookmark.add({ text, assignee: 'Pi Agent', url: 'https://huggingface.co/kohya-ss/x.safetensors?download=true&utm_source=chatgpt.com' });
+    await bmRefresh();
+    return r.id;
+  });
+  assert.match(await page.locator(`.task[data-id="${linkId}"] .task-text`).innerText(), /思考了 1m 17s \.\.\. 结论先说/);
+  assert.equal(await page.locator(`.task[data-id="${linkId}"] .task-url`).innerText(), '链接 · huggingface.co/kohya-ss/x.safetensors');
 
   await page.setViewportSize({ width: 520, height: 900 });
   await page.screenshot({ path: join(out, '捆的样子.png') });

@@ -350,9 +350,13 @@ function bmMarkGap(anchor, place, row) {
 function bmBindDrag(opts) {
   const handle = opts.handle;
   const row = opts.row;
+  handle.addEventListener("dragstart", (event) => event.preventDefault());
   handle.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     if (event.target instanceof Element && event.target.closest("button, textarea, input, a, .handle, .bm-rich-input")) return;
+    // 页面上留着一片选中的字时，按在字上一挪，浏览器会当成「把这段字拖出去」，接着把我们的拖动取消掉（2026-10-12 查到）。
+    // 按下就先清掉选中；条目里也不让浏览器起它自己的拖放。
+    window.getSelection()?.removeAllRanges();
     const startX = event.clientX;
     const startY = event.clientY;
     const pointerId = event.pointerId;
@@ -625,7 +629,8 @@ function bmBuildTask(record, groupKey, order) {
   } else {
     const text = document.createElement("div");
     text.className = "task-text";
-    bmRenderImages(text, record.text, false, record.attachments || []);
+    // 板上只露两行：换行和空行压成一个空格，两行里都是字（2026-10-12 用户：从别处贴来的长文开头是空行，板上只剩一个链接，看不出写的啥）。
+    bmRenderImages(text, record.text.replace(/\s*\n+\s*/g, " "), false, record.attachments || []);
     // 单击就改字；按下挪了算拖（bmBindDrag），拖完那一下点击会被吞掉，不会误进改字。
     text.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -637,7 +642,9 @@ function bmBuildTask(record, groupKey, order) {
     const link = document.createElement("a");
     link.className = "task-url";
     link.href = record.url;
-    link.textContent = record.url;
+    // 链接只占一行、淡淡的：写网站名＋路径开头，全文放悬停提示里，别把正文挤没了。
+    link.textContent = `链接 · ${record.url.replace(/^https?:\/\/(www\.)?/i, "").replace(/[?#].*$/, "")}`;
+    link.title = record.url;
     body.appendChild(link);
   }
   // 详情（交接单的长内容）：有 detail 的条目点一下展开/收起，默认收起（板上只占标题两行）。
@@ -1733,18 +1740,29 @@ function bmOrgLastText(state) {
   return "还没整理过";
 }
 
-async function bmOpenOrganizerDialog() {
+async function bmOpenOrganizerDialog(page) {
   await bmPaintOrganizer();
   const state = bmOrgState;
   if (!state) return;
+  const [rules, ledger] = await Promise.all([
+    window.bookmark.boardRules ? window.bookmark.boardRules().catch(() => []) : Promise.resolve([]),
+    window.bookmark.organizerLedger ? window.bookmark.organizerLedger().catch(() => null) : Promise.resolve(null),
+  ]);
   document.getElementById("org-dialog")?.remove();
   const shade = document.createElement("div");
   shade.id = "org-dialog";
   shade.className = "bm-dialog-shade";
   shade.innerHTML = `
     <div class="bm-dialog" role="dialog" aria-label="AI 整理捆">
-      <header class="bm-dialog-head"><span>AI 整理捆</span><button type="button" class="bm-dialog-x" title="取消">✕</button></header>
-      <div class="bm-dialog-body">
+      <header class="bm-dialog-head">
+        <span>AI 整理捆</span>
+        <nav class="bm-dialog-tabs">
+          <button type="button" class="bm-dialog-tab" data-tab="settings">整理捆</button>
+          <button type="button" class="bm-dialog-tab" data-tab="rules">规矩</button>
+        </nav>
+        <button type="button" class="bm-dialog-x" title="取消">×</button>
+      </header>
+      <div class="bm-dialog-body" data-pane="settings">
         <label class="org-line"><span class="org-key">自动整理</span>
           <span class="org-val"><input type="checkbox" id="org-dlg-enabled" /> 开着时，桌宠打开半分钟后整理一次，之后每隔</span>
           <input type="number" id="org-dlg-hours" min="0.25" max="48" step="0.25" /> 小时一次</label>
@@ -1754,15 +1772,21 @@ async function bmOpenOrganizerDialog() {
         <div class="org-line" id="org-dlg-add-row" hidden><span class="org-key"></span>
           <input id="org-dlg-add-name" placeholder="模型名，比如 z-ai/glm-5.3-flash，回车加进下拉" /></div>
         <div class="org-line"><span class="org-key">思考档位</span><select id="org-dlg-effort"></select></div>
-        <div class="org-rules-head"><span class="org-key">整理规矩</span>
-          <span class="org-hint">给 AI 看的提示词：它照这个把新条目捆起来。改完点保存，下一次整理就按新的来</span>
-          <button type="button" class="settings-open-btn" id="org-dlg-default">恢复默认</button></div>
-        <textarea id="org-dlg-rules" spellcheck="false"></textarea>
         <div class="org-line org-run-line">
           <span class="org-status" id="org-dlg-status"></span>
           <button type="button" class="settings-open-btn" id="org-dlg-run" title="用已经保存的设置，马上整理一次">整理一次</button>
           <button type="button" class="settings-open-btn" id="org-dlg-reset" title="测规矩用：拆掉 AI 捆的捆，没动过的条目都当新的重看；你手动捆的、动过的不碰">全部重来</button>
         </div>
+      </div>
+      <div class="bm-dialog-body rules-pane" data-pane="rules" hidden>
+        <ul class="rules-list" id="org-rules-list"></ul>
+        <section class="rules-view">
+          <div class="rules-title"><span id="org-rule-title"></span>
+            <button type="button" class="settings-open-btn" id="org-dlg-default" hidden>恢复默认</button></div>
+          <div class="rules-note" id="org-rule-note"></div>
+          <textarea id="org-rule-text" spellcheck="false"></textarea>
+          <div class="ledger" id="org-ledger" hidden></div>
+        </section>
       </div>
       <footer class="bm-dialog-foot">
         <button type="button" class="bm-btn" id="org-dlg-cancel">取消</button>
@@ -1771,9 +1795,19 @@ async function bmOpenOrganizerDialog() {
     </div>`;
   document.getElementById("app").appendChild(shade);
   const $ = (id) => shade.querySelector(`#${id}`);
+
+  // ── 两页切换 ──
+  const showTab = (tab) => {
+    shade.querySelectorAll(".bm-dialog-tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    shade.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== tab; });
+  };
+  shade.querySelectorAll(".bm-dialog-tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+  // ── 整理捆页 ──
   $("org-dlg-enabled").checked = Boolean(state.enabled);
   $("org-dlg-hours").value = String(state.intervalHours);
-  const fillModels = (models, chosen) => {
+  const models = [...state.models];
+  const fillModels = (chosen) => {
     const select = $("org-dlg-model");
     select.textContent = "";
     for (const m of models) {
@@ -1784,8 +1818,7 @@ async function bmOpenOrganizerDialog() {
     }
     select.value = chosen;
   };
-  const models = [...state.models];
-  fillModels(models, state.model);
+  fillModels(state.model);
   for (const e of state.efforts) {
     const opt = document.createElement("option");
     opt.value = e;
@@ -1793,17 +1826,67 @@ async function bmOpenOrganizerDialog() {
     $("org-dlg-effort").appendChild(opt);
   }
   $("org-dlg-effort").value = state.effort;
-  $("org-dlg-rules").value = state.rules;
   $("org-dlg-status").textContent = bmOrgLastText(state);
 
+  // ── 规矩页：左边按类排，右边看全文；只有整理规矩能改 ──
+  let organizerRules = state.rules;
+  let current = null;
+  const list = $("org-rules-list");
+  const items = [...rules.map((r) => ({ ...r })), { key: "ledger", group: "账本", title: "AI 整理账本", note: "", text: "", editable: false }];
+  let lastGroup = null;
+  for (const r of items) {
+    if (r.group !== lastGroup) {
+      const head = document.createElement("li");
+      head.className = "rules-group";
+      head.textContent = r.group;
+      list.appendChild(head);
+      lastGroup = r.group;
+    }
+    const li = document.createElement("li");
+    li.className = "rules-item";
+    li.dataset.key = r.key;
+    li.textContent = r.title;
+    li.addEventListener("click", () => pick(r.key));
+    list.appendChild(li);
+  }
+  const pick = (key) => {
+    if (current && current.key === "organizer") organizerRules = $("org-rule-text").value;
+    current = items.find((r) => r.key === key) ?? items[0];
+    list.querySelectorAll(".rules-item").forEach((li) => li.classList.toggle("active", li.dataset.key === current.key));
+    $("org-rule-title").textContent = current.title;
+    const isLedger = current.key === "ledger";
+    $("org-ledger").hidden = !isLedger;
+    $("org-rule-text").hidden = isLedger;
+    $("org-dlg-default").hidden = current.key !== "organizer";
+    if (isLedger) {
+      $("org-rule-note").textContent = "跟着看板现算：条目干完删掉，账本里也就没了。AI 只整理「没看过」的；「你动过」的永远不碰";
+      bmPaintLedger($("org-ledger"), ledger);
+      return;
+    }
+    $("org-rule-note").textContent = current.note;
+    $("org-rule-text").readOnly = !current.editable;
+    $("org-rule-text").classList.toggle("readonly", !current.editable);
+    $("org-rule-text").value = current.key === "organizer" ? organizerRules : current.text;
+  };
+  pick("organizer");
+
+  // ── 改动、保存、取消 ──
   let dirty = false;
   const markDirty = () => {
     dirty = true;
     $("org-dlg-run").disabled = true;
     $("org-dlg-run").title = "有改动还没保存：先点保存，再整理";
   };
-  shade.querySelectorAll("input, select, textarea").forEach((el) => el.addEventListener("input", markDirty));
-  shade.querySelectorAll("select, input[type=checkbox]").forEach((el) => el.addEventListener("change", markDirty));
+  shade.querySelectorAll("[data-pane=settings] input, [data-pane=settings] select").forEach((el) => {
+    el.addEventListener("input", markDirty);
+    el.addEventListener("change", markDirty);
+  });
+  $("org-rule-text").addEventListener("input", () => { if (current && current.editable) markDirty(); });
+  $("org-dlg-default").addEventListener("click", () => {
+    $("org-rule-text").value = state.defaultRules;
+    organizerRules = state.defaultRules;
+    markDirty();
+  });
 
   const close = () => {
     shade.remove();
@@ -1834,23 +1917,20 @@ async function bmOpenOrganizerDialog() {
       return;
     }
     if (!models.includes(name)) models.push(name);
-    fillModels(models, name);
+    fillModels(name);
     event.target.value = "";
     $("org-dlg-add-row").hidden = true;
     markDirty();
   });
-  $("org-dlg-default").addEventListener("click", () => {
-    $("org-dlg-rules").value = state.defaultRules;
-    markDirty();
-  });
 
   $("org-dlg-save").addEventListener("click", async () => {
+    if (current && current.key === "organizer") organizerRules = $("org-rule-text").value;
     const model = $("org-dlg-model").value;
     const patch = {
       enabled: $("org-dlg-enabled").checked,
       intervalHours: Number($("org-dlg-hours").value),
       effort: $("org-dlg-effort").value,
-      rules: $("org-dlg-rules").value,
+      rules: organizerRules,
     };
     if (state.models.includes(model)) patch.model = model;
     else patch.addModel = model;
@@ -1899,6 +1979,56 @@ async function bmOpenOrganizerDialog() {
       bmShowError(bmErrorText(error));
     }
   });
+
+  showTab(page === "rules" ? "rules" : "settings");
+}
+
+const BM_LEDGER_CLASS = { 没看过: "s-new", 看过: "s-seen", 你动过: "s-mine", 在干: "s-busy", 待审: "s-review" };
+
+/** 账本：本月整理几轮、每组几条看过几条没看过、哪些你动过、有哪些捆，再一条一条列出来。 */
+function bmPaintLedger(box, ledger) {
+  box.textContent = "";
+  if (!ledger) {
+    box.textContent = "账本读不出来";
+    return;
+  }
+  const top = document.createElement("div");
+  top.className = "ledger-top";
+  top.textContent = `${ledger.month} 整理了 ${ledger.runsThisMonth} 轮${ledger.lastRun ? ` · 最近一次 ${ledger.lastRun}` : ""}`;
+  box.appendChild(top);
+  for (const g of ledger.groups) {
+    const sec = document.createElement("section");
+    sec.className = "ledger-group";
+    const head = document.createElement("div");
+    head.className = "ledger-head";
+    const c = g.counts;
+    const bits = [`没看过 ${c["没看过"]}`, `看过 ${c["看过"]}`, `你动过 ${c["你动过"]}`];
+    if (c["在干"]) bits.push(`在干 ${c["在干"]}`);
+    if (c["待审"]) bits.push(`待审 ${c["待审"]}`);
+    head.innerHTML = `<b></b><span></span>`;
+    head.querySelector("b").textContent = g.label;
+    head.querySelector("span").textContent = bits.join(" · ");
+    sec.appendChild(head);
+    for (const b of g.bundles) {
+      const line = document.createElement("div");
+      line.className = "ledger-bundle";
+      line.textContent = `捆「${b.name}」${b.count} 条 · ${b.by === "ai" ? "AI 捆的" : "你捆的"}`;
+      sec.appendChild(line);
+    }
+    for (const it of g.items) {
+      const line = document.createElement("div");
+      line.className = "ledger-item";
+      const tag = document.createElement("span");
+      tag.className = `ledger-tag ${BM_LEDGER_CLASS[it.state] ?? ""}`;
+      tag.textContent = it.state;
+      const text = document.createElement("span");
+      text.className = "ledger-text";
+      text.textContent = it.text;
+      line.append(tag, text);
+      sec.appendChild(line);
+    }
+    box.appendChild(sec);
+  }
 }
 
 function bmHideCtxMenu() {

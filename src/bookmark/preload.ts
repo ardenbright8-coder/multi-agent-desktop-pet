@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("bookmark", {
     ipcRenderer.invoke("bookmark:organizer:set", patch),
   organizerRun: () => ipcRenderer.invoke("bookmark:organizer:run"),
   organizerReset: () => ipcRenderer.invoke("bookmark:organizer:reset"),
+  organizerLedger: () => ipcRenderer.invoke("bookmark:organizer:ledger"),
+  boardRules: () => ipcRenderer.invoke("bookmark:board-rules"),
   onOrganized: (callback: (text: string) => void) => {
     ipcRenderer.on("bookmark:organized", (_event, text) => callback(String(text ?? "")));
   },

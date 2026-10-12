@@ -185,7 +185,7 @@ export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看
 
 第一步：给每条新条目贴一个"项目名"标签（写进 topics）。
 - 项目名 = 这条说的是哪个软件、哪个工具、哪个项目。2 到 10 个字。
-- 已有的捆名里出现过的项目名，优先照抄同一个写法（比如已有捆叫"Markdown脑图新建"，新条目也是说 Markdown 脑图，就贴"Markdown脑图"）。
+- 已有的捆名里出现过的项目名，优先照抄同一个写法（比如已有捆叫"Markdown脑图：右键新建不显示"，新条目也是说 Markdown 脑图，就贴"Markdown脑图"）。
 - 同一个东西只用一种写法：语音转字常把名字说歪，按意思认。例："看板""Agent 看板""桌宠看板""AG 的看板""bookmark-cli 看板命令"都是同一个项目，统一贴"Agent看板"；"酒馆前端""酒馆出图""套餐出图"都贴"酒馆"。
 - 实在认不出是哪个项目，贴"认不出"。
 
@@ -202,8 +202,10 @@ export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看
 ❌ "Markdown 脑图右键新建" 和 "库管理面板返回键没反应" → 两个不同的软件，就算都是界面问题也不捆
 ❌ 只是大类相同不算：都跟 AI 有关、都是改代码、都是界面问题、都是"要做的事"
 
-捆名规则：
-- 4 到 12 个字，带项目名，最好再带一点是哪方面。例："Markdown脑图新建"、"Agent看板交互"、"酒馆看图"
+捆名规则（用户看捆名就要知道这捆是干啥的、好派活）：
+- 10 到 20 个字：先写项目名，冒号，再写这捆里最主要的两三件事，用「·」隔开
+- 照顾到捆里每一条的主要意思，别只写第一条的；事情多就挑最要紧的三件
+- 例："Agent看板：一捆机制·F1置顶·链接显示"、"酒馆：看图对比·套餐出图分开"、"Markdown脑图：右键新建不显示"
 - 不许用：杂项、其他、待办、未分类、零散、综合
 
 铁律（违反的那一条会被直接丢掉，等于白做）：
@@ -214,7 +216,7 @@ export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看
 图片：有的条目带截图，每张图前面会写它属于哪条。图里的文字和界面也算这条讲的内容，能帮你认出是哪个软件。
 
 只输出一个 JSON，不要任何解释、不要 markdown 代码块。格式：
-{"topics":{"N1":"Markdown脑图","N2":"Agent看板","N3":"Agent看板","N4":"认不出"},"join":[{"item":"N1","bundle":"B1"}],"create":[{"name":"Agent看板交互","items":["N2","N3"]}],"skip":["N4"]}
+{"topics":{"N1":"Markdown脑图","N2":"Agent看板","N3":"Agent看板","N4":"认不出"},"join":[{"item":"N1","bundle":"B1"}],"create":[{"name":"Agent看板：一捆机制·F1置顶","items":["N2","N3"]}],"skip":["N4"]}
 没有的就写空数组 []。每条新条目必须出现在 join、create、skip 三处中的某一处。`;
 
 // ── 读模型的回答：先挖出 JSON，再逐条按规矩过筛 ──
@@ -252,7 +254,7 @@ export function validatePlan(raw: RawPlan, task: GroupTask): CleanPlan {
   for (const c of Array.isArray(raw.create) ? raw.create : []) {
     const entry = (c ?? {}) as { name?: unknown; items?: unknown };
     const aliases = Array.isArray(entry.items) ? entry.items.map(norm) : [];
-    const name = String(entry.name ?? "").trim().replace(/["「」]/g, "").slice(0, 16);
+    const name = String(entry.name ?? "").trim().replace(/["「」]/g, "").slice(0, 24);
     const unique = new Set(aliases);
     if (
       aliases.length < 2 ||
@@ -449,4 +451,56 @@ export function shortSummary(s: OrganizeSummary): string {
   if (!created && !joined && !failed.length) parts.push("看过了，没有要捆的");
   if (failed.length) parts.push(`${failed.map((g) => g.label).join("、")} 没整理成（${failed[0].error}）`);
   return `AI 整理：${parts.join("，")}`;
+}
+
+// ── 账本（设定21）：AI 看过哪些、没看过哪些、哪些是用户动过的。跟着看板现算，条目干完删掉，账本里也就没了 ──
+
+export type LedgerState = "没看过" | "看过" | "你动过" | "在干" | "待审";
+
+export interface LedgerGroup {
+  label: string;
+  counts: Record<LedgerState, number>;
+  bundles: { name: string; by: "user" | "ai"; count: number }[];
+  items: { text: string; state: LedgerState; bundle: string | null }[];
+}
+
+export interface Ledger {
+  month: string;
+  runsThisMonth: number;
+  lastRun: string | null;
+  groups: LedgerGroup[];
+}
+
+export function ledgerState(r: BookmarkRecord): LedgerState {
+  if (r.report) return "待审";
+  if (r.claimedBy) return "在干";
+  if (r.userPinned) return "你动过";
+  return r.sortedAt ? "看过" : "没看过";
+}
+
+/** logText 是 AI整理记录.md 全文：每轮一个「## 年-月-日 时:分 · 模型」标题，数本月几轮。 */
+export function buildLedger(records: BookmarkRecord[], agents: string[], meta: Record<string, BundleMeta>, logText: string, now = Date.now()): Ledger {
+  const d = new Date(now);
+  const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const heads = logText.split(String.fromCharCode(10)).filter((l) => l.startsWith("## "));
+  const groups = groupsForOrganizer(records, agents).map((g) => {
+    const counts: Record<LedgerState, number> = { 没看过: 0, 看过: 0, 你动过: 0, 在干: 0, 待审: 0 };
+    const names = new Map<string, string>();
+    const items = g.records.map((r) => {
+      const state = ledgerState(r);
+      counts[state] += 1;
+      let bundle: string | null = null;
+      if (r.bundleId) {
+        if (!names.has(r.bundleId)) names.set(r.bundleId, meta[r.bundleId]?.name ?? cleanText(r, 16));
+        bundle = names.get(r.bundleId)!;
+      }
+      return { text: cleanText({ ...r, detail: null, kind: "note" }, 40), state, bundle };
+    });
+    const bundles = [...names.entries()].map(([id, name]) => ({
+      name, by: meta[id]?.by ?? "user", count: g.records.filter((r) => r.bundleId === id).length,
+    }));
+    return { label: g.label, counts, bundles, items };
+  });
+  const last = heads.length ? heads[heads.length - 1].slice(3) : null;
+  return { month, runsThisMonth: heads.filter((h) => h.startsWith(`## ${month}`)).length, lastRun: last, groups };
 }

@@ -9,6 +9,7 @@ import test from "node:test";
 import { BookmarkStore } from "../../bookmark/store";
 import {
   buildGroupTask,
+  buildLedger,
   groupsForOrganizer,
   parseOrganizerConfig,
   parsePlanText,
@@ -215,4 +216,21 @@ test("改过的整理规矩会送给模型；全部重来只拆 AI 的捆、用�
     assert.equal(rows.find((r) => r.id === a)!.sortedAt, null, "又当新条目");
     assert.ok(rows.find((r) => r.id === c)!.bundleId, "用户捆还在");
     assert.equal(rows.find((r) => r.id === b)!.userPinned, false);
+  }));
+
+test("账本：跟着看板现算，看过 / 没看过 / 你动过 / 捆，本月几轮", () =>
+  withStore((store) => {
+    const [a, b, c] = seed(store, ["一", "二", "三"]);
+    store.createTaskBundle([a, b], "你的捆");
+    store.markSorted([c]);
+    const log = ["## 2026-10-12 07:26 · m", "- Claude：没动", "", "## 2026-09-30 10:00 · m", ""].join(String.fromCharCode(10));
+    const ledger = buildLedger(store.list(), ["Claude"], store.bundleMeta(), log, Date.parse("2026-10-12T12:00:00"));
+    assert.equal(ledger.runsThisMonth, 1);
+    assert.equal(ledger.lastRun, "2026-09-30 10:00 · m");
+    const g = ledger.groups[0];
+    assert.equal(g.counts["你动过"], 2);
+    assert.equal(g.counts["看过"], 1);
+    assert.deepEqual(g.bundles, [{ name: "你的捆", by: "user", count: 2 }]);
+    store.remove(c);
+    assert.equal(buildLedger(store.list(), ["Claude"], store.bundleMeta(), "").groups[0].items.length, 2, "删了账本里也没了");
   }));

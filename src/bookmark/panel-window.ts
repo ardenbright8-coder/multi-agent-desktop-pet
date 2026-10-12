@@ -22,7 +22,7 @@ import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "./inbox";
 import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
-import { startBookmarkCliServer } from "./cli-server";
+import { formatClaimMessage, startBookmarkCliServer, type CliRecord } from "./cli-server";
 import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
@@ -32,7 +32,7 @@ import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
-import { EFFORTS, formatSummary, ORGANIZER_RULES, parseOrganizerConfig, runOrganizer, shortSummary, type Effort, type FetchFn, type OrganizerConfig } from "./organizer";
+import { buildLedger, EFFORTS, formatSummary, ORGANIZER_RULES, parseOrganizerConfig, runOrganizer, shortSummary, type Effort, type FetchFn, type OrganizerConfig } from "./organizer";
 
 const log = createLogger("bookmark");
 const PROCESS_STARTED_AT = Date.now();
@@ -810,6 +810,19 @@ function registerIpc(): void {
     }
     return organizerStatus();
   });
+  // 规矩页（设定21）：看板里所有给 AI 的规矩摆在一处，用户能看、整理规矩能改，别的只读并说清在哪改。
+  ipcMain.handle("bookmark:board-rules", () => boardRulesList(skillRoot));
+  // 账本（设定21）：跟着看板现算，条目删了账本里也就没了。
+  ipcMain.handle("bookmark:organizer:ledger", () => {
+    const file = join(bookmarkDataDirectory(), ORGANIZER_LOG);
+    let text = "";
+    try {
+      text = existsSync(file) ? readFileSync(file, "utf8") : "";
+    } catch {
+      /* 记录读不了就当没有 */
+    }
+    return buildLedger(requireStore().list(), requireRoster().list(), requireStore().bundleMeta(), text);
+  });
   // 全部重来（测规矩用）：拆掉 AI 捆的、用户没动过的都变回没看过；不调模型，用户自己点「整理一次」。
   ipcMain.handle("bookmark:organizer:reset", () => {
     const split = requireStore().aiResetAll();
@@ -1041,6 +1054,37 @@ function organizerStatus() {
     effort: c.effort, efforts: EFFORTS, rules, defaultRules: ORGANIZER_RULES, rulesIsDefault: rules === ORGANIZER_RULES,
     rulesPath: join(bookmarkDataDirectory(), ORGANIZER_RULES_FILE), running: organizerRunning, last: organizerLast,
   };
+}
+
+/** 规矩页的一份份规矩：示例窗口名、示例条目都是假的，只为让用户看到 AI 实际收到的那段话长什么样。 */
+function boardRulesList(skillRoot: string) {
+  const cli = bookmarkCliScriptPath();
+  const item: CliRecord = {
+    id: "示例条目", text: "（领到的那条任务原文）", url: null, assignee: "Claude", dedupeKey: null,
+    detail: null, kind: "note", attachments: [], createdAt: "",
+  };
+  const base = { item, prompt: "（这里是那条任务的原文、图片、要求模板）", position: 1, total: 3, remaining: 2, busy: [] as string[] };
+  const inCode = "写在程序里，要改跟 AI 说一声";
+  const rules: { key: string; group: string; title: string; note: string; text: string; editable: boolean }[] = [
+    { key: "organizer", group: "AI 整理捆", title: "整理规矩", note: "整理模型照这个把新条目捆起来。能直接改，改完点保存", text: readOrganizerRules(), editable: true },
+    { key: "claim-day", group: "AI 领到活时看到的", title: "日常档", note: `一条和一捆一样：干完讲给你听，你说可以才删。${inCode}`,
+      text: formatClaimMessage({ ...base, mode: "day" }, { cli, target: "b-示例捆", by: "Claude-3", coding: false }), editable: false },
+    { key: "claim-sleep", group: "AI 领到活时看到的", title: "睡觉档", note: `干完写报告挂在条目下，你早上看了说可以再删。${inCode}`,
+      text: formatClaimMessage({ ...base, mode: "sleep" }, { cli, group: "Claude", by: "Claude-3", coding: false }), editable: false },
+    { key: "claim-coop", group: "AI 领到活时看到的", title: "多人派工（占住整捆）", note: inCode,
+      text: formatClaimMessage({ ...base, cooperation: true, bundleId: "b-示例捆", coordinator: "主窗" }, { cli, target: "b-示例捆", by: "工兵-1", coding: false }), editable: false },
+  ];
+  for (const t of listTemplates(templatesDirectory())) {
+    rules.push({ key: `template:${t.name}`, group: "AI 领到活时看到的", title: `要求模板 · ${t.name.replace(/\.md$/, "")}`, note: "「启动 Agent · 带编程」会把它拼在任务前面。在 设置 → 要求模板 → 打开文件夹 里改", text: t.text, editable: false });
+  }
+  for (const skill of listBoardSkills(skillRoot)) {
+    try {
+      rules.push({ key: `skill:${skill.name}`, group: "看板技能", title: skill.name, note: "AI 用看板干这类活时照着读。技能页里也能看", text: readBoardSkill(skillRoot, skill.name).text, editable: false });
+    } catch {
+      /* 读不了的技能跳过 */
+    }
+  }
+  return rules;
 }
 
 /** 整理规矩（给模型的提示词）：用户改过就存 AI整理规矩.md，没改过用代码里的默认。 */
