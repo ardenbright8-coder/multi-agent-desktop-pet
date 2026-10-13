@@ -72,8 +72,8 @@ export interface PinStep {
  *  - 已置顶 → 两步：先 HWND_NOTOPMOST 摘掉置顶样式，再 HWND_BOTTOM 沉回普通层最底。
  *    只发 HWND_BOTTOM 摘不掉 WS_EX_TOPMOST（窗会悬在置顶层内部，仍压着所有普通窗口），
  *    所以必须先摘样式再沉底，落点跟启动时的常驻沉底完全一致。
- *  状态只有 F1 走这里翻转；失焦自动沉底/2秒兜底照旧只发 HWND_BOTTOM（置顶时=置顶层内沉底），
- *  不碰标志位——不会反复横跳。 */
+ *  F1 走这里翻转；置顶期间 2 秒兜底不压（对置顶窗口发 HWND_BOTTOM 会直接摘掉置顶），
+ *  失焦（点了看板外面）也走这里收起置顶。 */
 export function pinToggleSteps(pinned: boolean): PinStep[] {
   return pinned
     ? [

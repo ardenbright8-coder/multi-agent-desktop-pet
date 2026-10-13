@@ -8,7 +8,7 @@
 // 改版三（2026-09-11 用户拍板）：F3 显示/收起撤销——看板**永远常驻显示**（启动自动显示、
 // 失焦 2 秒自动沉底 HWND_BOTTOM 保留不动）；新增 F1 = 置顶/沉底开关：按一下提至最上层
 // （koffi SetWindowPos HWND_TOPMOST），再按一下沉回最底层；与失焦自动沉底共存，
-// 状态标志位只有 F1 翻转（纯函数 pinToggleSteps 在 dock.ts，单测覆盖）。
+// 状态标志位只有 F1 和「置顶时点了看板外面」翻转（纯函数 pinToggleSteps 在 dock.ts，单测覆盖）。
 
 import { join } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
@@ -279,7 +279,9 @@ function toggleBoardPin(): void {
       }
       pinnedTopmost = step.pinnedAfter;
     }
-    log.记(pinnedTopmost ? "F1：看板置顶（再按一次沉回最底层）" : "F1：看板沉回最底层", "window");
+    // 置顶顺手拿焦点：这样点看板外面才有「失焦」可认，失焦就收起（热键刚按下，Windows 允许本程序拿前台）。
+    if (pinnedTopmost) win.focus();
+    log.记(pinnedTopmost ? "F1：看板置顶（点看板外面或再按一次沉回最底层）" : "F1：看板沉回最底层", "window");
   } catch (error) {
     log.出事("F1 置顶开关失败（不影响使用）", error, "window");
   }
@@ -366,6 +368,15 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
         },
         dispatch: (input) => handleDispatchAction(requireStore(), input),
         bundleInfo: (id) => requireStore().taskBundles().find(b => b.id === id),
+        // 按号码读（2026-10-13）：组名单、小标题、捆名都跟看板上显示的同一份。
+        boardNames: () => {
+          const titles: Record<string, string> = {};
+          for (const [id, note] of Object.entries(readNoteBook())) if (note.title) titles[id] = note.title;
+          const bundleNames: Record<string, string> = {};
+          for (const [id, meta] of Object.entries(requireStore().bundleMeta())) if (meta.name) bundleNames[id] = meta.name;
+          for (const b of requireStore().taskBundles()) if (b.coordinator) bundleNames[b.id] = `派工捆 · ${b.name}`;
+          return { agents: requireRoster().list(), titles, bundleNames };
+        },
         mode: () => readBoardMode(),
         template: () => listTemplates(templatesDirectory()).find((t) => t.name === CODING_TEMPLATE)?.text ?? null,
       },
@@ -491,7 +502,11 @@ function createPanel(): BrowserWindow {
   });
   // 失焦即沉底：用户点去别的窗口，看板立刻退到所有窗口之下，绝不挡人。
   win.on("blur", () => {
-    if (!win.isDestroyed() && win.isVisible()) sinkToBottom(win);
+    // F1 置顶着、用户点了看板外面别处 → 收起置顶沉回最底（2026-10-13 用户：只有点别处才收，鼠标动不算）。
+    if (!win.isDestroyed() && win.isVisible()) {
+      if (pinnedTopmost) toggleBoardPin();
+      else sinkToBottom(win);
+    }
     // 等 Windows 自己那一下「变灰」处理完再补发，不然会被它盖回去。
     setTimeout(() => keepAcrylicLit(win), 0);
   });
@@ -594,6 +609,9 @@ function startSinkTimer(): void {
     try {
       if (!panel || panel.isDestroyed() || !panel.isVisible()) return;
       if (panel.isFocused()) return; // 用户正在面板里打字/点击，不许压到看不见。
+      // F1 置顶期间不压：对置顶窗口发 HWND_BOTTOM 会把置顶摘掉直接沉底（微软 SetWindowPos 文档原话），
+      // 2026-10-13 前就是这一下让「F1 提上来，鼠标一动就没了」——其实是这 2 秒定时器。置顶只有点别处或再按 F1 才收。
+      if (pinnedTopmost) return;
       sinkToBottom(panel);
     } catch (error) {
       log.出事("沉底兜底检查失败（不影响使用）", error, "timer");
@@ -681,7 +699,7 @@ function registerIpc(): void {
     if (!bundle) throw new Error('找不到协同捆');
     const worker = String(raw.by ?? '').trim();
     if (!worker || /["\r\n]/.test(worker)) throw new Error('填写独立执行窗口的名字');
-    const text = `先读看板派工技能：${join(skillRoot, '看板派工', 'SKILL.md')}\n只领本捆，用户自己开窗口，不要开子助手：\nnode "${bookmarkCliScriptPath()}" next ${bundle.id} --by "${worker}"`;
+    const text = `先读看板派工技能：${join(skillRoot, 'Agent看板', '看板派工.md')}\n只领本捆，用户自己开窗口，不要开子助手：\nnode "${bookmarkCliScriptPath()}" next ${bundle.id} --by "${worker}"`;
     clipboard.writeText(text);
     return text;
   });
@@ -698,7 +716,7 @@ function registerIpc(): void {
     const into = raw.into === null ? null : typeof raw.into === "string" && raw.into ? raw.into : undefined;
     return requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place, into);
   });
-  // 跨组一步到位、复制一条（2026-10-13 拖动和剪切粘贴）。
+  // 跨组一步到位（2026-10-13 拖动和剪切粘贴）。
   ipcMain.handle("bookmark:relocate", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { id?: unknown; assignee?: unknown; anchorId?: unknown; place?: unknown; into?: unknown };
     const place = raw.place === "below" ? "below" : "above";
@@ -707,7 +725,13 @@ function registerIpc(): void {
     const anchorId = typeof raw.anchorId === "string" && raw.anchorId ? raw.anchorId : null;
     return requireStore().relocate(String(raw.id ?? ""), assignee, anchorId, place, into);
   });
-  ipcMain.handle("bookmark:duplicate", (_event, id: unknown) => requireStore().duplicate(String(id ?? "")));
+  // 整捆搬家（2026-10-13）：带了 assignee 才换组。
+  ipcMain.handle("bookmark:move-bundle", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { bundleId?: unknown; assignee?: unknown; anchorId?: unknown; place?: unknown };
+    const assignee = !("assignee" in raw) ? undefined : typeof raw.assignee === "string" && raw.assignee ? raw.assignee : null;
+    const anchorId = typeof raw.anchorId === "string" && raw.anchorId ? raw.anchorId : null;
+    return requireStore().moveBundle(String(raw.bundleId ?? ""), assignee, anchorId, raw.place === "below" ? "below" : "above");
+  });
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => requireStore().remove(String(id)));
   ipcMain.handle(
     "bookmark:set-assignee",

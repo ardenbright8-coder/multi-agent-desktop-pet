@@ -147,6 +147,8 @@ try {
   await page.waitForFunction(() => /桌宠打开半分钟后/.test(document.querySelector('#bm-bubble:not([hidden])')?.innerText ?? ''));
   // 规矩页：左边按类排，整理 / 检查规矩能改，程序卡死的、题目、领活规矩只读，最底下是账本
   await page.locator('.bm-dialog-tab[data-tab="rules"]').click();
+  // 规矩页占满整个弹窗：整理捆那页藏起来（2026-10-13 修：以前两页叠着，规矩被挤成半页）
+  assert.equal(await page.locator('.bm-dialog-body[data-pane="settings"]').isVisible(), false, '切到规矩页，整理捆那页要藏起来');
   const ruleNames = await page.locator('.rules-item').allInnerTexts();
   for (const want of ['整理规矩', '检查规矩', '程序卡死的规矩', 'AI 每次收到的题目', '日常档', '睡觉档', '多人派工（占住整捆）', '看板派工', '交接单', 'AI 整理账本']) assert.ok(ruleNames.includes(want), `规矩页有「${want}」`);
   assert.match(await page.locator('#org-rule-text').inputValue(), /项目名/);

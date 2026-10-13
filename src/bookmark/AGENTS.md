@@ -20,6 +20,7 @@
 | `projects.ts` | 📁 项目文件夹（2026-09-11 第三页签；2026-09-24 新建夹自带设计思路、执行过程两份稿和空资源包）：真实文件夹+真实 md 存 bookmark\projects\（paths.bookmarkProjectsDirectory）；纯函数（名字校验 sanitizeEntryName/路径安全 resolveProjectPath 防 ../ 穿越）+IO（列表只露夹和 md/建夹/建 md 自动补后缀落标题行）；open 由 panel-window 调 shell.openPath 走系统默认程序；UI 在 renderer 项目页（悬停夹自动弹目录预览、单击进夹、新建夹/md）；手机端不做此功能（用户拍板） |
 | `cli-server.ts` | CLI 接入服务：主进程内 127.0.0.1 小服务（端口+token 写 cli-port.json），agent 命令行读写看板（add/list/handoff/remove）；数据只走 panel-window 注入的适配器，绝不直写 bookmarks.json（主进程内存会覆盖直写）；领活三件套（设定15）`next`/`done`/`release`，领活说明只在 `formatClaimMessage` 写一次，所有 AI 同一份 |
 | `inbox.ts` | 收信+回执接线（2026-09-10 接通）：连邮局收手机消息→入 store→发「已收录」回执→通知面板刷新；断线指数退避重连+lastId 续读补收；配置读 `<appDataRoot>\bookmark\ntfy.json`（缺文件/坏档不启动不炸）；逻辑移植自通道夹 receiver.js，一切异常内部消化 |
+| `board-index.ts` | 按号码读（2026-10-13 用户：说「Claude 第 7 条」「捆2」AI 只读点名的）：`indexBoard` 照看板同一个数法编号（🚨 跟 renderer `bmFillTaskList` 一处两份，改一边必须改另一边）、`formatBrief`（list 不带 --json：只出号码和小标题）、`formatShow`（show：只吐点名那几条全文）、`parseShowSpec`（7 / 7-9 / 7,8,9 / 捆2）；CLI 端点 `GET /view`，数据由 panel-window 的 `boardNames` 适配器给（组名单、小标题、捆名） |
 | `dock.ts` | 纯函数：贴右缘几何（宽=工作区1/3顶到底）+ Win32 沉底常量；零依赖好单测 |
 | `templates.ts` | 要求模板（设定12/15）：列模板夹 `<appDataRoot>\bookmark\要求模板\` 里的 md、拼复制文字（模板＋「## 这次的事」＋这条）；「启动 Agent · 带编程」用其中的 `带编程.md`；纯函数＋只读 |
 | `inline-images.ts` / `image-ipc.ts` | 条目贴图（2026-09-24 设定16）：正文里存图片标记 `[图片:image-….png]`，真图存 `attachments\`；`image-ipc` 只收图片字节、解码后存 PNG、读图只认本夹文件名；交给 AI 时 `imagesForAgent` 把标记换成「图片文件：完整路径」；图片标注（设定16第三版）不烧原图，单独存 `<图>.marks.json`（marks＋整体说明 summary）＋ 带编号的 `<图>.marked.png`（`bookmark:image:marks:get/set`），交给 AI 时附整体说明和编号清单（`describeMarks`，标注只说大约这附近） |
@@ -52,7 +53,7 @@ BookmarkStore（testkit 单测用）
 - 🚨 **热键 F1 在 testMode 不注册（app.ts 传 `hotkey: !testMode`），常驻显示同理（`resident: !testMode`），Ctrl+R 整程序重开同理（`liveRestart: !testMode`），别把守卫拆了**——自测会跟真机抢全局热键/弹窗捣乱，也会把测试进程重启掉。
 - 🚨 **真机看板里 Ctrl+R = 编译源码 + 整程序重开**（跟脑图一样，等几秒正常），不是刷新当前页面。开机和手点必须走项目根 `入口（开发版·跑源码）` 那个门面，不许再指 `release-0.1.xx`。
 - 🚨 **看板永远常驻显示（改版三 2026-09-11 拍板）**：旧 F3/托盘的显示/收起逻辑已撤，别加回收起路径；托盘「书签台」入口现在的动作 = F1 同款置顶开关（提上来/沉回去）。
-- 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM，只发 BOTTOM 摘不掉置顶样式。
+- 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM。🚨 **置顶期间 2 秒沉底兜底和失焦沉底都不许发 BOTTOM**：微软文档原话，对置顶窗口发 HWND_BOTTOM 会直接摘掉置顶、沉到最底——2026-10-13 前「F1 提上来鼠标一动就没了」就是这个。现在置顶时兜底跳过，点了看板外面（失焦）走 toggleBoardPin 收起；F1 置顶顺手 focus，失焦才认得出来。
 - 🚨 **右键菜单、设置浮层在外面一按下就收（2026-10-13，设定12）**：挂 `window` 的 pointerdown 抓最外层，左键右键都算，窗口失焦也收。别改回 document 的 click——点条目文字会被「进改字」的 stopPropagation 截走，菜单就关不掉了。
 - 🚨 **默认页是 Agent 分组；状态一律小标（2026-10-13）**：`bmCurrentPage` 初始 `groups`，index.html 里分组页签带 active、「＋组」不藏。在干、AI 捆的、派工占住这类状态用 `bmStatusBadge(图标, 说明)` 出圆角小方块，说明放 title（碰到才冒），别再写成带字的胶囊占地方。
 - 🚨 **捆名全交给 AI、闲 5 分钟自动整理（2026-10-13，设定21）**：`runBundleNames` 按捆指纹（条目＋小标题）重写变了的捆名，账本 `AI捆标题.json`，只跳过多人派工捆（`store.aiCanName`）；panel-window `startIdleOrganizer` 每 30 秒看 `boardFingerprint`，停手 5 分钟且跟上次整理完不同才跑。验证脚本带 `AGENT_PET_HUB_HOME` 时不起这两个定时器。
@@ -74,7 +75,7 @@ BookmarkStore（testkit 单测用）
 
 ## 看板派工（2026-10-07）
 
-- 行为规则唯一正本：项目根 `skills（AI用看板的说明书）/看板派工/SKILL.md`，界面技能页和 CLI 读取同一份。
+- 行为规则唯一正本：项目根 `skills（AI用看板的说明书）/Agent看板/看板派工.md`（2026-10-13 并进 Agent看板 当子文件），界面技能页和 CLI 读取同一份。
 - 协同归属与通知保存于看板私有目录的 `bookmarks.json.coordination.json`；报告后整捆归属仍保留。坏档阻止重新领取，保留原文件，不能把坏锁当空锁。
 - 只读派工查询不能触发面板刷新，否则会形成“刷新→查询→再刷新”的循环；协同捆从原睡觉档自动开窗名单排除。
 - 本次回归：`node scripts/verify-bookmark-dispatch.mjs`（隔离 Playwright：Ctrl两捆、整捆锁、报告等待返回、技能同源、原任务保留）；`bookmark-coordination.test.ts` 覆盖服务端占用与重启。普通捆仍走原流程。
@@ -99,7 +100,7 @@ BookmarkStore（testkit 单测用）
 6. `node scripts/verify-bookmark-images.mjs` 过（贴多图、光标位置、图文编辑、大图、交给 AI、重载改派、移除图、非图片和越界路径拒绝；隐藏窗口跑，不动系统剪贴板）。🚨 样图必须是校验和都对的真 PNG，Electron 解码器很严
    图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（打开就能标、一套流水号、自动存不动原图、撤销、拖动编号、删光清附属文件、改字框里能标、交给 AI 带编号清单；隐藏窗口）。
 7. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点；组框拖不动、标题行无条数无折叠、小加号贴组名、交接单专区同底）
-7d. `node scripts/verify-bookmark-carry.mjs` 过（所有组第一行都是标题、交接单没有「详情」按钮；跨组拖到两块中间、跨组拖进别组的捆、普通条目进不了交接单专区、交接单拖进空组；Ctrl+X 拿着走进捆、右键不要了、Ctrl+C 复制放到别组、按住时剪、Esc 放弃、输入框里不抢；截图在 `.runtime/carry/`）
+7d. `node scripts/verify-bookmark-carry.mjs` 过（所有组第一行都是标题、交接单没有「详情」按钮；跨组拖到两块中间、跨组拖进别组的捆、普通条目进不了交接单专区、交接单拖进空组；Ctrl+X 拿着走进捆、右键不要了、按住时剪、Esc 放弃、输入框里不抢；整捆搬家：捆头有捆号、按住捆标题拖进别的组、捆标题上 Ctrl+X 整捆拿着走、Ctrl+C 不碰条目；截图在 `.runtime/carry/`）
 7c. `node scripts/verify-bookmark-titles.mjs` 过（小标题在第一行、原文收起点开再收；复制钮跟第一行齐平；右键菜单点到别条文字、右键别处、点空白都收起；截图在 `.runtime/titles/`）
 7b. `node scripts/verify-bookmark-drag-bundle.mjs` 过（变绿＝合并、不绿＝单独放：捆里调顺序整捆绿、两捆中间不绿松手拆出来、捆下边缘不绿拆出来、拖进别的捆整捆绿插在指定位置、压在散条正中间它变绿捆一起；截图在 `.runtime/drag-bundle/`）
 8. `node scripts/verify-bookmark-launch-paste.mjs` 过（🚨 真机真窗口：假快捷方式指向假 AI 程序 `scripts/bookmark-fake-agent.ps1`，外加 powershell 复制改名 `ChatGPT.exe` 冒充 Codex 跑 `scripts/bookmark-fake-desktop-agent.ps1`；真开窗、真按 Ctrl+N / Ctrl+V；验收到的字＝启动句、没有回车。跑的半分钟别碰键盘鼠标，抢了最前面看板按规矩不贴，这关就红）。只动了启动 Agent 才必跑

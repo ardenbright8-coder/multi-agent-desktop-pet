@@ -587,47 +587,34 @@ export class BookmarkStore {
     return this.move(id, anchorId, place, into === undefined ? null : into);
   }
 
-  /** 复制一条（Ctrl+C 再放下，2026-10-13）：新条目紧跟在原条目后面、同一组，字、链接、详情一样；
-   *  图另存一份新文件名（连标注），删一条或改标注不连累另一条。领活、报告、捆、AI 看没看过都不带。 */
-  duplicate(id: string): BookmarkRecord | null {
+  /** 整捆搬家（2026-10-13 用户：按住捆标题那一栏拖、或在捆标题上 Ctrl+X → Ctrl+V，搬的是一整捆，能搬进别的组）。
+   *  assignee：搬进哪个组（undefined＝还在原组，null＝交接单专区／待定）；anchorId＋place：插在哪条旁边（null＝位置不变）。
+   *  锚点在别的捆里，就插在那一捆整块的上面或下面，不把人家插断。捆号、捆名跟着走；换了组领活标记作废。返回搬了几条。 */
+  moveBundle(bundleId: string, assignee: string | null | undefined, anchorId: string | null, place: "above" | "below"): number {
     this.ensureLoaded();
-    const src = this.records.find((r) => r.id === id);
-    if (!src) return null;
-    const dir = attachmentsRoot();
-    let text = src.text;
-    const attachments: string[] = [];
-    for (const name of src.attachments) {
-      const fresh = `image-${randomUUID()}.png`;
-      try {
-        copyFileSync(join(dir, name), join(dir, fresh));
-        for (const tail of [".marks.json", ".marked.png"]) {
-          if (existsSync(join(dir, `${name}${tail}`))) copyFileSync(join(dir, `${name}${tail}`), join(dir, `${fresh}${tail}`));
-        }
-        text = text.split(`[图片:${name}]`).join(`[图片:${fresh}]`);
-        attachments.push(fresh);
-      } catch {
-        attachments.push(name); // 拷不了就共用原图，不拦复制
+    const members = this.records.filter((r) => r.bundleId === bundleId);
+    if (!members.length) return 0;
+    this.coordination.assertEditable(bundleId);
+    if (anchorId && members.some((r) => r.id === anchorId)) return 0;
+    const anchor = anchorId ? this.records.find((r) => r.id === anchorId) : undefined;
+    if (anchor) this.coordination.assertEditable(anchor.bundleId);
+    const firstAt = this.records.indexOf(members[0]);
+    this.records = this.records.filter((r) => r.bundleId !== bundleId);
+    if (assignee !== undefined && (members[0].assignee ?? "").toLowerCase() !== (assignee ?? "").toLowerCase()) {
+      for (const r of members) {
+        r.assignee = assignee ? String(assignee) : null;
+        r.claimedBy = null;
+        r.claimedAt = null;
       }
     }
-    const copy: BookmarkRecord = {
-      ...src,
-      id: `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
-      text,
-      attachments,
-      dedupeKey: null,
-      bundleId: null,
-      claimedBy: null,
-      claimedAt: null,
-      report: null,
-      reportedBy: null,
-      reportedAt: null,
-      createdAt: new Date().toISOString(),
-      sortedAt: null,
-      userPinned: false,
-    };
-    this.records.splice(this.records.indexOf(src) + 1, 0, copy);
+    let at = Math.min(firstAt, this.records.length);
+    if (anchor) {
+      const block = anchor.bundleId ? this.records.filter((r) => r.bundleId === anchor.bundleId) : [anchor];
+      at = place === "above" ? this.records.indexOf(block[0]) : this.records.indexOf(block[block.length - 1]) + 1;
+    }
+    this.records.splice(at, 0, ...members);
     this.save();
-    return copy;
+    return members.length;
   }
 
   /** 拖动时界面已经说清了进哪捆还是单独放：照办，再把位置理顺，免得一捆被插断成两截。 */

@@ -22,8 +22,8 @@ const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 export const MAX_BUNDLE_NAME = 39;
 /** 每条小标题最长几个字。 */
 export const MAX_ITEM_TITLE = 200;
-/** 读条目同时发几条（一条一问，太多会被限流）。 */
-const NOTE_CONCURRENCY = 3;
+/** 读条目同时发几条（一条一问，太多会被限流；2026-10-13 从 3 提到 6 提速）。 */
+const NOTE_CONCURRENCY = 6;
 export const BANNED_NAMES = ["杂项", "其他", "其它", "待办", "未分类", "零散", "综合", "混合"];
 /** 整理记录最多留几次（用户：干完的不留账，不然越攒越多）。 */
 export const MAX_RUNS = 50;

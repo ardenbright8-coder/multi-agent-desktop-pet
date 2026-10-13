@@ -1,4 +1,5 @@
-// 隔离看板回归（2026-10-13）：跨组一步到位拖动；Ctrl+X / Ctrl+C → Ctrl+V 拿着走、按住左键拖、松开放下、右键不要；
+// 隔离看板回归（2026-10-13）：跨组一步到位拖动；Ctrl+X → Ctrl+V 拿着走、按住左键拖、松开放下、右键不要；
+// 整捆搬家（按住捆标题拖、捆标题上 Ctrl+X）；Ctrl+C 不碰条目（复制一条那套拆了）；
 // 所有组、所有时候第一行都是标题（还没读的拿自己的字顶着）。官方 Playwright 后台驱动，截图在 .runtime/carry/。
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync } from 'node:fs';
@@ -127,18 +128,47 @@ try {
   await wait(500);
   check('⑤ 右键不要了：D 留在原地、拿着的状态没了、没弹菜单', JSON.stringify(await order('Claude')) === JSON.stringify(before) && !(await page.evaluate(() => document.body.classList.contains('carrying'))) && !(await page.locator('#ctx-menu').isVisible()), JSON.stringify(await order('Claude')));
 
-  // ⑥ Ctrl+C 复制 → Ctrl+V → 拖到 Antigravity 组名 → 松手：Antigravity 多一条「条目D」，Claude 的 D 还在
-  await page.mouse.move(d.x, d.y);
-  await page.keyboard.press('Control+c');
-  check('⑥ Ctrl+C：D 带虚线、不变淡', await page.locator(`${task(ids.D)}.clip-copy`).count() === 1);
+  // ⑥ 整捆搬家：捆头有捆号；按住捆标题拖到 Antigravity 组名 → 整捆过去、还是一捆
+  check('⑥ 捆头标着捆号', (await page.locator('.bundle-head .bundle-no').first().textContent()) === '捆1');
+  const members = async () => (await page.evaluate(async (bid) => (await window.bookmark.list()).filter((r) => r.bundleId === bid).map((r) => r.assignee), bundle));
+  const size = (await members()).length;
+  let hb = await box('.bundle-head .bundle-name');
+  await page.mouse.move(hb.x, hb.y);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + 2, hb.y + 10, { steps: 3 });
+  // 指到哪、哪就开缝，下面的组会往下挪；像人手一样边看边对准：挪过去、再量、再对准
+  for (let i = 0; i < 3; i += 1) {
+    const ga = await box(`.group[data-group="Antigravity"] .group-head`);
+    await page.mouse.move(ga.x, ga.y, { steps: 6 });
+    await wait(200);
+  }
+  m = await marks();
+  await page.screenshot({ path: join(out, '6-整捆拖到别的组.png') });
+  await page.mouse.up();
+  await wait(600);
+  let mem = await members();
+  check('⑥ 按住捆标题拖到 Antigravity 组名：组名亮、整捆过去、还是一捆', m.head === 1 && mem.length === size && mem.every((x) => x === 'Antigravity'), JSON.stringify({ m, mem }));
+
+  // ⑥ 捆标题上 Ctrl+X → Ctrl+V → 拿到 Claude 组名上按一下：整捆搬回来
+  hb = await box('.bundle-head .bundle-name');
+  await page.mouse.move(hb.x, hb.y);
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  check('⑥ 捆标题上 Ctrl+X：捆头和整捆都带虚线', (await page.locator('.bundle-head.clip-cut').count()) === 1 && (await page.locator('.task.clip-cut').count()) === size);
   await page.keyboard.press('Control+v');
-  const g = await box(`.group[data-group="Antigravity"] .group-head`);
-  await page.mouse.move(g.x, g.y, { steps: 8 });
+  const gc = await box(`.group[data-group="Claude"] .group-head`);
+  await page.mouse.move(gc.x, gc.y, { steps: 8 });
   await page.mouse.down();
   await page.mouse.up();
   await wait(600);
-  const ag = await order('Antigravity');
-  check('⑥ 复制放下：Antigravity 多了一条条目D，Claude 的 D 还在', ag.includes('D') && (await order('Claude')).includes('D'), JSON.stringify(ag));
+  mem = await members();
+  check('⑥ 整捆拿着走放到 Claude：整捆回来、还是一捆', mem.length === size && mem.every((x) => x === 'Claude'), JSON.stringify(mem));
+
+  // ⑥ Ctrl+C 不碰条目
+  const dd = await box(task(ids.D));
+  await page.mouse.move(dd.x, dd.y);
+  await page.keyboard.press('Control+c');
+  check('⑥ 鼠标停在条目上按 Ctrl+C：什么都不拿', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0);
 
   // ⑦ 按住某条（长按）再按 Ctrl+X：剪下的就是按着的那条，这次拖动作废
   const b = await box(`${task(ids.B)} .num`);
@@ -156,7 +186,7 @@ try {
   await page.keyboard.type('随便写');
   await page.keyboard.press('Control+a');
   await page.keyboard.press('Control+c');
-  check('⑧ 输入框里按 Ctrl+C：不碰条目', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-copy, .task.clip-cut').count()) === 0);
+  check('⑧ 输入框里按 Ctrl+C：不碰条目', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0);
   console.log(failed ? `结果：${failed} 项没过` : '结果：全部验证点通过');
 } finally {
   if (app) await app.close();

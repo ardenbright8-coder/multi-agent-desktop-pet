@@ -173,8 +173,8 @@ test("拖动说清了去向：拖到捆底下边缘＝拆出来；夹在两捆�
   });
 });
 
-// 2026-10-13 跨组一步到位、复制一条（Ctrl+C 再放下）
-test("跨组一步到位：改派＋放到锚点旁边＋进捆；复制一条：紧跟原条、领活报告捆都不带", () => {
+// 2026-10-13 跨组一步到位
+test("跨组一步到位：改派＋放到锚点旁边＋进捆", () => {
   withStore((store) => {
     const ids = seed(store);
     const other = store.add({ text: "戊", assignee: "Antigravity" }).id;
@@ -189,14 +189,38 @@ test("跨组一步到位：改派＋放到锚点旁边＋进捆；复制一条�
     // 甲 拖进空的 Antigravity 组（没有锚点）：改派过去就行
     assert.equal(store.relocate(ids.甲, "Antigravity", null, "above")!.assignee, "Antigravity");
 
-    store.claimNext(ids.丁, "窗口1");
-    const copy = store.duplicate(ids.丁)!;
-    assert.notEqual(copy.id, ids.丁);
-    assert.equal(copy.text, "丁");
-    assert.equal(copy.claimedBy, null, "领活不带");
-    assert.equal(copy.bundleId, null);
-    const rows = claudeRows(store).map((r) => r[0]);
-    assert.equal(rows.lastIndexOf("丁"), rows.indexOf("丁") + 1, "紧跟在原条后面");
-    assert.equal(store.duplicate("没有这条"), null);
+  });
+});
+
+// 2026-10-13 整捆搬家：按住捆标题拖、或捆标题上 Ctrl+X → Ctrl+V
+test("整捆搬家：组内挪位置不插断别的捆；搬进别的组捆号跟着走、领活作废", () => {
+  withStore((store) => {
+    const ids = seed(store); // 甲 乙 丙 丁
+    const 戊 = store.add({ text: "戊", assignee: "Claude" }).id; // 戊 甲 乙 丙 丁
+    store.createTaskBundle([ids.甲, ids.乙], "捆一");
+    store.createTaskBundle([ids.丙, ids.丁], "捆二");
+    const one = store.list().find((r) => r.id === ids.甲)!.bundleId!;
+    const two = store.list().find((r) => r.id === ids.丙)!.bundleId!;
+    const texts = () => claudeRows(store).map((r) => r[0]);
+    // 捆二挪到戊上面
+    assert.equal(store.moveBundle(two, undefined, 戊, "above"), 2);
+    assert.deepEqual(texts().slice(0, 3), ["丙", "丁", "戊"]);
+    // 锚点在捆一中间（甲下面）：插在捆一整块下面，不把捆一插断
+    store.moveBundle(two, undefined, ids.甲, "below");
+    const rows = claudeRows(store);
+    const i = rows.findIndex((r) => r[0] === "丙");
+    assert.equal(rows[i - 1][1], one, "紧跟捆一最后一条");
+    assert.ok(rows.filter((r) => r[1] === one).length === 2);
+    assert.equal(rows[i][1], two);
+    assert.equal(rows[i + 1][1], two, "捆二还是一整块");
+    // 锚点是自己这捆的：不动
+    assert.equal(store.moveBundle(two, undefined, ids.丁, "above"), 0);
+    // 搬进 Antigravity（空组，没有锚点）：两条都过去，捆号不变，领活作废
+    store.claimNext(ids.丙, "窗口1");
+    assert.equal(store.moveBundle(two, "Antigravity", null, "above"), 2);
+    const moved = store.list().filter((r) => r.bundleId === two);
+    assert.deepEqual(moved.map((r) => r.assignee), ["Antigravity", "Antigravity"]);
+    assert.equal(moved[0].claimedBy, null);
+    assert.equal(store.moveBundle("没有这捆", "Claude", null, "above"), 0);
   });
 });

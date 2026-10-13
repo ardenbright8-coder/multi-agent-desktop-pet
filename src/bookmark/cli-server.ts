@@ -14,6 +14,8 @@ import { createLogger } from "../shared/log";
 import { attachmentsRoot, bookmarkCliPortPath } from "../shared/paths";
 import { composeForAgent } from "./templates";
 import { parseDispatchArgs, type DispatchInput } from "./dispatch-cli";
+import { formatBrief, formatShow, indexBoard, parseShowSpec, type BoardNames } from "./board-index";
+import { imagesForAgent } from "./inline-images";
 
 const log = createLogger("bookmark");
 
@@ -65,6 +67,8 @@ export interface CliStoreAdapter {
   template?(name: "coding"): string | null;
   dispatch?(input: DispatchInput): unknown;
   bundleInfo?(id: string | null | undefined): { id: string; coordinator: string } | undefined;
+  /** 按号码读（2026-10-13）：组名单（跟看板同序）、AI 写的小标题、捆名。没接就只能 list --json。 */
+  boardNames?(): BoardNames & { agents: string[] };
 }
 
 export interface BookmarkCliDeps {
@@ -80,7 +84,10 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch" | "show";
+  /** show 的组名和号码（屏幕上看到的号：7、7-9、捆2）。 */
+  group?: string;
+  spec?: string[];
   payload?: DispatchInput;
   /** next/done/release/report 的对象：捆号或条目 id（next --to 组名时没有）。 */
   target?: string;
@@ -102,7 +109,8 @@ export interface CliArgs {
 }
 
 const CLI_USAGE =
-  '用法：bookmark-cli add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | list [--to Agent名] [--handoff] [--json] | '
+  '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <组名> <号码：7 / 7-9 / 7,8,9 / 捆2>（只读点名的全文）| '
+  + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
   + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id> | '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
   + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名';
@@ -112,6 +120,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const command = argv[0];
   if (command === 'dispatch') return { command, payload: parseDispatchArgs(argv), json: argv.includes('--json'), attach: [] };
   if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
+  if (command === "show") {
+    const rest = argv.slice(1).filter((a) => a !== "--json");
+    const group = rest[0];
+    if (!group || /^(捆)?\d/.test(group)) throw new Error("show 先写组名再写号码：show Claude 7 ／ show Claude 7-9 ／ show 交接单 2 ／ show Claude 捆2");
+    if (rest.length < 2) throw new Error(`show ${group} 后面要跟号码：7 ／ 7-9 ／ 7,8,9 ／ 捆2`);
+    parseShowSpec(rest.slice(1)); // 号码写错当场报，别等连上看板
+    return { command, group, spec: rest.slice(1), json: argv.includes("--json"), attach: [] };
+  }
   if (command !== "add" && command !== "list" && command !== "handoff" && command !== "remove") {
     throw new Error(CLI_USAGE);
   }
@@ -242,7 +258,7 @@ export function formatClaimMessage(
     return [
       `【看板派工】${ctx.by} 已占住整捆 ${reply.bundleId}，一次只做当前第 ${reply.position}/${reply.total} 条。`,
       reply.prompt ?? '',
-      `先读看板派工技能正本：${ctx.cli.replace(/scripts[\\/]bookmark-cli\.mjs$/, 'skills（AI用看板的说明书）/看板派工/SKILL.md')}。也可通过 dispatch skill 看板派工 查询。`,
+      `先读看板派工技能正本：${ctx.cli.replace(/scripts[\\/]bookmark-cli\.mjs$/, 'skills（AI用看板的说明书）/Agent看板/看板派工.md')}。也可通过 dispatch skill 看板派工 查询。`,
       '执行窗口由用户自己开。不要启动子助手、其他模型进程或后台工兵。只改任务单指定范围，先自测再交报告；不修改原始需求，不伪造用户同意。',
       run(`report ${reply.item.id} --by "${ctx.by}" --text "改了哪些文件；运行了什么测试；结果；剩余问题"`),
       '报告会留为待审核，并送入指定调度窗口的收件箱；不会删除任务或释放整捆。下一步只领本捆下一条：',
@@ -411,6 +427,22 @@ export function handleCliRequest(
     }
     return { status: 200, body: { ok: true } };
   }
+  // 按号码读（2026-10-13）：brief＝只列号码和标题；show＝只吐点名那几条的全文。文字在这边排好，CLI 原样打印。
+  if (method === "GET" && path === "/view") {
+    if (!ctx.store.boardNames) return { status: 501, body: { ok: false, error: "看板还没接上按号码读（重开桌宠试试）" } };
+    const query = new URL(urlPath, "http://localhost").searchParams;
+    const { agents, ...names } = ctx.store.boardNames();
+    const groups = indexBoard(ctx.store.list(), agents);
+    try {
+      if (query.get("mode") === "show") {
+        const spec = parseShowSpec([query.get("spec") ?? ""]);
+        return { status: 200, body: { ok: true, text: formatShow(groups, names, query.get("group") ?? "", spec, (t) => imagesForAgent(t)) } };
+      }
+      return { status: 200, body: { ok: true, text: formatBrief(groups, names, query.get("group") || undefined) } };
+    } catch (error) {
+      return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+    }
+  }
   if (method === "GET" && path === "/list") {
     const query = new URL(urlPath, "http://localhost").searchParams;
     const to = query.get("to");
@@ -427,7 +459,7 @@ export function handleCliRequest(
   if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report")) {
     return handleClaimRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
-  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /remove | /next | /done | /release | /report | GET /list）" } };
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /remove | /next | /done | /release | /report | GET /list | /view）" } };
 }
 
 /** 领活三件套。store 抛的错（不是你领的、缺用户原话、找不到）原样回给 AI，400。 */

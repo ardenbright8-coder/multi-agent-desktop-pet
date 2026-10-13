@@ -49,6 +49,10 @@ body {
 }
 
 #titlebar .hint { margin-left: auto; font-size: 12px; opacity: 0.5; }
+/* 后台整理中的小字（2026-10-13 用户：F1 旁边，不用特别清楚） */
+#titlebar .org-busy { margin-left: auto; font-size: 11.5px; opacity: 0.5; cursor: pointer; white-space: nowrap; }
+#titlebar .org-busy[hidden] { display: none; }
+#titlebar .org-busy:not([hidden]) + .hint { margin-left: 8px; }
 
 .bm-toast {
   position: absolute;
@@ -871,7 +875,7 @@ body {
 .org-rules-head { display: flex; align-items: center; gap: 7px; }
 .org-hint { flex: 1; min-width: 0; font-size: 11.5px; color: rgba(47, 62, 44, 0.55); line-height: 1.35; }
 /* 设置窗口两页：整理捆 / 规矩 */
-.bm-dialog { width: min(820px, calc(100% - 32px)); height: min(640px, calc(100% - 48px)); }
+.bm-dialog { width: min(820px, calc(100% - 32px)); height: calc(100% - 40px); }
 .bm-dialog-head { gap: 12px; }
 .bm-dialog-tabs { display: flex; gap: 4px; margin-right: auto; margin-left: 10px; }
 .bm-dialog-tab { border: 1px solid transparent; background: transparent; color: rgba(47, 62, 44, 0.6); border-radius: 999px; padding: 2px 12px; font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; }
@@ -908,6 +912,8 @@ body {
 .org-run-line { padding-top: 6px; border-top: 1px dashed rgba(122, 156, 94, 0.25); }
 /* 第四版：整理捆页收紧，下面整块是整理记录 */
 .bm-dialog-body.org-pane { display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
+/* 跟上一行同样分量，必须写在它后面：不然「整理捆」页藏不起来，规矩页被挤成半页（2026-10-13 修） */
+.bm-dialog-body.org-pane[hidden] { display: none; }
 .org-pane .org-line { flex: none; }
 .org-model-form { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, 0.6); border: 1px solid rgba(122, 156, 94, 0.25); }
 .org-model-form[hidden] { display: none; }
@@ -973,6 +979,7 @@ body {
 .status-badge svg { width: 13px; height: 13px; }
 .task > .status-badge { align-self: flex-start; margin-top: 1px; }
 .status-busy { color: #3f6a8c; background: rgba(86, 140, 184, 0.16); border: 1px solid rgba(86, 140, 184, 0.45); }
+.status-badge.status-emoji { border: 0; background: transparent; font-size: 12px; line-height: 1; }
 .status-robot { color: rgba(47, 62, 44, 0.55); background: rgba(47, 62, 44, 0.05); border: 1px solid rgba(47, 62, 44, 0.12); width: 18px; height: 18px; }
 
 .settings-open-btn {
@@ -1002,6 +1009,10 @@ body {
 
 /* 剪切 / 复制后等着 Ctrl+V（2026-10-13）：剪下的变淡带虚线，复制的只带虚线 */
 .task.clip-cut { opacity: 0.45; outline: 1.5px dashed rgba(122, 156, 94, 0.9); outline-offset: -1px; }
-.task.clip-copy { outline: 1.5px dashed rgba(122, 156, 94, 0.9); outline-offset: -1px; }
+.bundle-head.clip-cut { opacity: 0.45; outline: 1.5px dashed rgba(122, 156, 94, 0.9); outline-offset: -1px; }
+/* 整捆搬家（2026-10-13）：按住捆标题那一栏就能拖；捆号淡淡的，跟条目序号一个分量 */
+.bundle-head { cursor: grab; }
+.bundle-head .bundle-no { flex: none; font-size: 11.5px; font-weight: 400; color: rgba(47, 62, 44, 0.42); }
+.bundle-ghost-count { flex: none; font-size: 11.5px; color: rgba(47, 62, 44, 0.55); padding-right: 4px; }
 /* 拿着走的时候：整页都是「拿着」的手势 */
 body.carrying, body.carrying * { cursor: grabbing !important; }

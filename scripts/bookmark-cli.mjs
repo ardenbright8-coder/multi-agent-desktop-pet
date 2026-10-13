@@ -88,6 +88,19 @@ try {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5_000),
     });
+  } else if (args.command === "show" || (args.command === "list" && !args.json)) {
+    // 按号码读（2026-10-13）：list 不带 --json 只列号码和标题；show 只吐点名那几条的全文
+    const params = new URLSearchParams();
+    if (args.command === "show") {
+      params.set("mode", "show");
+      params.set("group", args.group);
+      params.set("spec", args.spec.join(" "));
+    } else if (args.handoffOnly) params.set("group", "交接单");
+    else if (args.to) params.set("group", args.to);
+    res = await fetch(`${base}/view?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(5_000),
+    });
   } else if (args.command === "remove") {
     res = await fetch(`${base}/remove`, {
       method: "POST",
@@ -141,14 +154,8 @@ if (args.command === 'dispatch') {
   console.log(args.json ? JSON.stringify(data) : text);
 } else if (args.command === "release") {
   console.log(args.json ? JSON.stringify(data) : "↩️ 已放回去，别的窗口可以领了。");
-} else if (args.json) {
-  console.log(JSON.stringify(data.items, null, 2));
-} else if (!data.items?.length) {
-  console.log(args.handoffOnly ? "（没有待接的交接单）" : "（没有条目）");
+} else if (args.command === "show" || !args.json) {
+  console.log(data.text);
 } else {
-  for (const item of data.items) {
-    const mark = item.kind === "handoff" ? "📋 " : "";
-    const pics = Array.isArray(item.attachments) && item.attachments.length ? `  ${item.attachments.join(" ")}` : "";
-    console.log(`${item.id}  [${item.assignee ?? "待定"}]  ${mark}${item.text}${item.url ? `  ${item.url}` : ""}${pics}  ${item.createdAt}`);
-  }
+  console.log(JSON.stringify(data.items, null, 2));
 }

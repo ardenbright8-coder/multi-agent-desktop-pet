@@ -20,11 +20,14 @@ let bmEditSaveTimer = null;
 let bmBundleMeta = {}; // 捆号 → { name, by: user/ai }（设定21：捆名、AI 捆的标个小机器人）
 let bmHints = new Map(); // 条目 id → AI 检查的提示（第四版：条目右边挂小橙点）
 let bmNotes = {}; // 条目 id → { project, title, stale }：AI 读条目写的小标题（第五版：板上每条第一行；stale＝正在按新规矩重读，先用旧的顶着）
-// 剪切 / 复制后拿着走（2026-10-13 用户）：Ctrl+X / Ctrl+C 记下哪条，Ctrl+V 粘到鼠标上，按住左键拖、松开放下，右键或 Esc 不要了。
-let bmClip = null; // { id, mode: "cut" | "copy" }
-let bmCarry = null; // 正拿着走：{ id, mode, kind, group, el, ghost, hit, pressed, scroll }
+// 剪切后拿着走（2026-10-13 用户）：Ctrl+X 记下哪条（或在捆标题上＝整捆），Ctrl+V 粘到鼠标上，按住左键拖、松开放下，右键或 Esc 不要了。
+// Ctrl+C 复制那套同天拆了（用户：用不到，只留 Ctrl+X）。
+let bmClip = null; // { id } 一条，或 { bundleId } 整捆
+let bmCarry = null; // 正拿着走：{ id | bundleId, kind, kinds, group, el, members, ghost, hit, pressed, scroll }
 let bmHoverTaskId = null;
 let bmPressedTaskId = null;
+let bmHoverBundleId = null;
+let bmPressedBundleId = null;
 let bmMouse = { x: 0, y: 0 };
 
 function bmDotColor(name) {
@@ -56,13 +59,20 @@ const BM_ICONS = {
   robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01M9.5 16.5h5"/>',
 };
 /** 状态小标：圆角小方块＋细线图标，说明放在鼠标碰到才冒的提示里（2026-10-13 用户：省地方给标题）。 */
+// 干活的两个状态用表情（2026-10-13 用户：正在干＝绿的，干完等审＝勾，一眼分得出）；别的小标照旧细线图标。
+const BM_STATUS_EMOJI = { busy: "🟢", review: "✅" };
 function bmStatusBadge(kind, label) {
   const el = document.createElement("span");
   el.className = `status-badge status-${kind}`;
   el.title = label;
   el.setAttribute("aria-label", label);
   el.dataset.label = label;
-  el.innerHTML = bmIcon(kind);
+  if (BM_STATUS_EMOJI[kind]) {
+    el.classList.add("status-emoji");
+    el.textContent = BM_STATUS_EMOJI[kind];
+  } else {
+    el.innerHTML = bmIcon(kind);
+  }
   return el;
 }
 // 组名前的官方标志（2026-09-24 用户拍板：比圆点专业）。Claude/OpenAI 取自 simple-icons 开源图标库，
@@ -163,6 +173,10 @@ function bmInit() {
   });
   bmAddTemplatesSettingRow();
   bmAddOrganizerSettingRows();
+  document.getElementById("org-busy")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void bmOpenOrganizerDialog();
+  });
   // 整理开始（空串）和整理完都会来一声：刷新小橙点和设置窗口；完了才弹一句。
   window.bookmark.onOrganized?.((text) => {
     if (text && text !== "没有新条目要整理") bmToast(text, 6000);
@@ -484,16 +498,11 @@ function bmTaskHitAt(x, y, info) {
   return { mark: plan.mark, hit: { ...plan.hit, from: info.selfGroup, group: key } };
 }
 
-/** 松手（或 Ctrl+V 拿着走放下）照 hit 执行。copy＝先复制一条再放（原条目不动）。 */
-async function bmDropTask(hit, copy) {
+/** 松手（或 Ctrl+V 拿着走放下）照 hit 执行。 */
+async function bmDropTask(hit) {
   if (!hit) return;
-  let id = hit.id;
+  const id = hit.id;
   try {
-    if (copy) {
-      const made = await window.bookmark.duplicate(id);
-      if (!made) return;
-      id = made.id;
-    }
     const cross = hit.group && hit.group !== hit.from;
     if (hit.reassignGroup !== undefined) {
       await window.bookmark.setAssignee(id, bmAssigneeOf(hit.reassignGroup));
@@ -508,6 +517,150 @@ async function bmDropTask(hit, copy) {
     bmShowError(bmErrorText(error));
   }
   await bmRefresh();
+}
+
+/** 整捆指着哪儿、松手会怎样（2026-10-13 用户：按住捆标题那一栏拖＝搬一整捆，能搬进别的组）。
+ *  整捆只搬家、不跟别的捆合并：别的散条一条算一块、别的捆整捆算一块，指着哪块的上半截就放它上面，下半截放下面；
+ *  指着别的组名或空组＝搬进那个组。返回 { mark, hit }，hit 交给 bmDropBundle。 */
+function bmBundleHitAt(x, y, info) {
+  const none = { mark: () => {}, hit: null };
+  const under = document.elementFromPoint(x, y);
+  const section = under && under.closest ? under.closest(".group") : null;
+  const key = section && section.dataset.group;
+  if (!key) return none;
+  if (key !== info.selfGroup && !info.kinds.every((k) => bmCanLand(k, key))) return none;
+  const base = { bundleId: info.bundleId, from: info.selfGroup, group: key };
+  const toGroup = () => ({
+    mark: () => section.querySelector(".group-head")?.classList.add("drag-target"),
+    hit: { ...base, anchorId: null, place: "above" },
+  });
+  if (under.closest(".group-head") && key !== info.selfGroup) return toGroup();
+  const list = section.querySelector(".task-list");
+  const blocks = [];
+  for (const el of list ? list.children : []) {
+    if (el.dataset.bundle === info.bundleId) continue; // 自己这捆不算
+    if (el.classList.contains("bundle-head")) {
+      blocks.push({ first: el, last: el, firstId: "", lastId: "", bundle: el.dataset.bundle });
+    } else if (el.classList.contains("task")) {
+      const b = blocks[blocks.length - 1];
+      if (el.dataset.bundle && b && b.bundle === el.dataset.bundle) {
+        b.last = el;
+        b.lastId = el.dataset.id;
+        if (!b.firstId) b.firstId = el.dataset.id;
+      } else {
+        blocks.push({ first: el, last: el, firstId: el.dataset.id, lastId: el.dataset.id, bundle: "" });
+      }
+    }
+  }
+  const real = blocks.filter((b) => b.firstId);
+  if (!real.length) return key === info.selfGroup ? none : toGroup();
+  for (const b of real) {
+    const top = b.first.getBoundingClientRect().top;
+    const bottom = b.last.getBoundingClientRect().bottom;
+    if (y < (top + bottom) / 2) return { mark: () => b.first.classList.add("gap-above"), hit: { ...base, anchorId: b.firstId, place: "above" } };
+  }
+  const b = real[real.length - 1];
+  return { mark: () => b.last.classList.add(b.bundle ? "gap-below-out" : "gap-below"), hit: { ...base, anchorId: b.lastId, place: "below" } };
+}
+
+async function bmDropBundle(hit) {
+  if (!hit) return;
+  try {
+    const cross = hit.group !== hit.from;
+    await window.bookmark.moveBundle(hit.bundleId, hit.anchorId, hit.place, cross ? bmAssigneeOf(hit.group) : undefined);
+  } catch (error) {
+    bmShowError(bmErrorText(error));
+  }
+  await bmRefresh();
+}
+
+/** 捆标题那一栏：按下直接挪就是拖整捆（跟单条一样过 5 像素才算拖，没挪就是单击）。六个点和按钮不算。 */
+function bmBindBundleDrag(head, bundleId, groupKey) {
+  head.addEventListener("dragstart", (event) => event.preventDefault());
+  head.addEventListener("pointerenter", () => { bmHoverBundleId = bundleId; });
+  head.addEventListener("pointerleave", () => { if (bmHoverBundleId === bundleId) bmHoverBundleId = null; });
+  head.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest("button, textarea, input, a")) return;
+    window.getSelection()?.removeAllRanges();
+    bmPressedBundleId = bundleId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let armed = false;
+    let ghost = null;
+    let scrollTimer = 0;
+    let lastY = startY;
+    let hit = null;
+    let members = [];
+    bmDragActive = true;
+    function finish(commit) {
+      if (scrollTimer) window.clearInterval(scrollTimer);
+      bmClearDropMarks();
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      if (ghost) ghost.remove();
+      head.classList.remove("is-dragging");
+      members.forEach((m) => m.classList.remove("is-dragging"));
+      bmDragActive = false;
+      const pending = bmRefreshPending;
+      bmRefreshPending = false;
+      const drop = armed && commit ? hit : null;
+      void (async () => {
+        if (drop) await bmDropBundle(drop);
+        else if (pending) await bmRefresh();
+      })();
+    }
+    function arm() {
+      if (!head.isConnected) {
+        finish(false);
+        return;
+      }
+      armed = true;
+      members = [...document.querySelectorAll(`.task[data-bundle="${CSS.escape(bundleId)}"]`)];
+      ghost = bmBundleGhost(head, members.length);
+      head.classList.add("is-dragging");
+      members.forEach((m) => m.classList.add("is-dragging"));
+      scrollTimer = window.setInterval(() => bmDragScroll(lastY), 40);
+    }
+    function onMove(ev) {
+      lastY = ev.clientY;
+      if (!armed) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) <= BM_DRAG_SLOP) return;
+        arm();
+        if (!armed) return;
+      }
+      ev.preventDefault();
+      ghost.style.left = (ev.clientX - 28) + "px";
+      ghost.style.top = (ev.clientY - 18) + "px";
+      bmClearDropMarks();
+      const r = bmBundleHitAt(ev.clientX, ev.clientY, { bundleId, selfGroup: groupKey, kinds: members.map((m) => m.dataset.kind || "note") });
+      r.mark();
+      hit = r.hit;
+    }
+    function onUp() { finish(true); }
+    function onCancel() { finish(false); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  });
+}
+
+/** 整捆的影子：捆标题一栏，后面注明一共几条。 */
+function bmBundleGhost(head, count) {
+  const rect = head.getBoundingClientRect();
+  const ghost = head.cloneNode(true);
+  ghost.classList.remove("is-dragging", "clip-cut");
+  ghost.classList.add("drag-ghost");
+  const n = document.createElement("span");
+  n.className = "bundle-ghost-count";
+  n.textContent = `整捆 ${count} 条`;
+  ghost.appendChild(n);
+  ghost.style.width = rect.width + "px";
+  ghost.style.left = rect.left + "px";
+  ghost.style.top = rect.top + "px";
+  document.body.appendChild(ghost);
+  return ghost;
 }
 
 /** 左键按下直接挪就是拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
@@ -732,11 +885,11 @@ function bmBuildTask(record, groupKey, order) {
   item.dataset.id = record.id;
   item.dataset.kind = record.kind || "note";
   item.dataset.group = groupKey;
-  // Ctrl+X / Ctrl+C 认「按着的那条」或「鼠标停着的那条」（2026-10-13）
+  // Ctrl+X 认「按着的那条」或「鼠标停着的那条」（2026-10-13）
   item.addEventListener("pointerenter", () => { bmHoverTaskId = record.id; });
   item.addEventListener("pointerleave", () => { if (bmHoverTaskId === record.id) bmHoverTaskId = null; });
   item.addEventListener("pointerdown", (event) => { if (event.button === 0) bmPressedTaskId = record.id; });
-  if (bmClip && bmClip.id === record.id) item.classList.add(bmClip.mode === "cut" ? "clip-cut" : "clip-copy");
+  if (bmClip && (bmClip.id === record.id || (bmClip.bundleId && bmClip.bundleId === record.bundleId))) item.classList.add("clip-cut");
   item.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     // 选中了两条以上、在选中的条目上右键 = 捆成一捆（设定21）；别的情况照旧弹这一条的菜单。
@@ -920,12 +1073,14 @@ function bmBuildTask(record, groupKey, order) {
     body.appendChild(box);
   }
   item.appendChild(body);
-  // 在干标记（设定15）：哪个 AI 窗口领走了，一眼看到；别的窗口领不走。
+  // 在干标记（设定15）：哪个 AI 窗口领走了，一眼看到；别的窗口领不走。干完交了报告＝等你审（报告挂在条目下面）。
   if (record.claimedBy) {
     item.classList.add("claimed");
     const claim = bmStatusBadge("busy", `${record.claimedBy} 在干`);
     claim.classList.add("claim");
     item.appendChild(claim);
+  } else if (record.report) {
+    item.appendChild(bmStatusBadge("review", `${record.reportedBy ?? "AI"} 干完了，等你审（报告在这条下面）`));
   }
   // AI 检查觉得放错了（第四版）：右边一个小橙点，碰到冒气泡，点「知道了」就不再提。
   const hint = bmHints.get(record.id);
@@ -955,7 +1110,7 @@ function bmBuildTask(record, groupKey, order) {
     list: () => item.parentElement,
     accept: (el) => el.classList.contains("task"),
     idOf: (el) => el.dataset.id || "",
-    onDrop: (hit) => bmDropTask(hit, false),
+    onDrop: (hit) => bmDropTask(hit),
   });
   return item;
 }
@@ -1454,11 +1609,14 @@ function bmFillTaskList(list, records, groupKey) {
   // 第一格永远是空白框（交接单专区除外，它还是点小加号才冒输入行）；写在最上面的草稿就写在这个框里。
   if (groupKey !== BM_HANDOFF_ZONE_KEY) list.appendChild(bmBuildInsertRow(groupKey, true));
   else if (draft && !anchored) list.appendChild(bmBuildInsertRow(groupKey, false));
+  // 条目号、捆号都是同组从上往下数（看板命令 show 跟这里同一个数法：src/bookmark/board-index.ts，改一边另一边也要改）
+  let bundleNo = 0;
   records.forEach((record, index) => {
     const prevBundle = index > 0 ? records[index - 1].bundleId : null;
     const nextBundle = index < records.length - 1 ? records[index + 1].bundleId : null;
     if (record.bundleId && record.bundleId !== prevBundle) {
-      list.appendChild(bmBuildBundleHead(record.bundleId, records.filter((r) => r.bundleId === record.bundleId), groupKey));
+      bundleNo += 1;
+      list.appendChild(bmBuildBundleHead(record.bundleId, records.filter((r) => r.bundleId === record.bundleId), groupKey, bundleNo));
     }
     if (draft && anchored && draft.anchorId === record.id && draft.place === "above") list.appendChild(bmBuildInsertRow(groupKey, false));
     const task = bmBuildTask(record, groupKey, index + 1);
@@ -1798,10 +1956,12 @@ function bmReleaseItem(record) {
 }
 
 /** 捆头：六个点（整捆启动 Agent / 拆开）+ 名字（第一条开头几个字）+ 谁在干。 */
-function bmBuildBundleHead(bundleId, members, groupKey) {
+function bmBuildBundleHead(bundleId, members, groupKey, bundleNo) {
   const head = document.createElement("li");
   head.className = "bundle-head";
   head.dataset.bundle = bundleId;
+  if (bmClip && bmClip.bundleId === bundleId) head.classList.add("clip-cut");
+  bmBindBundleDrag(head, bundleId, groupKey);
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "handle";
@@ -1815,6 +1975,14 @@ function bmBuildBundleHead(bundleId, members, groupKey) {
   handle.addEventListener("click", openMenu);
   head.addEventListener("contextmenu", openMenu);
   head.appendChild(handle);
+  // 捆号（2026-10-13 用户：跟 AI 说「Claude 捆2」它就只看这一捆）：同组从上往下数，看板命令 show 用的是同一个数法。
+  if (bundleNo) {
+    const no = document.createElement("span");
+    no.className = "bundle-no";
+    no.textContent = `捆${bundleNo}`;
+    no.title = `跟 AI 说「看 ${groupKey === BM_HANDOFF_ZONE_KEY ? "交接单" : groupKey} 捆${bundleNo}」，它就只读这一捆`;
+    head.appendChild(no);
+  }
   const name = document.createElement("span");
   name.className = "bundle-name";
   const first = members[0] ? members[0].text.replace(/\[图片:[^\]]*\]/g, "").trim() : "";
@@ -1835,6 +2003,9 @@ function bmBuildBundleHead(bundleId, members, groupKey) {
     const claim = bmStatusBadge("busy", dispatch ? `${dispatch.status} · ${dispatch.owner} 占住整捆` : `${busy.join("、")} 在干`);
     claim.classList.add("claim");
     head.appendChild(claim);
+  } else {
+    const done = members.filter((r) => r.report).length;
+    if (done) head.appendChild(bmStatusBadge("review", `这捆有 ${done} 条干完了，等你审`));
   }
   return head;
 }
@@ -1925,6 +2096,8 @@ async function bmPaintOrganizer() {
   } catch {
     return; // 读不到就不画，不拦看板
   }
+  const busy = document.getElementById("org-busy");
+  if (busy) busy.hidden = !bmOrgState.running;
   const brief = document.getElementById("org-brief");
   if (brief) brief.textContent = bmOrgBrief(bmOrgState);
   const status = document.getElementById("org-dlg-status");
@@ -1948,7 +2121,7 @@ function bmOrgBrief(state) {
 
 function bmOrgLastText(state) {
   if (!state.hasKey) return "还没填模型钥匙：点「改」填上";
-  if (state.running) return "正在整理…（一组要一两分钟）";
+  if (state.running) return "正在后台整理…关掉这个窗口也照样跑，看板顶上有「🌿 整理中…」";
   if (state.last) return `上次 ${bmClock(Date.parse(state.last.at))}：${state.last.text.replace(/^AI 整理[：:]/, "")}`;
   return "还没整理过";
 }
@@ -2617,10 +2790,10 @@ function bmShowError(message) {
 bmInit();
 
 
-// ── 剪切 / 复制后拿着走（2026-10-13 用户拍板）────────────────────
-// 按住某条（或鼠标停在某条上）按 Ctrl+X 剪切 / Ctrl+C 复制 → 按 Ctrl+V，这条粘到鼠标上（跟按住拖一个样：变绿＝合并，不绿＝单独放，哪个组都能去）
-// → 按住左键接着拖、松开就放下；右键或 Esc 不要了（剪切的留在原地，复制的什么也不多）。一次只拿一条。
-// 在输入框里打字、或选中了一段字时，Ctrl+C / X / V 还是普通的复制粘贴文字。
+// ── 剪切后拿着走（2026-10-13 用户拍板）────────────────────
+// 按住某条（或鼠标停在某条上）按 Ctrl+X → 按 Ctrl+V，这条粘到鼠标上（跟按住拖一个样：变绿＝合并，不绿＝单独放，哪个组都能去）
+// → 按住左键接着拖、松开就放下；右键或 Esc 不要了（剪下的留在原地）。在捆标题那一栏上按 Ctrl+X＝整捆拿着走（跟按住捆标题拖一样）。
+// Ctrl+C 不碰条目（复制一条那套同天拆了）。在输入框里打字、或选中了一段字时，Ctrl+X / V 还是普通的剪切粘贴文字。
 
 function bmTyping() {
   const a = document.activeElement;
@@ -2634,7 +2807,7 @@ function bmInitClipboard() {
     bmMouse = { x: event.clientX, y: event.clientY };
     if (bmCarry) bmCarryPaint();
   }, true);
-  window.addEventListener("pointerup", () => { bmPressedTaskId = null; });
+  window.addEventListener("pointerup", () => { bmPressedTaskId = null; bmPressedBundleId = null; });
   window.addEventListener("keydown", (event) => {
     if (bmCarry && event.key === "Escape") {
       event.preventDefault();
@@ -2643,12 +2816,12 @@ function bmInitClipboard() {
     }
     if (bmClip && event.key === "Escape") { // 还没 Ctrl+V 就按 Esc：剪下 / 复制的也放弃
       bmClip = null;
-      document.querySelectorAll(".clip-cut, .clip-copy").forEach((n) => n.classList.remove("clip-cut", "clip-copy"));
+      document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
       return;
     }
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const k = String(event.key || "").toLowerCase();
-    if (k !== "x" && k !== "c" && k !== "v") return;
+    if (k !== "x" && k !== "v") return;
     if (bmTyping()) return;
     if (k === "v") {
       if (!bmClip || bmCarry) return;
@@ -2658,34 +2831,48 @@ function bmInitClipboard() {
     }
     const id = bmPressedTaskId || bmHoverTaskId;
     const el = id ? document.querySelector(`.task[data-id="${CSS.escape(id)}"]`) : null;
-    if (!el) return;
+    const bundleId = el ? null : bmPressedBundleId || bmHoverBundleId;
+    const head = bundleId ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"]`) : null;
+    if (!el && !head) return;
     event.preventDefault();
-    if (bmPressedTaskId) window.dispatchEvent(new PointerEvent("pointercancel")); // 按住时剪：这次拖动作废，改成拿着走
+    if (bmPressedTaskId || bmPressedBundleId) window.dispatchEvent(new PointerEvent("pointercancel")); // 按住时剪：这次拖动作废，改成拿着走
     bmPressedTaskId = null;
-    bmClip = { id, mode: k === "x" ? "cut" : "copy" };
-    document.querySelectorAll(".clip-cut, .clip-copy").forEach((n) => n.classList.remove("clip-cut", "clip-copy"));
-    el.classList.add(k === "x" ? "clip-cut" : "clip-copy");
-    bmToast(k === "x" ? "剪下这条了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了" : "复制了这条：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了", 4000);
+    bmPressedBundleId = null;
+    bmClip = el ? { id } : { bundleId };
+    document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
+    if (el) el.classList.add("clip-cut");
+    else document.querySelectorAll(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"], .task[data-bundle="${CSS.escape(bundleId)}"]`).forEach((n) => n.classList.add("clip-cut"));
+    bmToast(el ? "剪下这条了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了" : "剪下这一整捆了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了", 4000);
   }, true);
 }
 
 function bmStartCarry() {
   const clip = bmClip;
-  const el = document.querySelector(`.task[data-id="${CSS.escape(clip.id)}"]`);
+  const el = clip.bundleId
+    ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(clip.bundleId)}"]`)
+    : document.querySelector(`.task[data-id="${CSS.escape(clip.id)}"]`);
   if (!el) {
-    bmToast("剪下的那条不在这一页：切回它所在的那一页再按 Ctrl+V");
+    bmToast(clip.bundleId ? "剪下的那捆不在这一页：切回它所在的那一页再按 Ctrl+V" : "剪下的那条不在这一页：切回它所在的那一页再按 Ctrl+V");
     return;
   }
   bmHideCtxMenu();
-  const rect = el.getBoundingClientRect();
-  const ghost = el.cloneNode(true);
-  ghost.classList.remove("is-dragging", "clip-cut", "clip-copy");
-  ghost.classList.add("drag-ghost");
-  ghost.style.width = rect.width + "px";
-  document.body.appendChild(ghost);
-  if (clip.mode === "cut") el.classList.add("is-dragging");
+  const members = clip.bundleId ? [...document.querySelectorAll(`.task[data-bundle="${CSS.escape(clip.bundleId)}"]`)] : [];
+  let ghost;
+  if (clip.bundleId) {
+    ghost = bmBundleGhost(el, members.length);
+  } else {
+    const rect = el.getBoundingClientRect();
+    ghost = el.cloneNode(true);
+    ghost.classList.remove("is-dragging", "clip-cut");
+    ghost.classList.add("drag-ghost");
+    ghost.style.width = rect.width + "px";
+    document.body.appendChild(ghost);
+  }
+  el.classList.add("is-dragging");
+  members.forEach((m) => m.classList.add("is-dragging"));
   bmDragActive = true;
-  bmCarry = { ...clip, kind: el.dataset.kind || "note", group: el.dataset.group || "", el, ghost, hit: null, pressed: false, scroll: 0 };
+  const group = el.closest(".group")?.dataset.group || el.dataset.group || "";
+  bmCarry = { ...clip, kind: el.dataset.kind || "note", kinds: members.map((m) => m.dataset.kind || "note"), group, el, members, ghost, hit: null, pressed: false, scroll: 0 };
   bmCarry.scroll = window.setInterval(() => { if (bmCarry && bmCarry.pressed) bmDragScroll(bmMouse.y); }, 40);
   document.body.classList.add("carrying");
   window.addEventListener("pointerdown", bmCarryDown, true);
@@ -2700,7 +2887,9 @@ function bmCarryPaint() {
   c.ghost.style.left = (bmMouse.x - 28) + "px";
   c.ghost.style.top = (bmMouse.y - 18) + "px";
   bmClearDropMarks();
-  const r = bmTaskHitAt(bmMouse.x, bmMouse.y, { id: c.id, kind: c.kind, selfGroup: c.group, skip: c.mode === "cut" ? c.el : null });
+  const r = c.bundleId
+    ? bmBundleHitAt(bmMouse.x, bmMouse.y, { bundleId: c.bundleId, selfGroup: c.group, kinds: c.kinds })
+    : bmTaskHitAt(bmMouse.x, bmMouse.y, { id: c.id, kind: c.kind, selfGroup: c.group, skip: c.el });
   r.mark();
   c.hit = r.hit;
 }
@@ -2736,6 +2925,7 @@ function bmEndCarry(commit) {
   window.clearInterval(c.scroll);
   c.ghost.remove();
   c.el.classList.remove("is-dragging");
+  c.members.forEach((m) => m.classList.remove("is-dragging"));
   bmClearDropMarks();
   document.body.classList.remove("carrying");
   window.removeEventListener("pointerdown", bmCarryDown, true);
@@ -2744,10 +2934,10 @@ function bmEndCarry(commit) {
   bmDragActive = false;
   bmRefreshPending = false;
   bmClip = null; // 放下或不要了，都算用完
-  document.querySelectorAll(".clip-cut, .clip-copy").forEach((n) => n.classList.remove("clip-cut", "clip-copy"));
+  document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
   const hit = commit ? c.hit : null;
   void (async () => {
-    if (hit) await bmDropTask(hit, c.mode === "copy");
+    if (hit) await (c.bundleId ? bmDropBundle(hit) : bmDropTask(hit));
     else await bmRefresh();
   })();
 }
