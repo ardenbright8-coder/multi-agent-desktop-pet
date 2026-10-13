@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("bookmark", {
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
   updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),
+  /** 改详情（交接单展开的那段）；清空＝不要详情了。 */
+  updateDetail: (id: string, detail: string) => ipcRenderer.invoke("bookmark:update-detail", { id, detail }),
+  /** Ctrl+Z 撤回看板上最近一步；返回撤的是哪一步，没得撤是 null。 */
+  undo: () => ipcRenderer.invoke("bookmark:undo") as Promise<string | null>,
   templates: () => ipcRenderer.invoke("bookmark:templates") as Promise<string[]>,
   copyForAgent: (id: string, template: string | null) => ipcRenderer.invoke("bookmark:copy-for-agent", { id, template }) as Promise<string>,
   openTemplates: () => ipcRenderer.invoke("bookmark:templates:open"),

@@ -703,18 +703,26 @@ function registerIpc(): void {
     clipboard.writeText(text);
     return text;
   });
-  ipcMain.handle("bookmark:add", (_event, input: unknown) => requireStore().add(normalizeInput(input)));
+  // 撤回账（2026-10-13）：看板上用户的动作一律过 userAction，Ctrl+Z 能退回；AI 整理、命令行、手机来的不记。
+  const act = <T>(label: string, fn: () => T, keyOf?: (result: T) => string | null): T => requireStore().userAction(label, fn, keyOf);
+  const textKey = (r: BookmarkRecord | null) => (r ? `text:${r.id}` : null);
+  ipcMain.handle("bookmark:undo", () => {
+    const label = requireStore().undo();
+    if (label) notifyInboxChanged();
+    return label;
+  });
+  ipcMain.handle("bookmark:add", (_event, input: unknown) => act("新写一条", () => requireStore().add(normalizeInput(input)), textKey));
   ipcMain.handle("bookmark:insert-beside", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { anchorId?: unknown; place?: unknown };
     const place = raw.place === "below" ? "below" : "above";
     const anchorId = raw.anchorId ? String(raw.anchorId) : null;
-    return requireStore().insertBeside(anchorId, place, normalizeInput(payload));
+    return act("新写一条", () => requireStore().insertBeside(anchorId, place, normalizeInput(payload)), textKey);
   });
   ipcMain.handle("bookmark:move", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { id?: unknown; anchorId?: unknown; place?: unknown; into?: unknown };
     const place = raw.place === "below" ? "below" : "above";
     const into = raw.into === null ? null : typeof raw.into === "string" && raw.into ? raw.into : undefined;
-    return requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place, into);
+    return act("挪动一条", () => requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place, into));
   });
   // 跨组一步到位（2026-10-13 拖动和剪切粘贴）。
   ipcMain.handle("bookmark:relocate", (_event, payload: unknown) => {
@@ -723,21 +731,21 @@ function registerIpc(): void {
     const into = raw.into === null ? null : typeof raw.into === "string" && raw.into ? raw.into : undefined;
     const assignee = typeof raw.assignee === "string" && raw.assignee ? raw.assignee : null;
     const anchorId = typeof raw.anchorId === "string" && raw.anchorId ? raw.anchorId : null;
-    return requireStore().relocate(String(raw.id ?? ""), assignee, anchorId, place, into);
+    return act("挪到别的组", () => requireStore().relocate(String(raw.id ?? ""), assignee, anchorId, place, into));
   });
   // 整捆搬家（2026-10-13）：带了 assignee 才换组。
   ipcMain.handle("bookmark:move-bundle", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { bundleId?: unknown; assignee?: unknown; anchorId?: unknown; place?: unknown };
     const assignee = !("assignee" in raw) ? undefined : typeof raw.assignee === "string" && raw.assignee ? raw.assignee : null;
     const anchorId = typeof raw.anchorId === "string" && raw.anchorId ? raw.anchorId : null;
-    return requireStore().moveBundle(String(raw.bundleId ?? ""), assignee, anchorId, raw.place === "below" ? "below" : "above");
+    return act("搬整捆", () => requireStore().moveBundle(String(raw.bundleId ?? ""), assignee, anchorId, raw.place === "below" ? "below" : "above"));
   });
-  ipcMain.handle("bookmark:remove", (_event, id: unknown) => requireStore().remove(String(id)));
+  ipcMain.handle("bookmark:remove", (_event, id: unknown) => act("删掉一条", () => requireStore().remove(String(id))));
   ipcMain.handle(
     "bookmark:set-assignee",
     (_event, payload: unknown) => {
       const { id, assignee } = (payload ?? {}) as { id?: unknown; assignee?: unknown };
-      return requireStore().setAssignee(String(id), assignee == null || assignee === "" ? null : String(assignee));
+      return act("改派", () => requireStore().setAssignee(String(id), assignee == null || assignee === "" ? null : String(assignee)));
     },
   );
   // 输入行自动存档（2026-09-11 改版三）：草稿入库后边写边改同一条（renderer 防抖 400ms + 失焦必落盘，写了就是写了）。
@@ -745,9 +753,13 @@ function registerIpc(): void {
     "bookmark:update-text",
     (_event, payload: unknown) => {
       const { id, text, url } = (payload ?? {}) as { id?: unknown; text?: unknown; url?: unknown };
-      return requireStore().updateText(String(id), String(text ?? ""), url ? String(url) : null);
+      return act("改字", () => requireStore().updateText(String(id), String(text ?? ""), url ? String(url) : null), textKey);
     },
   );
+  ipcMain.handle("bookmark:update-detail", (_event, payload: unknown) => {
+    const { id, detail } = (payload ?? {}) as { id?: unknown; detail?: unknown };
+    return act("改详情", () => requireStore().updateDetail(String(id ?? ""), String(detail ?? "")), (r) => (r ? `detail:${r.id}` : null));
+  });
   // 旧 bookmark:hide（收起面板）已随 F3 一起撤（改版三：看板永远常驻显示）。
   // 局部 Ctrl+R（面板内监听，🚨 不准改成 globalShortcut——全局会拦掉其他软件的 Ctrl+R）。
   // 真机：编译源码 + 整程序重开（跟脑图设定11同一套，等几秒正常）。自测：只刷新面板。
@@ -818,7 +830,7 @@ function registerIpc(): void {
   ipcMain.handle("bookmark:bundle-selected", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { ids?: unknown; name?: unknown };
     const ids = Array.isArray(raw.ids) ? raw.ids.map((x) => String(x ?? "")) : [];
-    return requireStore().createTaskBundle(ids, String(raw.name ?? ""));
+    return act("捆成一捆", () => requireStore().createTaskBundle(ids, String(raw.name ?? "")));
   });
   ipcMain.handle("bookmark:bundle-meta", () => requireStore().bundleMeta());
   // AI 整理（设定21）：设置窗口读写、手动整理一次、全部重来 / 撤销、提示「知道了」。钥匙不回给界面，只说有没有。
@@ -952,9 +964,9 @@ function registerIpc(): void {
   // 捆一捆 / 拆开 / 放回去（设定15）
   ipcMain.handle("bookmark:bundle", (_event, payload: unknown) => {
     const raw = (payload ?? {}) as { id?: unknown; targetId?: unknown };
-    return requireStore().bundleWith(String(raw.id ?? ""), String(raw.targetId ?? ""));
+    return act("捆一捆", () => requireStore().bundleWith(String(raw.id ?? ""), String(raw.targetId ?? "")));
   });
-  ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => requireStore().unbundle(String(bundleId ?? "")));
+  ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => act("拆开一捆", () => requireStore().unbundle(String(bundleId ?? ""))));
   ipcMain.handle("bookmark:release", (_event, id: unknown) => requireStore().release(String(id ?? "")));
   // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式，
   // 新窗口启动好后替用户按一次 Ctrl+V。🚨 绝不替他按回车。开不了窗、贴不了只提示，照旧能手动来。

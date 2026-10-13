@@ -84,8 +84,25 @@ export interface ClaimResult {
   coordinator?: string;
 }
 
+/** 撤回账（2026-10-13 用户：拖错了、改错了按 Ctrl+Z 退回去）：一步只记这一步动到的条目原来长啥样、排在谁后面。 */
+interface UndoStep {
+  label: string;
+  /** 合并键：同一条连着改字（自动存档一次一存）合成一步。 */
+  key: string | null;
+  at: number;
+  /** 条目 id → 动之前的样子（null＝这一步新加的）和原来的位置 */
+  before: Map<string, { json: string | null; index: number; prevId: string | null }>;
+  /** 动之前的捆名，撤回时拆掉又捆回来的捆把名字也还回去 */
+  meta: Record<string, BundleMeta>;
+}
+/** 最多记几步。 */
+const MAX_UNDO = 30;
+/** 连着改同一条字，隔多久以内算一步。 */
+const UNDO_MERGE_MS = 120_000;
+
 export class BookmarkStore {
   private records: BookmarkRecord[] = [];
+  private undoSteps: UndoStep[] = [];
   private readonly path: string;
   private loaded = false;
   private readonly coordination: CoordinationStore;
@@ -340,6 +357,76 @@ export class BookmarkStore {
 
   taskNotices(coordinator: string) { return this.coordination.notices(coordinator); }
   acknowledgeTaskNotice(id: string, coordinator: string): void { this.coordination.acknowledge(id, coordinator); }
+
+  /** 用户在看板上的一个动作：照做，再把这一步动到了哪些条目记进撤回账（AI 整理、命令行、手机来的不走这里，撤不回）。
+   *  keyOf：给结果起合并键，同键、两分钟内的连着几步合成一步（一条字边写边存）。 */
+  userAction<T>(label: string, fn: () => T, keyOf?: (result: T) => string | null): T {
+    this.ensureLoaded();
+    const beforeJson = new Map(this.records.map((r, i) => [r.id, { json: JSON.stringify(r), index: i, prevId: i ? this.records[i - 1].id : null }]));
+    const meta = JSON.parse(JSON.stringify(this.loadMeta())) as Record<string, BundleMeta>;
+    const result = fn();
+    const key = keyOf ? keyOf(result) : null;
+    const changed = new Map<string, { json: string | null; index: number; prevId: string | null }>();
+    const afterIds = new Set<string>();
+    this.records.forEach((r, i) => {
+      afterIds.add(r.id);
+      const was = beforeJson.get(r.id);
+      const prevId = i ? this.records[i - 1].id : null;
+      if (!was) changed.set(r.id, { json: null, index: i, prevId: null });
+      else if (was.json !== JSON.stringify(r) || was.prevId !== prevId) changed.set(r.id, was);
+    });
+    for (const [id, was] of beforeJson) if (!afterIds.has(id)) changed.set(id, was);
+    if (!changed.size) return result;
+    const last = this.undoSteps[this.undoSteps.length - 1];
+    if (key && last && last.key === key && Date.now() - last.at < UNDO_MERGE_MS) {
+      for (const [id, was] of changed) if (!last.before.has(id)) last.before.set(id, was);
+      last.at = Date.now();
+      return result;
+    }
+    this.undoSteps.push({ label, key, at: Date.now(), before: changed, meta });
+    if (this.undoSteps.length > MAX_UNDO) this.undoSteps.shift();
+    return result;
+  }
+
+  /** 撤回最近一步：这一步动到的条目按原样、原位置放回去，这一步新加的拿掉。返回撤的是哪一步，没得撤返回 null。 */
+  undo(): string | null {
+    this.ensureLoaded();
+    const step = this.undoSteps.pop();
+    if (!step) return null;
+    this.records = this.records.filter((r) => !step.before.has(r.id));
+    const back = [...step.before.entries()].filter(([, v]) => v.json !== null).sort((a, b) => a[1].index - b[1].index);
+    for (const [, v] of back) {
+      const record = JSON.parse(v.json!) as BookmarkRecord;
+      let at = Math.min(v.index, this.records.length);
+      if (v.prevId === null) at = 0;
+      else {
+        const prev = this.records.findIndex((r) => r.id === v.prevId);
+        if (prev >= 0) at = prev + 1;
+      }
+      this.records.splice(at, 0, record);
+    }
+    const meta = this.loadMeta();
+    const alive = new Set(this.records.map((r) => r.bundleId).filter(Boolean));
+    for (const [id, m] of Object.entries(step.meta)) if (alive.has(id) && !meta[id]) this.setBundleMeta(id, m);
+    this.save();
+    return step.label;
+  }
+
+  canUndo(): boolean {
+    return this.undoSteps.length > 0;
+  }
+
+  /** 改详情（2026-10-13 用户：交接单展开的那段也要单击就能改）。清空就是不要详情了，条目留着。 */
+  updateDetail(id: string, detail: string): BookmarkRecord | null {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) return null;
+    this.coordination.assertEditable(record.bundleId);
+    const next = String(detail ?? "").trim();
+    record.detail = next ? next : null;
+    this.save();
+    return record;
+  }
 
   /** 新→旧排好的一份快照。 */
   list(): BookmarkRecord[] {

@@ -15,6 +15,7 @@ let bmOpenComposerGroup = null; // 当前展开输入行的组 key
 let bmCurrentPage = "groups"; // 当前页签：groups = Agent 分组（默认，2026-10-13 用户：打开就是分组） / inbox = 💭待定 / projects = 📁 项目（2026-09-11 加第三页）
 let bmInsertDraft = null; // 右键插进来、还在写的那一行：{ groupKey, anchorId, place, id, text, kind }
 let bmEditingId = null; // 点白条正在改的那条
+let bmEditingField = "text"; // 正在改正文（text）还是详情（detail，交接单展开的那段）
 let bmInsertSaveTimer = null;
 let bmEditSaveTimer = null;
 let bmBundleMeta = {}; // 捆号 → { name, by: user/ai }（设定21：捆名、AI 捆的标个小机器人）
@@ -60,7 +61,7 @@ const BM_ICONS = {
 };
 /** 状态小标：圆角小方块＋细线图标，说明放在鼠标碰到才冒的提示里（2026-10-13 用户：省地方给标题）。 */
 // 干活的两个状态用表情（2026-10-13 用户：正在干＝绿的，干完等审＝勾，一眼分得出）；别的小标照旧细线图标。
-const BM_STATUS_EMOJI = { busy: "🟢", review: "✅" };
+const BM_STATUS_EMOJI = { busy: "♻️", review: "✅" };
 function bmStatusBadge(kind, label) {
   const el = document.createElement("span");
   el.className = `status-badge status-${kind}`;
@@ -958,7 +959,7 @@ function bmBuildTask(record, groupKey, order) {
     body.appendChild(title);
     item.classList.add("titled");
   }
-  if (bmEditingId === record.id) {
+  if (bmEditingId === record.id && bmEditingField === "text") {
     const input = document.createElement("textarea");
     input.className = "task-edit";
     input.value = record.text;
@@ -1011,12 +1012,20 @@ function bmBuildTask(record, groupKey, order) {
   }
   // 详情（交接单的长内容）：有 detail 的条目点一下展开/收起，默认收起（板上只占标题两行）。
   // 展开态记进 bmOpenDetails：自动存档/改派触发重画后还原，别把点开的手气洗掉。
-  if (record.detail && titled) {
+  if (record.detail && bmEditingId === record.id && bmEditingField === "detail") {
+    body.appendChild(bmBuildDetailEditor(record));
+  } else if (record.detail && titled) {
     // 有小标题：详情跟原文一起收着，点小标题一起展开，不要「详情」按钮（2026-10-13 用户）。
+    // 单击就改（2026-10-13 用户：点了没光标、一按就成拖动；短按＝改字，按住挪＝拖）。
     const detail = document.createElement("div");
     detail.className = "task-detail";
     detail.textContent = record.detail;
     detail.hidden = !bodyOpen;
+    detail.title = "单击改详情";
+    detail.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void bmBeginEdit(record.id, "detail");
+    });
     body.appendChild(detail);
   } else if (record.detail) {
     const detail = document.createElement("div");
@@ -1762,12 +1771,13 @@ async function bmInsertCommit(opts = {}) {
   bmFitTextarea(input);
 }
 
-async function bmBeginEdit(id) {
+async function bmBeginEdit(id, field = "text") {
   if (bmImagesBusy) return;
   const record = bmDispatchRecords.find(r => r.id === id);
   const owned = record && bmDispatchBundles.get(record.bundleId);
   if (owned?.owner) { bmToast(`${owned.owner} 占住整捆，先放回再改原始任务`); return; }
   bmEditingId = id;
+  bmEditingField = field;
   bmInsertDraft = null;
   await bmRefresh(); // 同 bmBeginInsert：等框画出来再放光标
   const input = document.querySelector(".task-edit");
@@ -1775,6 +1785,63 @@ async function bmBeginEdit(id) {
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
   bmFitTextarea(input);
+}
+
+/** 详情改字框：跟正文一样边写边存（400ms）、失焦或 Enter 收起、Esc 不改；清空＝不要详情了（条目留着）。Shift+Enter 换行。 */
+function bmBuildDetailEditor(record) {
+  const input = document.createElement("textarea");
+  input.className = "task-edit task-detail-edit";
+  input.value = record.detail || "";
+  const save = (close) => bmDetailCommit(record.id, input, close);
+  input.addEventListener("input", () => {
+    bmFitTextarea(input);
+    if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
+    bmEditSaveTimer = window.setTimeout(() => { bmEditSaveTimer = null; void save(false); }, 400);
+  });
+  input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy) void save(true); });
+  input.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void save(true);
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
+      bmEditingId = null;
+      bmRenderCurrent();
+    }
+  });
+  return input;
+}
+
+async function bmDetailCommit(id, input, close) {
+  if (bmEditingId !== id && close) return;
+  if (bmEditSaveTimer) {
+    window.clearTimeout(bmEditSaveTimer);
+    bmEditSaveTimer = null;
+  }
+  const hadFocus = bmEditorHasFocus(input);
+  const caret = hadFocus ? input.selectionStart : null;
+  try {
+    await window.bookmark.updateDetail(id, String(input?.value ?? ""));
+  } catch (error) {
+    bmShowError("详情存不进去： " + bmErrorText(error));
+    return;
+  }
+  if (close) {
+    if (bmEditingId === id) bmEditingId = null;
+    await bmRefresh();
+    return;
+  }
+  await bmRefresh();
+  if (!hadFocus) return;
+  const next = document.querySelector(".task-detail-edit");
+  if (!next) return;
+  next.focus();
+  const at = typeof caret === "number" ? caret : next.value.length;
+  next.setSelectionRange(at, at);
+  bmFitTextarea(next);
 }
 
 function bmScheduleEditSave(id, input) {
@@ -2821,6 +2888,12 @@ function bmInitClipboard() {
     }
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const k = String(event.key || "").toLowerCase();
+    // Ctrl+Z 撤回看板上最近一步（2026-10-13 用户：拖错了、改错了能退回去）；在框里打字时还是框自己的撤销。
+    if (k === "z" && !bmTyping() && !bmCarry && window.bookmark.undo) {
+      event.preventDefault();
+      void bmUndo();
+      return;
+    }
     if (k !== "x" && k !== "v") return;
     if (bmTyping()) return;
     if (k === "v") {
@@ -2844,6 +2917,16 @@ function bmInitClipboard() {
     else document.querySelectorAll(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"], .task[data-bundle="${CSS.escape(bundleId)}"]`).forEach((n) => n.classList.add("clip-cut"));
     bmToast(el ? "剪下这条了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了" : "剪下这一整捆了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了", 4000);
   }, true);
+}
+
+async function bmUndo() {
+  try {
+    const label = await window.bookmark.undo();
+    bmToast(label ? `撤回了：${label}` : "没有能撤回的了", 2500);
+  } catch (error) {
+    bmShowError("撤回没成：" + bmErrorText(error));
+  }
+  await bmRefresh();
 }
 
 function bmStartCarry() {

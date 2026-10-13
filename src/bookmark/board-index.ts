@@ -94,7 +94,7 @@ function rowTitle(r: CliRecord, names: BoardNames): string {
 }
 
 function rowStatus(r: CliRecord): string {
-  if (r.claimedBy) return `🟢 ${r.claimedBy} 在干`;
+  if (r.claimedBy) return `♻️ ${r.claimedBy} 在干`;
   if (r.report) return "✅ 干完待审";
   return "";
 }

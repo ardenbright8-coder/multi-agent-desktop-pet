@@ -1,5 +1,5 @@
 // 隔离看板回归（2026-10-13）：跨组一步到位拖动；Ctrl+X → Ctrl+V 拿着走、按住左键拖、松开放下、右键不要；
-// 整捆搬家（按住捆标题拖、捆标题上 Ctrl+X）；Ctrl+C 不碰条目（复制一条那套拆了）；
+// 整捆搬家（按住捆标题拖、捆标题上 Ctrl+X）；Ctrl+C 不碰条目（复制一条那套拆了）；Ctrl+Z 撤回；单击详情就改；
 // 所有组、所有时候第一行都是标题（还没读的拿自己的字顶着）。官方 Playwright 后台驱动，截图在 .runtime/carry/。
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync } from 'node:fs';
@@ -187,6 +187,35 @@ try {
   await page.keyboard.press('Control+a');
   await page.keyboard.press('Control+c');
   check('⑧ 输入框里按 Ctrl+C：不碰条目', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0);
+  // ⑨ Ctrl+Z 撤回（2026-10-13）：拖错了按 Ctrl+Z 回原样；在框里打字时 Ctrl+Z 不碰看板
+  await page.keyboard.press('Escape');
+  await page.locator('#titlebar .title').click();
+  await wait(300);
+  const beforeDrag = JSON.stringify(await order('Claude'));
+  await drag(ids.D, async () => { const h = await box('.bundle-head'); return { x: h.x, y: h.top + 2 }; });
+  const afterDrag = JSON.stringify(await order('Claude'));
+  await page.keyboard.press('Control+z');
+  await wait(600);
+  check('⑨ 拖了一条再按 Ctrl+Z：回到原来的位置', afterDrag !== beforeDrag && JSON.stringify(await order('Claude')) === beforeDrag, `${beforeDrag} → ${afterDrag} → ${JSON.stringify(await order('Claude'))}`);
+
+  // ⑩ 交接单展开后单击详情就能改（2026-10-13 用户：点了没光标、一按就成拖动）；改完 Ctrl+Z 也能退回
+  await page.locator(`${task(ids.H)} .task-title`).click();
+  await wait(300);
+  await page.locator(`${task(ids.H)} .task-detail`).click();
+  await wait(400);
+  const editing = await page.evaluate(() => document.activeElement?.classList.contains('task-detail-edit') ?? false);
+  check('⑩ 单击详情：变成改字框、光标在里面', editing);
+  await page.keyboard.press('End');
+  await page.keyboard.type('加一句');
+  await page.keyboard.press('Enter');
+  await wait(600);
+  check('⑩ 改完存上了', (await rec(ids.H)).detail === '交接单甲的详情加一句', (await rec(ids.H)).detail);
+  await page.locator('#titlebar .title').click();
+  await page.keyboard.press('Control+z');
+  await wait(600);
+  check('⑩ Ctrl+Z：详情退回原来的', (await rec(ids.H)).detail === '交接单甲的详情', (await rec(ids.H)).detail);
+  await page.screenshot({ path: join(out, '10-改详情再撤回.png') });
+
   console.log(failed ? `结果：${failed} 项没过` : '结果：全部验证点通过');
 } finally {
   if (app) await app.close();

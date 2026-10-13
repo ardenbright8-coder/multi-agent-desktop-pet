@@ -47,7 +47,7 @@ test("只列标题：不吐原文、不吐 id，有小标题用小标题，捆�
   assert.match(text, /01 小标题A/);
   assert.match(text, /捆1 捆一的名字（2 条）/);
   assert.match(text, /捆2 小标题E（2 条）/, "没起名的捆拿第一条的小标题顶着");
-  assert.match(text, /03 捆一第二条  🟢 Claude-3 在干/);
+  assert.match(text, /03 捆一第二条  ♻️ Claude-3 在干/);
   assert.match(text, /04 第四条  ✅ 干完待审/);
   assert.doesNotMatch(text, /第一条原文/);
   assert.doesNotMatch(text, /\ba\b.*id/);
