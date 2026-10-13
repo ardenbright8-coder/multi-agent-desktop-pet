@@ -127,3 +127,48 @@ test("单条也能领；领完了再领告诉你没活了；放回去以后别�
     assert.throws(() => store.claimNext("b-没有这捆", "Claude-1"), /找不到/);
   });
 });
+
+// 2026-10-13 拖动改版：界面说清了「进哪捆 / 单独放」，store 照办（变绿＝合并，不绿＝单独放）。
+test("拖动说清了去向：拖到捆底下边缘＝拆出来；夹在两捆中间＝单独放；进别的捆插在指定位置；进捆没挨着就挪到捆尾", () => {
+  withStore((store) => {
+    const ids = seed(store);
+    const extra = ["戊", "己"].reverse().map((t) => store.add({ text: t, assignee: "Claude" }).id);
+    // 顺序：己 戊 甲 乙 丙 丁 → 捆一：甲 乙 丙；捆二：己 戊
+    store.createTaskBundle([ids.甲, ids.乙, ids.丙], "捆一");
+    store.createTaskBundle([extra[1], extra[0]], "捆二");
+    const one = store.list().find((r) => r.id === ids.甲)!.bundleId!;
+    const two = store.list().find((r) => r.id === extra[0])!.bundleId!;
+    const where = (id: string) => store.list().find((r) => r.id === id)!.bundleId;
+
+    // 甲拖到捆一最后一条（丙）下面、不绿 → 拆出来
+    store.move(ids.甲, ids.丙, "below", null);
+    assert.equal(where(ids.甲), null);
+    assert.equal(where(ids.乙), one, "捆一还剩乙丙");
+    assert.equal(store.list().find((r) => r.id === ids.甲)!.userPinned, true);
+
+    // 甲拖进捆二、插在己上面（整捆绿）→ 进捆二、就在那个位置
+    store.move(ids.甲, extra[1], "above", two);
+    assert.equal(where(ids.甲), two);
+    const order = claudeRows(store).map((r) => r[0]);
+    assert.ok(order.indexOf("甲") < order.indexOf("己"), "插在指定位置，不是一律塞到最后");
+
+    // 说要进捆一、锚点却在捆外（丁下面）→ 挪到捆一最后，捆不被插断
+    store.move(ids.甲, ids.丁, "below", one);
+    const rows = claudeRows(store);
+    const i = rows.findIndex((r) => r[0] === "甲");
+    assert.equal(rows[i][1], one);
+    assert.equal(rows[i - 1][1], one, "紧挨着捆一");
+
+    // 说单独放、位置却夹在捆一两条中间 → 挪到捆一后面，单独放
+    store.move(ids.甲, ids.乙, "below", null);
+    const rows2 = claudeRows(store);
+    const j = rows2.findIndex((r) => r[0] === "甲");
+    assert.equal(rows2[j][1], null);
+    assert.notEqual(rows2[j + 1]?.[1], one, "没把捆一插断");
+    assert.equal(rows2[j - 1][1], one);
+
+    // 捆一只剩两条时拆出一条：剩下那条自己散开
+    store.move(ids.乙, ids.丁, "below", null);
+    assert.equal(where(ids.丙), null);
+  });
+});

@@ -690,9 +690,10 @@ function registerIpc(): void {
     return requireStore().insertBeside(anchorId, place, normalizeInput(payload));
   });
   ipcMain.handle("bookmark:move", (_event, payload: unknown) => {
-    const raw = (payload ?? {}) as { id?: unknown; anchorId?: unknown; place?: unknown };
+    const raw = (payload ?? {}) as { id?: unknown; anchorId?: unknown; place?: unknown; into?: unknown };
     const place = raw.place === "below" ? "below" : "above";
-    return requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place);
+    const into = raw.into === null ? null : typeof raw.into === "string" && raw.into ? raw.into : undefined;
+    return requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place, into);
   });
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => requireStore().remove(String(id)));
   ipcMain.handle(

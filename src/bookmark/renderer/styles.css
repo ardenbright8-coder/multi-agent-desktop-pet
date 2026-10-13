@@ -219,6 +219,8 @@ body {
 .task.in-bundle.gap-above { margin-top: 0 !important; padding-top: 30px; }
 .task.in-bundle.gap-below:not(.bundle-last) { margin-bottom: 0 !important; padding-bottom: 30px; }
 .task.in-bundle.bundle-last.gap-below-in { padding-bottom: 30px; }
+/* 拖到一捆的下边缘：缝开在捆外面（单独放、从捆里拆出来），不进捆 */
+.gap-below-out { margin-bottom: 28px !important; }
 .task, .group, .proj-row, .bundle-head { transition: margin 0.12s ease, padding 0.12s ease; }
 .is-dragging {
   height: 0 !important;
@@ -337,14 +339,7 @@ body {
 
 .task .task-url:hover { text-decoration: underline; }
 
-/* ── 交接单（序号下面的交接小标认人，底色只比普通条目暖一点点，别整块换色） ── */
-
-.task.handoff {
-  background: rgba(250, 244, 226, 0.7);
-  border: 1px solid rgba(201, 165, 76, 0.28);
-}
-
-.task.handoff .handle { color: rgba(138, 111, 47, 0.55); }
+/* ── 交接单：底色、边框、六个点都跟普通条目一样，只靠序号下面的交接小标认（2026-10-13 用户：颜色统一，小标就够了） ── */
 
 /* 交接小标（2026-10-13 用户：别用表情，照复制钮那种圆角小方块＋细线图标，颜色比复制钮重一点、一眼认得出） */
 .handoff-badge {
@@ -715,7 +710,7 @@ body {
 
 /* ══ 草木皮肤（2026-09-24 用户拍板：毛玻璃一直透、带一点草木味、别太重，清新）══════════════
    只换颜色＋两处小装饰（标题前一片小叶子、右下角一枝很淡的叶子水印），不动布局、不动透明度滑条。
-   交接单条目那几处淡黄照旧（设定04：一眼认出）。整段删掉 = 回到原来的金色。 */
+   交接单只靠序号下面的小标认，底色跟普通条目一样（设定04，2026-10-13）。整段删掉 = 回到原来的金色。 */
 
 #app {
   border-color: rgba(122, 156, 94, 0.38);
@@ -950,6 +945,11 @@ body {
 
 /* 拖着一条压在别条正中间：要捆上了 */
 .task.bundle-target { outline: 2px solid rgba(122, 156, 94, 0.8); background: rgba(122, 156, 94, 0.18); }
+/* 拖进一捆的范围：整捆变绿＝松手放进这捆（2026-10-13 用户：变绿＝合并，不绿＝单独放）。捆头到最后一条一起亮，边框连成一圈 */
+.bundle-head.bundle-drop, .task.in-bundle.bundle-drop { background: rgba(122, 156, 94, 0.18); border-color: rgba(122, 156, 94, 0.8); }
+.bundle-head.bundle-drop { border-width: 2px 2px 0 3px; }
+.task.in-bundle.bundle-drop { border-right-width: 2px; border-left-color: rgba(122, 156, 94, 0.8); border-top-color: rgba(122, 156, 94, 0.18); }
+.task.in-bundle.bundle-drop.bundle-last { border-bottom-width: 2px; }
 
 /* 在干：哪个 AI 窗口领走了 */
 .claim {

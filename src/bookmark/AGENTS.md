@@ -53,6 +53,7 @@ BookmarkStore（testkit 单测用）
 - 🚨 **真机看板里 Ctrl+R = 编译源码 + 整程序重开**（跟脑图一样，等几秒正常），不是刷新当前页面。开机和手点必须走项目根 `入口（开发版·跑源码）` 那个门面，不许再指 `release-0.1.xx`。
 - 🚨 **看板永远常驻显示（改版三 2026-09-11 拍板）**：旧 F3/托盘的显示/收起逻辑已撤，别加回收起路径；托盘「书签台」入口现在的动作 = F1 同款置顶开关（提上来/沉回去）。
 - 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM，只发 BOTTOM 摘不掉置顶样式。
+- 🚨 **拖动去向看颜色（2026-10-13 用户拍板，设定21）：变绿＝合并，不绿＝单独放。** 任务列表（能捆的组、或里面有捆的组）拖动走 `bmPlanDrop`：进一捆范围（捆头下半截到最后一条底边往上 16 像素）整捆加 `.bundle-drop` 变绿、松手插进这捆这个位置；压在散条正中间 40% 它变绿（`.bundle-target`）、松手捆一起；别处（块和块之间、捆头上半截、捆底边缘）只露缝、松手单独放，原来在捆里就拆出来。去向由界面算好交给 `store.move(…, into)`（捆号／null），store 只把位置理顺、不再猜；不传 into 才按邻居推断（命令行、待定区用）。别再加「拖到捆底还算在捆里」那种暗规矩——用户看不出来，拆不出来。
 - 🚨 **单击和拖动分开（2026-09-24 用户拍板，设定 11）**：鼠标按下挪过 5 像素就是拖（不用等，`BM_DRAG_SLOP`）；没挪就松手是单击，**松手马上响应**（条目文字单击改字、项目页单击进夹/打开 md），按多久都算单击；拖完那一下点击被 `row.dataset.swallow` 吞掉。🚫 别改回「按住 0.3 秒才能拖」（人按下就挪，会被判成单击直接进改字）；🚫 别改成双击、别给单击加延时（当天试过双击，用户：「单击点了半天没反应」）。不走系统拖放，不靠左边小点（小点只管「派给 / 删除」）；别给条目加 `draggable`。待定、分组条目、项目页同一个 `bmBindDrag`（组框不绑，设定13）。
 - 🚨 **每组第一格是常驻空白框，组标题行不放小加号（设定17，2026-09-24）**：空白框 `bmBuildInsertRow(组, true)` **不带 `task` 类**（不是条目，带了会被拖动、数条目、「第一条」算进去）；找输入框一律 `bmFindInsertInput(组, 是不是空白框)`，别再 `querySelector(".insert-row textarea")`（第一个永远是别的组的）。只有交接单专区留小加号。
 - 🚨 **组标题行只放颜色点 / 交接小标 + 组名（交接单专区另有小加号）（设定13，2026-09-24）**：不放条数、不放折叠钮，组高度跟内容走；组框不能拖（只拖组里条目，拖到别组标题=改派）。折叠记录 `bm-collapsed-groups` 已不读不写，别加回来——加回来会让以前收起过的组永远收着。页签上的待定数字另算，保留。
@@ -84,7 +85,7 @@ BookmarkStore（testkit 单测用）
 
 **只改了本块，就只跑下面这几关**；桌宠自己的 `controls` / `smoke` / `screenshot` / `lifecycle` 不用陪跑。
 动了两边共用的（`src\app.ts`、`src\shared\`、打包、`入口（开发版·跑源码）`、Ctrl+R 重开）才两边都跑。
-已知基线（2026-09-24，改之前就红，不算新红）：`verify-bookmark-handoff.mjs` 4 项（专区位置、详情展开/收起，外加一处卡住：它第③步单击条目文字当「展开详情」，实际进了改字；2026-09-24 起重画不再冲掉改字框，那条一直在改字状态，第⑥步按文字找不到它而超时——原来第 4 项是空态提示）——都是 `3a981cc` 长按拖动改版拿掉了旧控件，脚本没跟上。
+已知基线（2026-10-13 重跑，改之前就红，不算新红）：`verify-bookmark-handoff.mjs` 2 项——①「专区是最后一块、＋加Agent 按钮在它上方」（＋加Agent 早挪进页签栏的「＋组」，脚本还在找旧按钮）、⑦「专区空态提示在」（空态提示早拿掉了）。脚本没跟上界面，不是功能坏了。
 
 1. `npm run build` 过
 2. `npm test` 过（含 `testkit\tests\bookmark-store.test.ts`）
@@ -94,6 +95,7 @@ BookmarkStore（testkit 单测用）
 6. `node scripts/verify-bookmark-images.mjs` 过（贴多图、光标位置、图文编辑、大图、交给 AI、重载改派、移除图、非图片和越界路径拒绝；隐藏窗口跑，不动系统剪贴板）。🚨 样图必须是校验和都对的真 PNG，Electron 解码器很严
    图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（打开就能标、一套流水号、自动存不动原图、撤销、拖动编号、删光清附属文件、改字框里能标、交给 AI 带编号清单；隐藏窗口）。
 7. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点；组框拖不动、标题行无条数无折叠、小加号贴组名、交接单专区同底）
+7b. `node scripts/verify-bookmark-drag-bundle.mjs` 过（变绿＝合并、不绿＝单独放：捆里调顺序整捆绿、两捆中间不绿松手拆出来、捆下边缘不绿拆出来、拖进别的捆整捆绿插在指定位置、压在散条正中间它变绿捆一起；截图在 `.runtime/drag-bundle/`）
 8. `node scripts/verify-bookmark-launch-paste.mjs` 过（🚨 真机真窗口：假快捷方式指向假 AI 程序 `scripts/bookmark-fake-agent.ps1`，外加 powershell 复制改名 `ChatGPT.exe` 冒充 Codex 跑 `scripts/bookmark-fake-desktop-agent.ps1`；真开窗、真按 Ctrl+N / Ctrl+V；验收到的字＝启动句、没有回车。跑的半分钟别碰键盘鼠标，抢了最前面看板按规矩不贴，这关就红）。只动了启动 Agent 才必跑
 8b. `node scripts/verify-bookmark-organize.mjs` 过（右键成捆、最后一次为准、剩一条散、交接单专区捆、设置浮层 AI 整理、小橙点和知道了、整理记录气泡、加改删模型、全部重来再撤销）
 9. `node scripts/verify-bookmark-insert.mjs` 过（每组第一格空白框、没有加号；点进去光标在框里；写了点别处 / 回车落到第二格、框清空，回车后能接着写；打字中途重画不丢；写进哪组落哪组；交接单专区小加号）

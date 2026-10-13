@@ -357,6 +357,72 @@ function bmMarkGap(anchor, place, row) {
   anchor.classList.add(place === "above" ? "gap-above" : "gap-below");
 }
 
+// 捆的上下边缘算捆外（2026-10-13 用户：两捆挨着时中间要有一道「哪边都不绿」的缝，拖到那儿就是拆出来）。
+const BM_BUNDLE_EDGE = 16;
+
+/** 任务列表拖到哪、松手会怎样（2026-10-13 用户拍板：变绿＝合并，不绿＝单独放）：
+ *  - 进了一捆的范围（捆头下半截到最后一条底边往上 16 像素）→ 整捆变绿，松手插进这捆的这个位置（自己这捆就是调顺序）
+ *  - 压在散着的一条正中间 → 它变绿，松手跟它捆成一捆
+ *  - 别的地方（块和块之间、捆的上下边缘）→ 只露缝，松手单独放在这儿，原来在捆里就拆出来
+ *  返回 { mark(), hit }；into：捆号＝放进这捆，null＝单独放。 */
+function bmPlanDrop(list, row, y, x, bundleable, idOf) {
+  const id = idOf(row);
+  const blocks = [];
+  for (const el of list.children) {
+    if (el === row) continue;
+    if (el.classList.contains("bundle-head")) {
+      blocks.push({ head: el, bundle: el.dataset.bundle || "", members: [] });
+    } else if (el.classList.contains("task")) {
+      const last = blocks[blocks.length - 1];
+      if (el.dataset.bundle && last && last.head && last.bundle === el.dataset.bundle) last.members.push(el);
+      else blocks.push({ loose: el });
+    }
+  }
+  const lights = (block) => () => {
+    block.head.classList.add("bundle-drop");
+    block.members.forEach((m) => m.classList.add("bundle-drop"));
+  };
+  const out = (anchor, place, mark) => ({ mark, hit: { id, anchorId: idOf(anchor), place, into: null } });
+  for (const block of blocks) {
+    if (block.loose) {
+      const r = block.loose.getBoundingClientRect();
+      if (y >= r.bottom) continue;
+      if (bundleable && y > r.top + r.height * 0.3 && y < r.bottom - r.height * 0.3 && x >= r.left && x <= r.right) {
+        return { mark: () => block.loose.classList.add("bundle-target"), hit: { id, bundleWith: idOf(block.loose) } };
+      }
+      const above = y < r.top + r.height / 2;
+      return out(block.loose, above ? "above" : "below", () => block.loose.classList.add(above ? "gap-above" : "gap-below"));
+    }
+    if (!block.members.length) continue;
+    const head = block.head.getBoundingClientRect();
+    const lastEl = block.members[block.members.length - 1];
+    const last = lastEl.getBoundingClientRect();
+    if (y >= last.bottom) continue;
+    // 捆头上半截：插在这捆上面，不进捆
+    if (y < head.top + head.height / 2) return out(block.members[0], "above", () => block.head.classList.add("gap-above"));
+    // 最后一条的底边：放在这捆下面，不进捆
+    if (y > last.bottom - Math.min(BM_BUNDLE_EDGE, last.height * 0.35)) {
+      return out(lastEl, "below", () => lastEl.classList.add("gap-below-out"));
+    }
+    // 捆里：整捆变绿，缝开在捆里面
+    const target = block.members.find((m) => { const r = m.getBoundingClientRect(); return y < r.top + r.height / 2; });
+    const anchor = target || lastEl;
+    const place = target ? "above" : "below";
+    return {
+      mark: () => {
+        lights(block)();
+        anchor.classList.add(place === "above" ? "gap-above" : anchor.classList.contains("bundle-last") ? "gap-below-in" : "gap-below");
+      },
+      hit: { id, anchorId: idOf(anchor), place, into: block.bundle },
+    };
+  }
+  const tail = blocks[blocks.length - 1];
+  if (!tail) return { mark: () => {}, hit: null };
+  const lastEl = tail.loose || tail.members[tail.members.length - 1];
+  if (!lastEl) return { mark: () => {}, hit: null };
+  return out(lastEl, "below", () => lastEl.classList.add(tail.loose ? "gap-below" : "gap-below-out"));
+}
+
 /** 左键按下直接挪就是拖。拖到哪条缝，两边散开；松手插进去。不走系统拖放，所以不会出禁止符号。 */
 function bmBindDrag(opts) {
   const handle = opts.handle;
@@ -377,11 +443,12 @@ function bmBindDrag(opts) {
     let lastX = startX;
     let lastY = startY;
     let hit = null;
+    let tempLast = null; // 拖走的是一捆最后一条：上一条临时当捆底，捆的底边和圆角别断
     bmDragActive = true;
 
     function clearMarks() {
-      document.querySelectorAll(".gap-above, .gap-below, .gap-below-in, .drag-target, .bundle-target").forEach((el) => {
-        el.classList.remove("gap-above", "gap-below", "gap-below-in", "drag-target", "bundle-target");
+      document.querySelectorAll(".gap-above, .gap-below, .gap-below-in, .gap-below-out, .drag-target, .bundle-target, .bundle-drop").forEach((el) => {
+        el.classList.remove("gap-above", "gap-below", "gap-below-in", "gap-below-out", "drag-target", "bundle-target", "bundle-drop");
       });
     }
     function finish(commit) {
@@ -391,6 +458,7 @@ function bmBindDrag(opts) {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
       if (ghost) ghost.remove();
+      if (tempLast) tempLast.classList.remove("bundle-last");
       row.classList.remove("is-dragging");
       bmDragActive = false;
       const pending = bmRefreshPending;
@@ -410,6 +478,11 @@ function bmBindDrag(opts) {
       }
       armed = true;
       const rect = row.getBoundingClientRect();
+      const before = row.previousElementSibling;
+      if (row.classList.contains("bundle-last") && before && before.classList.contains("task") && before.dataset.bundle === row.dataset.bundle) {
+        before.classList.add("bundle-last");
+        tempLast = before;
+      }
       row.classList.add("is-dragging");
       ghost = row.cloneNode(true);
       ghost.classList.remove("is-dragging");
@@ -442,6 +515,13 @@ function bmBindDrag(opts) {
       }
       const list = opts.list();
       if (!list) return;
+      // 任务列表（能捆的组、或里面有捆的组）走「变绿＝合并、不绿＝单独放」那套。
+      if (opts.bundleable || list.querySelector(".bundle-head")) {
+        const plan = bmPlanDrop(list, row, y, x, opts.bundleable, opts.idOf);
+        plan.mark();
+        hit = plan.hit && plan.hit.anchorId === plan.hit.id ? null : plan.hit;
+        return;
+      }
       const items = [...list.children].filter((el) => el !== row && opts.accept(el));
       // 捆一捆（设定15）：压在别条的正中间（上下各留 30% 给插缝）＝捆上；学手机桌面把图标叠一起建文件夹。
       if (opts.bundleable) {
@@ -569,7 +649,7 @@ function bmBuildGroup(key, displayName, records) {
 function bmBuildTask(record, groupKey, order) {
   const item = document.createElement("li");
   item.className = "task";
-  if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（序号下面一个交接小标+淡黄底），一眼认出
+  if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（序号下面一个交接小标），一眼认出；底色跟普通条目一样
   item.dataset.id = record.id;
   item.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -781,7 +861,7 @@ function bmBuildTask(record, groupKey, order) {
         return;
       }
       if (!hit.anchorId || hit.anchorId === hit.id) return;
-      await window.bookmark.move(hit.id, hit.anchorId, hit.place);
+      await window.bookmark.move(hit.id, hit.anchorId, hit.place, hit.into);
       await bmRefresh();
     },
   });

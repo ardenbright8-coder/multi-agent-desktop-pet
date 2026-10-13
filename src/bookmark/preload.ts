@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   copyDispatch: (id: string, by: string) => ipcRenderer.invoke('bookmark:dispatch:copy', { id, by }),
   add: (input: unknown) => ipcRenderer.invoke("bookmark:add", input),
   insertBeside: (input: unknown) => ipcRenderer.invoke("bookmark:insert-beside", input),
-  move: (id: string, anchorId: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:move", { id, anchorId, place }),
+  /** into：捆号＝放进这捆，null＝单独放（从捆里拆出来），不传＝按两边邻居推断（老办法）。 */
+  move: (id: string, anchorId: string, place: "above" | "below", into?: string | null) => ipcRenderer.invoke("bookmark:move", { id, anchorId, place, into }),
   remove: (id: string) => ipcRenderer.invoke("bookmark:remove", id),
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。

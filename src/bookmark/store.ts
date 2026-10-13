@@ -406,8 +406,10 @@ export class BookmarkStore {
     return record;
   }
 
-  /** 把一条挪到另一条的上面或下面。顺序就是数组顺序，刷新还在。锚点没有或挪到自己身上则不动。 */
-  move(id: string, anchorId: string, place: "above" | "below"): BookmarkRecord | null {
+  /** 把一条挪到另一条的上面或下面。顺序就是数组顺序，刷新还在。锚点没有或挪到自己身上则不动。
+   *  into（2026-10-13 拖动改版：变绿＝合并、不绿＝单独放）：捆号＝放进这捆，null＝单独放（在捆里就拆出来），
+   *  不传＝按两边邻居推断（老办法，命令行、旧界面用）。 */
+  move(id: string, anchorId: string, place: "above" | "below", into?: string | null): BookmarkRecord | null {
     this.ensureLoaded();
     const from = this.records.findIndex((item) => item.id === id);
     if (from < 0 || id === anchorId) return this.records[from] ?? null;
@@ -422,7 +424,8 @@ export class BookmarkStore {
     if (place === "below") to += 1;
     this.records.splice(to, 0, item);
     const before = item.bundleId;
-    this.settleBundleAfterMove(item);
+    if (into === undefined) this.settleBundleAfterMove(item);
+    else this.placeExplicitly(item, into);
     if (item.bundleId !== before) item.userPinned = true;
     this.dissolveLoneBundles();
     this.save();
@@ -569,6 +572,28 @@ export class BookmarkStore {
   }
 
   /** 挪完之后定它在不在捆里：夹在同一捆两条中间＝进这捆；本来在捆里、挪到捆边上还挨着＝留下；别的都＝离开。 */
+  /** 拖动时界面已经说清了进哪捆还是单独放：照办，再把位置理顺，免得一捆被插断成两截。 */
+  private placeExplicitly(item: BookmarkRecord, into: string | null): void {
+    const key = groupKeyOf(item);
+    const members = into ? this.records.filter((r) => r !== item && r.bundleId === into && groupKeyOf(r) === key) : [];
+    if (into && members.length) this.coordination.assertEditable(into);
+    const target = members.length ? into : null;
+    const same = this.records.filter((r) => groupKeyOf(r) === key);
+    const at = same.indexOf(item);
+    const prev = same[at - 1]?.bundleId ?? null;
+    const next = same[at + 1]?.bundleId ?? null;
+    const stray = target ? prev !== target && next !== target : Boolean(prev && prev === next);
+    if (stray) {
+      // 进捆却没挨着这捆 → 挪到这捆最后；单独放却夹在一捆中间 → 挪到那捆后面
+      const bundle = target ?? prev!;
+      this.records.splice(this.records.indexOf(item), 1);
+      let last = -1;
+      this.records.forEach((r, i) => { if (r.bundleId === bundle) last = i; });
+      this.records.splice(last + 1, 0, item);
+    }
+    item.bundleId = target;
+  }
+
   private settleBundleAfterMove(item: BookmarkRecord): void {
     const key = groupKeyOf(item);
     const same = this.records.filter((r) => groupKeyOf(r) === key);
