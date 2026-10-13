@@ -30,12 +30,17 @@ try {
   await page.setViewportSize({ width: 520, height: 800 });
   const recs = await page.evaluate(async () => {
     await window.bookmark.add({ text: '没读过的一条，照旧露原文两行', assignee: 'Claude' });
+    await window.bookmark.add({ text: '库管理以后再做：教 Agent 定期整理库', kind: 'handoff', detail: '交接单的六块详情' });
     await window.bookmark.add({ text: '然后还有一个问题，就是说，现在的话我发现你看你这个，怎么说呢你这个右边那个房子的话，你看因为你左边你看你这个项目里边左再返回，那你直接点返回就完了嘛，那个向左的箭头点了没反应', assignee: 'Claude' });
     return await window.bookmark.list();
   });
   const titled = recs.find(r => r.text.startsWith('然后'));
   const plain = recs.find(r => r.text.startsWith('没读过'));
-  const notes = { [titled.id]: { project: '库管理面板', title: '项目页左上角的返回箭头点了没反应，回不到上一层，要修好；另外点底部任务栏图标时，想让它先弹出一个新窗口，像苹果那样', summary: 'x', key: org.noteKey(titled) } };
+  const hand = recs.find(r => r.kind === 'handoff');
+  const notes = {
+    [titled.id]: { project: '库管理面板', title: '库管理面板项目页左上角的返回箭头点了没反应，回不到上一层，要修好；另外点底部任务栏图标时，想让它先弹出一个新窗口，像苹果那样', summary: 'x', key: org.noteKey(titled) },
+    [hand.id]: { project: '库管理面板', title: '库管理面板这块先往后压，等框架搭完再给 Agent 写一套整理库的规矩，建议要短', summary: 'x', key: org.noteKey(hand) },
+  };
   writeFileSync(join(home, 'bookmark', 'AI条目小结.json'), JSON.stringify(notes));
   await page.evaluate(() => bmRefresh());
   await page.locator('#tab-groups').click();
@@ -55,6 +60,15 @@ try {
   await page.screenshot({ path: join(out, '点开原文.png') });
   await page.locator(`${T} .task-title`).click();
   check('③ 再点收起', !(await vis(`${T} .task-text`)));
+
+  // ⑤ 交接单跟普通条目一样：小标题在第一行、原文和详情收着、没有「详情」按钮，点小标题一起展开
+  const H = `.task[data-id="${hand.id}"]`;
+  check('⑤ 交接单：第一行小标题，原文和详情收着，没有「详情」按钮', (await vis(`${H} .task-title`)) && !(await vis(`${H} .task-text`)) && !(await vis(`${H} .task-detail`)) && (await page.locator(`${H} .detail-fold`).count()) === 0);
+  check('⑤ 交接单的小标还在序号下面', await vis(`${H} .num-col .handoff-badge`));
+  await page.locator(`${H} .task-title`).click();
+  check('⑤ 点交接单小标题：原文和详情一起展开', (await vis(`${H} .task-text`)) && (await vis(`${H} .task-detail`)));
+  await page.screenshot({ path: join(out, '交接单展开.png') });
+  await page.locator(`${H} .task-title`).click();
 
   // ④ 右键菜单：点到别条文字（会进改字、截走 click）也要收起
   await page.locator(`${T} .handle`).click();

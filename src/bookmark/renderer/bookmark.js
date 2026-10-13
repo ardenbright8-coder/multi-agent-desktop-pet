@@ -700,15 +700,15 @@ function bmBuildTask(record, groupKey, order) {
 
   const body = document.createElement("div");
   body.className = "task-body";
-  // 小标题（第五版）：AI 读完这条用大白话写的「这条要干啥」。散着的条目前面带项目名，捆里的项目名在捆标题上。
-  // 交接单自己那句就是标题，不另加。有小标题的条目原文默认收起，点小标题展开 / 收起（2026-10-13 用户拍板）。
+  // 小标题（第五版）：AI 读完这条用大白话写的「这条要干啥」，开头自带项目名。所有组、交接单都一样（2026-10-13 用户：统一）。
+  // 有小标题的条目原文（交接单连详情）默认收起，点小标题展开 / 收起。
   const note = bmNotes[record.id];
-  const titled = Boolean(note && note.title && record.kind !== "handoff" && bmEditingId !== record.id);
+  const titled = Boolean(note && note.title && bmEditingId !== record.id);
   const bodyOpen = !titled || bmOpenBodies.has(record.id);
   if (titled) {
     const title = document.createElement("div");
     title.className = "task-title";
-    title.textContent = !record.bundleId && note.project && note.project !== "认不出" ? `${note.project} · ${note.title}` : note.title;
+    title.textContent = note.title;
     title.title = bodyOpen ? "点一下收起原文" : "点一下看原文";
     title.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -772,7 +772,14 @@ function bmBuildTask(record, groupKey, order) {
   }
   // 详情（交接单的长内容）：有 detail 的条目点一下展开/收起，默认收起（板上只占标题两行）。
   // 展开态记进 bmOpenDetails：自动存档/改派触发重画后还原，别把点开的手气洗掉。
-  if (record.detail) {
+  if (record.detail && titled) {
+    // 有小标题：详情跟原文一起收着，点小标题一起展开，不要「详情」按钮（2026-10-13 用户）。
+    const detail = document.createElement("div");
+    detail.className = "task-detail";
+    detail.textContent = record.detail;
+    detail.hidden = !bodyOpen;
+    body.appendChild(detail);
+  } else if (record.detail) {
     const detail = document.createElement("div");
     detail.className = "task-detail";
     detail.textContent = record.detail;
