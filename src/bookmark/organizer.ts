@@ -279,7 +279,7 @@ export const ITEM_RULES = `你是看板读条员。用户在任务看板里随�
 小标题是用户以后唯一会看的东西：原文收起来了，他只看小标题就要知道这条要干啥。所以写饱满、写成大白话。
 - 读者是不懂技术的普通人，也不知道上下文。像跟朋友讲一件事那样口语化地说：开头先说是哪个项目的哪个东西，再说现在出了啥毛病，最后说要改成什么样
 - 开头必须点明项目和东西，比如"酒馆出图面板里的看图工具""Agent 看板的 F1 置顶""视频下载转文字小工具的字幕"——光写"看图工具""出图历史"，读的人不知道是谁家的
-- 至少 50 个字，一般 100 个字以内，把这条里要干的活都说到，一件不落；一行写不下就写两三行。事情特别多也别超过 120 个字：每件说短一点，件数一件不少，句子要说完整
+- 30 到 80 个字，按这条里有多少事来定：事少就短，事多就长，把要干的活都说到，一件不落；一行写不下就写两行。事情再多也别超过 80 个字：每件说短一点，件数一件不少，句子要说完整
 - 用平时说话的词。专业名词能换成白话就换；换不了，第一次出现时顺手说一句它是干啥的
 - 交接单（上一个 AI 窗口没干完留下的活）也一样：说清是哪个项目、接着要干哪几件事
 - ✅ "库管理面板项目页左上角的返回箭头点了没反应，回不到上一层，要修好；另外点底部任务栏图标时，想让它先弹出一个新窗口，像苹果那样，方便同时停在不同的层"
@@ -787,7 +787,8 @@ export function hardRulesText(): string {
     "- AI 只能做两件事：把新条目放进已有的捆、拿两条以上开一个新捆。不能改字、不能把捆里的拿出来。",
     "- 你手动动过的条目（拖进拖出、右键成捆、拆捆）不碰。",
     `- 捆名不许用：${BANNED_NAMES.join("、")}。捆名最长 ${MAX_BUNDLE_NAME} 个字。`,
-    "- AI 往它自己开的捆里加了条目，就让 AI 照捆里各条的小标题重写捆名；你起名的捆不改名。",
+    "- 捆名全交给 AI：没起过名的捆、条目进出过的捆、里面条目小标题变了的捆，都照各条小标题重写大标题（多人派工捆除外）。没变的不再花钱。",
+    "- 你停手 5 分钟（看板 5 分钟没变），自动整理一次：重读改过的条目、分新条目、重写变了的捆名、检查；整理完没再变就不再整理。定时整理照旧，没变化就什么都不做。",
     "- AI 说错的那一条（编号不对、重复、跨组）直接丢掉，不连累同一轮别的。",
     "- 整理完接着检查一遍：整组连你捆的一起看，放错的在条目右边挂小橙点，不挪任何东西。",
     "- 看板上没变化的组不再检查，不花钱。",
@@ -813,8 +814,6 @@ export interface GroupResult {
   label: string;
   created: { name: string; ids: string[]; why: string }[];
   joined: { name: string; id: string; text: string; why: string }[];
-  /** AI 捆里加了条目后重写的捆名 */
-  renamed: { from: string; to: string; ids: string[] }[];
   skippedIds: string[];
   dropped: string[];
   error?: string;
@@ -977,6 +976,69 @@ export async function askBundleName(members: BookmarkRecord[], notes: NoteBook |
   return name;
 }
 
+// ── 捆标题（2026-10-13 用户：捆名全交给 AI，我不手动改；捆里的条目变了、条目内容变了，大标题就重写）──
+
+/** 捆标题账本：捆号 → 起名时这捆里有哪些条、各条小标题是啥（指纹）。指纹没变就不再花钱起名。存 AI捆标题.json。 */
+export type NameBook = Record<string, string>;
+
+export function parseNameBook(raw: unknown): NameBook {
+  const out: NameBook = {};
+  if (raw && typeof raw === "object") for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === "string") out[k] = v;
+  return out;
+}
+
+function bundleSig(members: BookmarkRecord[], notes: NoteBook | undefined): string {
+  return fnv(members.map((m) => `${m.id}|${freshNote(m, notes)?.title ?? m.text}`).join("\n"));
+}
+
+export interface NameDeps {
+  store: BookmarkStore;
+  agents: string[];
+  config: OrganizerConfig;
+  fetchFn: FetchFn;
+  notes?: NoteBook;
+  book: NameBook;
+  timeoutMs?: number;
+}
+
+/** 给变了的捆重写大标题：没起过名的、条目进出过的、条目小标题变了的。多人派工捆的名字归派工那边，不碰。 */
+export async function runBundleNames(deps: NameDeps): Promise<{ book: NameBook; rows: RecordRow[]; errors: string[] }> {
+  const { store } = deps;
+  const records = store.list();
+  const meta = store.bundleMeta();
+  const book: NameBook = {};
+  const rows: RecordRow[] = [];
+  const errors: string[] = [];
+  for (const group of groupsForOrganizer(records, deps.agents)) {
+    const ids = [...new Set(group.records.map((r) => r.bundleId).filter((b): b is string => Boolean(b)))];
+    for (const bid of ids) {
+      const members = group.records.filter((r) => r.bundleId === bid);
+      if (members.length < 2 || !store.aiCanName(bid)) continue;
+      const sig = bundleSig(members, deps.notes);
+      if (deps.book[bid] === sig && meta[bid]) {
+        book[bid] = sig;
+        continue;
+      }
+      try {
+        const name = await askBundleName(members, deps.notes, deps.config, deps.fetchFn, deps.timeoutMs);
+        const before = meta[bid]?.name;
+        if (store.aiNameBundle(bid, name)) {
+          book[bid] = sig;
+          if (name !== before) rows.push({ group: group.label, action: "改捆名", title: before ? `「${before}」改名「${name}」` : `给捆起名「${name}」`, why: "捆里的条目或它们的小标题变了，大标题跟着重写", itemIds: members.map((m) => m.id) });
+        }
+      } catch (error) {
+        errors.push(`${group.label}：${error instanceof Error ? error.message : error}`);
+      }
+    }
+  }
+  return { book, rows, errors };
+}
+
+/** 整块看板的指纹：条目、字、详情、图、在哪个组哪个捆。闲了 5 分钟、指纹跟上次整理完不一样才再整理。 */
+export function boardFingerprint(records: BookmarkRecord[]): string {
+  return fnv(records.map((r) => `${r.id}|${r.assignee ?? ""}|${r.bundleId ?? ""}|${r.text}|${r.detail ?? ""}|${r.attachments.join(",")}`).join("\n"));
+}
+
 /** 「测一下」：发一句最短的话，回得来就算通。 */
 export async function testModel(entry: ModelEntry, fetchFn: FetchFn, timeoutMs = 90000): Promise<string> {
   const text = await chat(entry, [{ role: "user", content: "只回一个字：好" }], "low", fetchFn, timeoutMs, 2000);
@@ -999,7 +1061,7 @@ export async function runOrganizer(deps: RunDeps): Promise<OrganizeSummary> {
     });
     if (!task) continue;
     const newIds = task.newAliases.map((a) => task.items.get(a)!);
-    const result: GroupResult = { label: group.label, created: [], joined: [], renamed: [], skippedIds: [], dropped: [], newIds };
+    const result: GroupResult = { label: group.label, created: [], joined: [], skippedIds: [], dropped: [], newIds };
     summary.groups.push(result);
     let plan: CleanPlan;
     try {
@@ -1031,19 +1093,6 @@ export async function runOrganizer(deps: RunDeps): Promise<OrganizeSummary> {
         result.dropped.push(`放进捆没成：${error instanceof Error ? error.message : error}`);
       }
     }
-    // AI 自己开的捆里加了条目：照各条小卡片重写捆名，让新加的事也进标题。用户起名的捆不改。
-    for (const bid of new Set(plan.joins.filter((j) => touched.has(j.id)).map((j) => j.bundleId))) {
-      const from = store.bundleMeta()[bid];
-      if (from?.by !== "ai") continue;
-      try {
-        const name = await askBundleName(store.list().filter((r) => r.bundleId === bid), deps.notes, config, deps.fetchFn, deps.timeoutMs);
-        if (name !== from.name && store.aiRenameBundle(bid, name)) {
-          result.renamed.push({ from: from.name, to: name, ids: store.list().filter((r) => r.bundleId === bid).map((r) => r.id) });
-        }
-      } catch (error) {
-        result.dropped.push(`改捆名「${from.name}」没成：${error instanceof Error ? error.message : error}`);
-      }
-    }
     result.skippedIds = newIds.filter((id) => !touched.has(id));
     if (touched.size) summary.changed = true;
     store.markSorted(task.seenIds);
@@ -1062,7 +1111,6 @@ export function organizeRows(s: OrganizeSummary, records: BookmarkRecord[]): Rec
     }
     for (const c of g.created) rows.push({ group: g.label, action: "开新捆", title: `开新捆「${c.name}」${c.ids.length} 条`, why: c.why || "AI 没写理由", itemIds: c.ids });
     for (const j of g.joined) rows.push({ group: g.label, action: "放进", title: `「${j.text}」→ 放进「${j.name}」`, why: j.why || "AI 没写理由", itemIds: [j.id] });
-    for (const n of g.renamed) rows.push({ group: g.label, action: "改捆名", title: `「${n.from}」改名「${n.to}」`, why: "捆里加了条目，标题重写，把新加的事也写进去", itemIds: n.ids });
     if (g.skippedIds.length) {
       const names = g.skippedIds.map((id) => byId.get(id)).filter((r): r is BookmarkRecord => Boolean(r)).map((r) => `「${shortText(r, 12)}」`);
       rows.push({ group: g.label, action: "没动", title: `${g.skippedIds.length} 条先散着：${names.slice(0, 3).join("")}${names.length > 3 ? "…" : ""}`, why: "AI 没找到讲同一个项目的伙伴，或者认不出是哪个项目", itemIds: g.skippedIds });

@@ -283,12 +283,18 @@ export class BookmarkStore {
     return this.createTaskBundle(ids, name, undefined, 'ai').id;
   }
 
-  /** AI 重写自己开的捆的名字（捆里加了条目后）。用户起名的、派工捆、AI 进不去的捆不改，返回 false。 */
-  aiRenameBundle(bundleId: string, name: string): boolean {
+  /** AI 能不能给这捆起名（2026-10-13 用户：捆名全交给 AI）：还在、至少两条、不是多人派工捆（派工捆的名字归派工那边）。 */
+  aiCanName(bundleId: string): boolean {
     this.ensureLoaded();
-    const meta = this.loadMeta()[bundleId];
-    if (!meta || meta.by !== 'ai' || !this.aiOpenBundle(bundleId) || !name.trim()) return false;
-    this.setBundleMeta(bundleId, { name: name.trim(), by: 'ai' });
+    if (this.coordination.get(bundleId)) return false;
+    return this.records.filter(r => r.bundleId === bundleId).length >= 2;
+  }
+
+  /** AI 给捆起名 / 重写名字。谁捆的（by）不变：起名不等于 AI 动了你的捆。 */
+  aiNameBundle(bundleId: string, name: string): boolean {
+    if (!this.aiCanName(bundleId) || !name.trim()) return false;
+    const by = this.loadMeta()[bundleId]?.by ?? 'user';
+    this.setBundleMeta(bundleId, { name: name.trim(), by });
     this.save();
     return true;
   }

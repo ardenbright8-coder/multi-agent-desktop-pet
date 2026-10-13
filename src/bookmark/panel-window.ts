@@ -34,7 +34,7 @@ import { registerBookmarkImageIpc } from "./image-ipc";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
   activeModel, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
-  freshNote, ITEM_RULES, liveHintBook, liveNoteBook, modelLabel, ORGANIZER_RULES, organizeRows, parseHintBook, parseNoteBook, parseOrganizerConfig, parseRunRecords,
+  boardFingerprint, freshNote, ITEM_RULES, parseNameBook, runBundleNames, type NameBook, liveHintBook, liveNoteBook, modelLabel, ORGANIZER_RULES, organizeRows, parseHintBook, parseNoteBook, parseOrganizerConfig, parseRunRecords,
   pruneRunRecords, runChecker, runItemNotes, runOrganizer, shortSummary, testModel,
   type Effort, type FetchFn, type HintBook, type NoteBook, type OrganizerConfig, type RecordRow, type RunRecord,
 } from "./organizer";
@@ -329,7 +329,10 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
       log.出事("收信模块启动失败（看板仍可用，只是收不到手机消息）", error, "inbox");
     }
   }
-  if (options?.resident && !process.env.AGENT_PET_HUB_HOME) startOrganizerTimer();
+  if (options?.resident && !process.env.AGENT_PET_HUB_HOME) {
+    startOrganizerTimer();
+    startIdleOrganizer();
+  }
   if (options?.resident) {
     try {
       const win = ensurePanel();
@@ -900,6 +903,7 @@ function registerIpc(): void {
     }
     writeHintBook({ hints: [], dismissed: [], checked: {} });
     writeNoteBook({}); // 全部重来＝每条也重读、小标题重写
+    writeNameBook({}); // 捆名也全部重写
     log.记(`AI 整理全部重来：拆了 ${split} 个捆`, "organizer");
     notifyInboxChanged();
     await runOrganizerOnce("全部重来", [{ group: "全部", action: "全部重来", title: `全部重来：拆了 ${split} 个捆，所有条目重新整理`, why: "你点了「全部重来」。重来前的样子存着，下一次整理之前能撤销", itemIds: requireStore().list().map((r) => r.id) }]);
@@ -1195,6 +1199,51 @@ function writeNoteBook(book: NoteBook): void {
   }
 }
 
+/** 捆标题账本（2026-10-13）：每捆起名时的指纹，没变就不再花钱起名。 */
+const NAMES_FILE = "AI捆标题.json";
+
+function readNameBook(): NameBook {
+  return parseNameBook(readJsonFile(NAMES_FILE));
+}
+
+function writeNameBook(book: NameBook): void {
+  try {
+    writeJsonAtomic(join(bookmarkDataDirectory(), NAMES_FILE), book);
+  } catch (error) {
+    log.出事("捆标题账本存不下来（下一轮会重起名）", error, "organizer");
+  }
+}
+
+/** 闲了 5 分钟自动整理（2026-10-13 用户：停手 5 分钟没动，就自己重读、重分、重写标题；整理完没再变就不动）。
+ *  每 30 秒看一眼整块看板的指纹：变了就记下时间；离最后一次变已经 5 分钟、又跟上次整理完的样子不一样，就整理一次。 */
+const IDLE_MS = 5 * 60_000;
+let idleTimer: NodeJS.Timeout | null = null;
+
+function startIdleOrganizer(): void {
+  let seenFp = boardFingerprint(requireStore().list());
+  let changedAt = 0;
+  let doneFp = seenFp; // 启动时的样子算整理过（启动 30 秒后定时那一轮会整理一次）
+  idleTimer = setInterval(() => {
+    try {
+      const fp = boardFingerprint(requireStore().list());
+      if (fp !== seenFp) {
+        seenFp = fp;
+        changedAt = Date.now();
+        return;
+      }
+      if (organizerRunning || fp === doneFp || !changedAt || Date.now() - changedAt < IDLE_MS) return;
+      if (!readOrganizerConfig().enabled) return;
+      void runOrganizerOnce("闲了 5 分钟").finally(() => {
+        doneFp = boardFingerprint(requireStore().list());
+        seenFp = doneFp;
+      });
+    } catch (error) {
+      log.出事("闲了 5 分钟自动整理没跑起来", error, "organizer");
+    }
+  }, 30_000);
+  idleTimer.unref?.();
+}
+
 function hintBookPath(): string {
   return join(bookmarkDataDirectory(), HINTS_FILE);
 }
@@ -1346,6 +1395,16 @@ async function runOrganizerOnce(reason: string, lead: RecordRow[] = []): Promise
     const summary = await runOrganizer({ store, agents, config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot(), rules: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES), notes });
     model = summary.model;
     rows.push(...organizeRows(summary, store.list()));
+    // 捆名全交给 AI（2026-10-13）：没起过名的、条目进出过的、条目小标题变了的捆，重写大标题。
+    try {
+      const named = await runBundleNames({ store, agents, config, fetchFn: organizerFetch, notes, book: readNameBook() });
+      writeNameBook(named.book);
+      rows.push(...named.rows);
+      for (const e of named.errors) rows.push({ group: e.split("：")[0], action: "没成", title: "有捆没起成名，下一轮再起", why: e, itemIds: [] });
+      if (named.rows.length) notifyInboxChanged();
+    } catch (error) {
+      log.出事(`${reason}起捆名失败`, error, "organizer");
+    }
     if (summary.changed) notifyInboxChanged();
     let text = shortSummary(summary);
     try {

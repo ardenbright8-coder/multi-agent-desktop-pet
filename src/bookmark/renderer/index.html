@@ -21,13 +21,13 @@
 
     <!-- 页签栏：待定 / Agent 分组 两页切换（2026-09-10 用户拍板：上下分层改左右两页，每页占满面板能多放条目） -->
     <nav id="page-tabs">
-      <button id="tab-inbox" type="button" class="page-tab active" data-page="inbox">
+      <button id="tab-inbox" type="button" class="page-tab" data-page="inbox">
         💭 待定 <span id="tab-inbox-count" class="tab-count">0</span>
       </button>
-      <button id="tab-groups" type="button" class="page-tab" data-page="groups">🤖 Agent 分组</button>
+      <button id="tab-groups" type="button" class="page-tab active" data-page="groups">🤖 Agent 分组</button>
       <button id="tab-projects" type="button" class="page-tab" data-page="projects">📁 项目</button>
       <button id="tab-skills" type="button" class="page-tab" data-page="skills">📖 技能</button>
-      <button id="add-agent-btn" type="button" title="加一个分组" hidden>＋组</button>
+      <button id="add-agent-btn" type="button" title="加一个分组">＋组</button>
       <!-- 加分组：点「＋组」就在这一栏变出小框（2026-10-12 用户：底下一整条太占地方） -->
       <span id="add-agent-row" hidden>
         <input id="new-agent-name" type="text" maxlength="24" placeholder="新分组名字" />

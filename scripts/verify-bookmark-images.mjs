@@ -56,6 +56,8 @@ try {
   await paste(page);
   await saved(page, async () => (await window.bookmark.list())[0]?.attachments.length === 2);
   await page.locator("#titlebar .title").click();
+  // 2026-10-13 起分组里的条目原文收着，点标题才展开；这里要看原文里的小图，先全展开
+  await page.evaluate(() => { document.querySelectorAll(".task").forEach((t) => bmOpenBodies.add(t.dataset.id)); return bmRefresh(); });
   await page.waitForSelector(".task-text .bm-inline-image");
   assert.equal(await page.locator(".task-text .bm-inline-image").count(),2);
   // 小图跟一行字差不多高（2026-09-24 用户：小图太大把排版搞乱，像个图标嵌在字里就行）
@@ -81,6 +83,7 @@ try {
   assert.ok(!prompt.includes("[图片:"));
   console.log("PASS 粘贴多图、光标位置、图文编辑、大图和复制交接");
   await page.reload(); await page.waitForLoadState("domcontentloaded"); await page.locator("#tab-groups").click();
+  await page.evaluate(() => { document.querySelectorAll(".task").forEach((t) => bmOpenBodies.add(t.dataset.id)); return bmRefresh(); }); // 重开后原文又收着，先展开
   await page.waitForSelector(".task-text .bm-inline-image");
   await page.evaluate((id) => window.bookmark.setAssignee(id,"ChatGPT"),id);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));

@@ -55,13 +55,13 @@ try {
   if (!panel) throw new Error("书签面板窗口没出现");
   await panel.waitForLoadState("domcontentloaded");
 
-  // ① 第三页签存在、默认非激活（默认页还是待定）。
+  // ① 第三页签存在、默认非激活（默认页是 Agent 分组，2026-10-13）。
   const tabs0 = await panel.evaluate(() => ({
     projectsTab: !!document.getElementById("tab-projects"),
     projectsActive: document.getElementById("tab-projects")?.classList.contains("active") ?? false,
-    inboxActive: document.getElementById("tab-inbox")?.classList.contains("active") ?? false,
+    groupsActive: document.getElementById("tab-groups")?.classList.contains("active") ?? false,
   }));
-  check("① 第三页签「📁 项目」存在且默认非激活", tabs0.projectsTab && !tabs0.projectsActive && tabs0.inboxActive,
+  check("① 第三页签「📁 项目」存在且默认非激活", tabs0.projectsTab && !tabs0.projectsActive && tabs0.groupsActive,
     JSON.stringify(tabs0));
 
   // ② 切到项目页：面包屑 + 新建两钮。

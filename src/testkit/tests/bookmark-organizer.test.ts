@@ -18,6 +18,7 @@ import {
   MAX_BUNDLE_NAME,
   noteKey,
   type NoteBook,
+  runBundleNames,
   runItemNotes,
   checkModelInput,
   cleanBaseUrl,
@@ -398,7 +399,7 @@ test("读条目：一条一问，只带这条自己的图；图片标记换成 [
     }
   }));
 
-test("分捆拿小卡片出题、不再带原图；AI 自己开的捆里加了条目就重写捆名，你起名的捆不改", () =>
+test("分捆拿小卡片出题、不再带原图；捆名全交给 AI：变了的捆重写，没变的不花钱，派工捆不碰", () =>
   withStore(async (store) => {
     const [a, b, c, d, e, f] = seed(store, ["一[图片:x.png]", "二", "三", "四", "五", "六"]);
     const aiBundle = store.aiCreateBundle([b, c], "库管理面板：返回键");
@@ -423,13 +424,29 @@ test("分捆拿小卡片出题、不再带原图；AI 自己开的捆里加了�
       return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply) } }] }) };
     };
     const summary = await runOrganizer({ store, agents: ["Claude"], config, now: NOW, fetchFn, notes });
-    assert.equal(calls.length, 2, "分捆一次＋给 AI 的捆改名一次，你起名的捆不问");
+    assert.equal(calls.length, 1, "分捆只问一次，改名另一步");
+    assert.deepEqual(organizeRows(summary, store.list()).map((r) => r.action), ["放进", "放进"]);
+
+    // 起名这一步：两捆都变了（各进了一条），AI 捆、你起名的捆都重写（捆名全交给 AI）
+    const named = await runBundleNames({ store, agents: ["Claude"], config, fetchFn, notes, book: {} });
+    assert.equal(calls.length, 3, "两捆各问一次");
     const nameAsk = JSON.parse(calls[1]);
     assert.match(nameAsk.messages[0].content, /每一条都要有份/);
-    assert.match(nameAsk.messages[1].content, /图标：先弹新窗口/);
     assert.equal(store.bundleMeta()[aiBundle].name, "库管理面板：返回键没反应·每层都有管理·图标先弹新窗口");
-    assert.equal(store.bundleMeta()[userBundle].name, "我起的名");
-    assert.deepEqual(organizeRows(summary, store.list()).map((r) => r.action), ["放进", "放进", "改捆名"]);
+    assert.equal(store.bundleMeta()[userBundle].name, "库管理面板：返回键没反应·每层都有管理·图标先弹新窗口", "你起名的也交给 AI");
+    assert.equal(store.bundleMeta()[userBundle].by, "user", "起名不改「谁捆的」");
+    assert.deepEqual(named.rows.map((r) => r.action), ["改捆名", "改捆名"]);
+    // 没变的不再花钱；挪一条出去就重写那一捆
+    await runBundleNames({ store, agents: ["Claude"], config, fetchFn, notes, book: named.book });
+    assert.equal(calls.length, 3, "没变的不再问");
+    store.move(f, a, "above", null);
+    const again = await runBundleNames({ store, agents: ["Claude"], config, fetchFn, notes, book: named.book });
+    assert.equal(calls.length, 4, "条目进出过的那一捆重写");
+    assert.equal(again.rows.length, 0, "名字一样就不记一行");
+    // 多人派工捆不碰
+    const [x, y] = seed(store, ["派一", "派二"], "Pi Agent");
+    const coop = store.createTaskBundle([x, y], "派工", "主窗");
+    assert.equal(store.aiCanName(coop.id), false);
     assert.equal(MAX_BUNDLE_NAME, 39);
     assert.match(hardRulesText(), /每张图/);
   }));

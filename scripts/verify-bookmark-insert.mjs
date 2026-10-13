@@ -61,6 +61,8 @@ try {
   if (!panel) throw new Error("书签面板窗口没出现");
   await panel.waitForLoadState("domcontentloaded");
 
+  await panel.locator("#tab-inbox").click(); // 2026-10-13 起默认打开 Agent 分组；这里测的是待定页
+
   await panel.evaluate(() => window.bookmark.add({ text: "原有一条" }));
   await panel.evaluate(() => { window.dispatchEvent(new Event("focus")); });
   await waitFor(async () => (await panel.locator("#board .task:not(.insert-row)").count()) === 1);

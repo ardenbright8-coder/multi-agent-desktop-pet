@@ -54,7 +54,7 @@ try {
   for (const id of ids.slice(3)) await page.locator(`.task[data-id="${id}"] .num`).click({ modifiers: ['Control'] });
   assert.equal(await page.locator('.dispatch-selected').count(), 3);
   assert.equal(await page.locator('.task-edit').count(), 0, 'Ctrl多选不进入改字/拖动');
-  await page.locator(`.task[data-id="${ids[4]}"] .task-text`).click({ button: 'right' });
+  await page.locator(`.task[data-id="${ids[4]}"] .task-title`).click({ button: 'right' });
   await page.locator('#ctx-menu .ctx-input').fill('第二捆');
   await page.locator('#ctx-menu .ctx-item').filter({ hasText: '捆成一捆' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.bundle-head').length === 2);

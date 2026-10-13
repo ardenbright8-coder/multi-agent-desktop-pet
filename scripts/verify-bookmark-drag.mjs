@@ -58,6 +58,8 @@ try {
   if (!panel) throw new Error("书签面板窗口没出现");
   await panel.waitForLoadState("domcontentloaded");
 
+  await panel.locator("#tab-inbox").click(); // 2026-10-13 起默认打开 Agent 分组；这里测的是待定页
+
   const texts = ["条目甲", "条目乙", "条目丙"];
   for (const text of texts) await panel.evaluate((t) => window.bookmark.add({ text: t }), text);
   // 看板窗口拿到焦点就重画——跟真机点一下窗口是同一条路。

@@ -12,7 +12,7 @@ const bmOpenBodies = new Set(); // 有小标题的条目，点开过原文的 id
 
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
-let bmCurrentPage = "inbox"; // 当前页签：inbox = 💭待定（默认） / groups = 🤖Agent 分组 / projects = 📁 项目（2026-09-11 加第三页）
+let bmCurrentPage = "groups"; // 当前页签：groups = Agent 分组（默认，2026-10-13 用户：打开就是分组） / inbox = 💭待定 / projects = 📁 项目（2026-09-11 加第三页）
 let bmInsertDraft = null; // 右键插进来、还在写的那一行：{ groupKey, anchorId, place, id, text, kind }
 let bmEditingId = null; // 点白条正在改的那条
 let bmInsertSaveTimer = null;
@@ -51,7 +51,20 @@ const BM_ICONS = {
   copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2.5 2.5 0 0 0-2.5-2.5H6.5A2.5 2.5 0 0 0 4 6.5V13a2.5 2.5 0 0 0 2.5 2.5h2"/>',
   // 交接单小标（2026-10-13 用户：别用表情，跟复制钮一个路子的细线小图标）：一块写字板
   handoff: '<rect x="5" y="4.5" width="14" height="16.5" rx="2.5"/><path d="M9 4.5V4a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4v.5"/><path d="M8.5 11h7M8.5 15h4.5"/>',
+  // 状态小标（2026-10-13 用户：显示状态的一律小标，碰到才冒说明）：在干＝转圈箭头；AI 捆的＝小机器人
+  busy: '<path d="M20 12a8 8 0 0 1-13.7 5.6"/><path d="M4 12a8 8 0 0 1 13.7-5.6"/><path d="M17.7 3v3.6h-3.6M6.3 21v-3.6h3.6"/>',
+  robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01M9.5 16.5h5"/>',
 };
+/** 状态小标：圆角小方块＋细线图标，说明放在鼠标碰到才冒的提示里（2026-10-13 用户：省地方给标题）。 */
+function bmStatusBadge(kind, label) {
+  const el = document.createElement("span");
+  el.className = `status-badge status-${kind}`;
+  el.title = label;
+  el.setAttribute("aria-label", label);
+  el.dataset.label = label;
+  el.innerHTML = bmIcon(kind);
+  return el;
+}
 // 组名前的官方标志（2026-09-24 用户拍板：比圆点专业）。Claude/OpenAI 取自 simple-icons 开源图标库，
 // Pi 取自 pi.dev 官网，Hermes 官网图标就是 ⚕；原文件在 E 盘 40_下载资产「AI官方标志」夹。认不出的组照旧叶形圆点。
 const BM_LOGOS = {
@@ -910,9 +923,8 @@ function bmBuildTask(record, groupKey, order) {
   // 在干标记（设定15）：哪个 AI 窗口领走了，一眼看到；别的窗口领不走。
   if (record.claimedBy) {
     item.classList.add("claimed");
-    const claim = document.createElement("span");
-    claim.className = "claim";
-    claim.textContent = `🔄 ${record.claimedBy} 在干`;
+    const claim = bmStatusBadge("busy", `${record.claimedBy} 在干`);
+    claim.classList.add("claim");
     item.appendChild(claim);
   }
   // AI 检查觉得放错了（第四版）：右边一个小橙点，碰到冒气泡，点「知道了」就不再提。
@@ -1808,21 +1820,20 @@ function bmBuildBundleHead(bundleId, members, groupKey) {
   const first = members[0] ? members[0].text.replace(/\[图片:[^\]]*\]/g, "").trim() : "";
   const dispatch = bmDispatchBundles.get(bundleId);
   const meta = bmBundleMeta[bundleId];
-  name.textContent = dispatch ? `派工捆 · ${dispatch.name}` : meta ? meta.name : (first.length > 16 ? `${first.slice(0, 16)}…` : first);
+  // 捆名放不下就换行，不出省略号；还没起名的先拿第一条的小标题（或开头）顶着，AI 闲下来会给它起名（2026-10-13）
+  const firstNote = members[0] ? bmNotes[members[0].id] : null;
+  name.textContent = dispatch ? `派工捆 · ${dispatch.name}` : meta ? meta.name : (firstNote && firstNote.title) || first;
   head.appendChild(name);
   // AI 整理捆的（设定21）：捆名后面一个淡淡的小机器人。你手动改过这几条，AI 就不再碰。
   if (meta && meta.by === "ai" && !dispatch) {
-    const ai = document.createElement("span");
-    ai.className = "bundle-ai";
-    ai.title = "AI 整理时捆的；你手动挪过、拆过的条目 AI 不再碰";
-    ai.textContent = "🤖";
+    const ai = bmStatusBadge("robot", "AI 整理时捆的；你手动挪过、拆过的条目 AI 不再碰");
+    ai.classList.add("bundle-ai");
     head.appendChild(ai);
   }
   const busy = dispatch?.owner ? [dispatch.owner] : [...new Set(members.map((r) => r.claimedBy).filter(Boolean))];
   if (busy.length) {
-    const claim = document.createElement("span");
-    claim.className = "claim";
-    claim.textContent = dispatch ? `${dispatch.status} · ${dispatch.owner} 占住整捆` : `🔄 ${busy.join("、")} 在干`;
+    const claim = bmStatusBadge("busy", dispatch ? `${dispatch.status} · ${dispatch.owner} 占住整捆` : `${busy.join("、")} 在干`);
+    claim.classList.add("claim");
     head.appendChild(claim);
   }
   return head;

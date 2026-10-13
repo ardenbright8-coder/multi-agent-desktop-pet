@@ -52,6 +52,8 @@ try {
   if (!panel) throw new Error("书签面板窗口没出现");
   await panel.waitForLoadState("domcontentloaded");
 
+  await panel.locator("#tab-inbox").click(); // 2026-10-13 起默认打开 Agent 分组；这里测的是待定页
+
   // 准备：待定区记一条普通条目 + 直接写一条未派发交接单（走 bookmark:add 的 kind/detail 字段，
   // 与 CLI handoff 不带 --to 同一条管道同一种落位）。
   // 注意：直调 IPC 不会触发面板刷新（真机路径都各自刷），所以这里补 bmRefresh()。

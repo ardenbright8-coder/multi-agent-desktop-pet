@@ -63,17 +63,18 @@ try {
   if (!panel) throw new Error("书签面板窗口没出现");
   await panel.waitForLoadState("domcontentloaded");
 
-  // ④ 默认页是待定：inbox 页签 active，board 里只有待定组。
+  // ④ 默认页是 Agent 分组（2026-10-13 用户：打开就是分组）：groups 页签 active，board 里是各 agent 组、没有待定组。
   const defaultPage = await panel.evaluate(() => ({
     inboxActive: document.getElementById("tab-inbox")?.classList.contains("active") ?? false,
     groupsActive: document.getElementById("tab-groups")?.classList.contains("active") ?? false,
     inboxGroupInBoard: !!document.querySelector('#board .group[data-group="__inbox__"]'),
     agentGroupsInBoard: document.querySelectorAll('#board .group:not([data-group="__inbox__"])').length,
   }));
-  check("④ 默认页是待定（inbox 页签 active）", defaultPage.inboxActive && !defaultPage.groupsActive,
+  check("④ 默认页是 Agent 分组（groups 页签 active）", defaultPage.groupsActive && !defaultPage.inboxActive,
     `inbox=${defaultPage.inboxActive} groups=${defaultPage.groupsActive}`);
-  check("④ 默认页 board 里只有待定组、无 agent 分组", defaultPage.inboxGroupInBoard && defaultPage.agentGroupsInBoard === 0,
+  check("④ 默认页 board 里是 agent 分组、没有待定组", !defaultPage.inboxGroupInBoard && defaultPage.agentGroupsInBoard > 0,
     `待定组=${defaultPage.inboxGroupInBoard} 分组数=${defaultPage.agentGroupsInBoard}`);
+  await panel.locator("#tab-inbox").click(); // 后面几步测待定页
 
   // ② 空库角标是 0。
   const badge0 = await panel.evaluate(() => document.getElementById("tab-inbox-count")?.textContent ?? null);

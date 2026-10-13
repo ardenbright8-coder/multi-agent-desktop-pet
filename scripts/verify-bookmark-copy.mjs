@@ -209,12 +209,12 @@ try {
   const got = runCli(["next", bundleId, "--by", "Claude-9", "--coding"]);
   const badge = await waitFor(async () => panel.evaluate(() => {
     const el = document.querySelector('#board .group[data-group="Claude"] .task .claim');
-    return el ? el.textContent : null;
+    return el ? el.getAttribute("title") : null; // 2026-10-13 起在干是小标，说明在碰到才冒的提示里
   }), 4000, 100);
-  check("⑨ next：领到第 1/2 条，要求在前，说明里有统一规矩；看板出「🔄 Claude-9 在干」",
+  check("⑨ next：领到第 1/2 条，要求在前，说明里有统一规矩；看板出在干小标（提示「Claude-9 在干」）",
     got.code === 0 && got.out.includes("第 1/2 条") && got.out.includes("先读工作流") && got.out.includes("## 这次的事")
       && got.out.includes("甲：脑图搜索框看不见") && got.out.includes("一次只干这一条") && got.out.includes("--ok")
-      && badge === "🔄 Claude-9 在干",
+      && badge === "Claude-9 在干",
     `退出码=${got.code} 标记=${badge}\n${got.out.slice(0, 400)}`);
   const stolen = runCli(["next", bundleId, "--by", "Claude-10"]);
   check("⑨ 别的窗口来领，领到的是下一条（丙），不会抢走甲", stolen.code === 0 && stolen.out.includes("丙：参数设置看不见"), stolen.out.slice(0, 200));
