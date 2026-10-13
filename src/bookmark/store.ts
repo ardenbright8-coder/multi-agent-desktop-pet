@@ -283,6 +283,16 @@ export class BookmarkStore {
     return this.createTaskBundle(ids, name, undefined, 'ai').id;
   }
 
+  /** AI 重写自己开的捆的名字（捆里加了条目后）。用户起名的、派工捆、AI 进不去的捆不改，返回 false。 */
+  aiRenameBundle(bundleId: string, name: string): boolean {
+    this.ensureLoaded();
+    const meta = this.loadMeta()[bundleId];
+    if (!meta || meta.by !== 'ai' || !this.aiOpenBundle(bundleId) || !name.trim()) return false;
+    this.setBundleMeta(bundleId, { name: name.trim(), by: 'ai' });
+    this.save();
+    return true;
+  }
+
   /** 协同入口只在明确指定的分组和调度窗口范围选捆，不捞其他任务。 */
   claimTaskBundle(group: string, by: string, coordinator: string): ClaimResult {
     if (!group.trim() || !by.trim() || !coordinator.trim()) throw new Error('缺分组、工兵窗口名或调度窗口名');

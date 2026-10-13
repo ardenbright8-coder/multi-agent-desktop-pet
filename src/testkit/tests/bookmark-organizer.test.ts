@@ -2,7 +2,7 @@
 // 手动捆以最后一次为准；用户动过的 AI 永远不碰；AI 只能放进已有捆或开新捆，说错的那条丢掉不连坐。
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,8 +11,14 @@ import {
   activeModel,
   buildCheckTask,
   buildGroupTask,
+  buildItemTask,
   buildLedger,
   chat,
+  freshNote,
+  MAX_BUNDLE_NAME,
+  noteKey,
+  type NoteBook,
+  runItemNotes,
   checkModelInput,
   cleanBaseUrl,
   groupsForOrganizer,
@@ -346,4 +352,84 @@ test("账本：跟着看板现算，看过 / 没看过 / 你动过 / 捆，本�
     assert.deepEqual(g.bundles, [{ name: "你的捆", by: "user", count: 2 }]);
     store.remove(c);
     assert.equal(buildLedger(store.list(), ["Claude"], store.bundleMeta(), []).groups[0].items.length, 2, "删了账本里也没了");
+  }));
+
+// ── 第五版（2026-10-13 用户）：一条一条读、每张图都看，写小标题和小结；再拿小结分捆；捆里加了条目重写捆名 ──
+
+test("读条目：一条一问，只带这条自己的图；图片标记换成 [图1] 对上号；读过的不再读，改了字重读；读不成的不连坐", () =>
+  withStore(async (store) => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-pet-notes-"));
+    try {
+      for (const f of ["image-a1.png", "image-a2.png", "image-b1.png"]) writeFileSync(join(dir, f), "png");
+      const [a, b, c] = seed(store, ["返回箭头没反应[图片:image-a1.png]你看这里[图片:image-a2.png]", "酒馆黑框太多[图片:image-b1.png]", "坏的那条"]);
+      const one = buildItemTask(store.list().find((r) => r.id === a)!, dir);
+      assert.equal(one.images.length, 2);
+      assert.match(one.text, /返回箭头没反应\[图1\]你看这里\[图2\]/);
+      assert.match(one.text, /2 张图/);
+
+      const bodies: string[] = [];
+      const fetchFn: FetchFn = async (_url, init) => {
+        bodies.push(init.body);
+        const user = JSON.stringify(JSON.parse(init.body).messages[1]);
+        if (user.includes("坏的那条")) return { ok: false, status: 500, text: async () => "坏了" };
+        const title = user.includes("返回箭头") ? "返回箭头：点了没反应要修" : "看图界面：两边黑框收窄";
+        return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify({ project: "库管理面板", title, summary: "要修" }) } }] }) };
+      };
+      const r1 = await runItemNotes({ store, agents: ["Claude"], config, fetchFn, book: {}, attachmentsDir: dir, now: NOW });
+      assert.equal(bodies.length, 3, "三条各问一次");
+      assert.equal(r1.read, 2);
+      assert.deepEqual(r1.errors.map((e) => e.id), [c], "坏的那条记下来，别的照常");
+      const aBody = bodies.map((x) => JSON.parse(x)).find((x) => JSON.stringify(x.messages[1]).includes("返回箭头"));
+      assert.equal(aBody.messages[1].content.filter((p: { type: string }) => p.type === "image_url").length, 2, "这条的两张图都带上");
+      assert.match(aBody.messages[0].content, /每一张图都看/);
+      assert.equal(r1.book[a].title, "返回箭头：点了没反应要修");
+      assert.ok(freshNote(store.list().find((r) => r.id === b)!, r1.book));
+
+      bodies.length = 0;
+      store.updateText(b, "酒馆黑框太多，对比也难[图片:image-b1.png]");
+      const r2 = await runItemNotes({ store, agents: ["Claude"], config, fetchFn, book: r1.book, attachmentsDir: dir, now: NOW });
+      assert.equal(bodies.length, 2, "只重读改了字的和上次没读成的");
+      assert.equal(r2.read, 1);
+      store.remove(a);
+      const r3 = await runItemNotes({ store, agents: ["Claude"], config, fetchFn, book: r2.book, attachmentsDir: dir, now: NOW });
+      assert.equal(r3.book[a], undefined, "条目删了，小卡片跟着删");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }));
+
+test("分捆拿小卡片出题、不再带原图；AI 自己开的捆里加了条目就重写捆名，你起名的捆不改", () =>
+  withStore(async (store) => {
+    const [a, b, c, d, e, f] = seed(store, ["一[图片:x.png]", "二", "三", "四", "五", "六"]);
+    const aiBundle = store.aiCreateBundle([b, c], "库管理面板：返回键");
+    const userBundle = store.createTaskBundle([d, e], "我起的名").id;
+    const notes: NoteBook = {};
+    for (const [id, title] of [[a, "图标：先弹新窗口"], [b, "返回键：点了没反应"], [c, "管理：每层都有"], [f, "规矩模板：找不到"]] as const) {
+      notes[id] = { project: "库管理面板", title, summary: `${title}的小结`, key: noteKey(store.list().find((r) => r.id === id)!) };
+    }
+    const [g] = groupsForOrganizer(store.list(), ["Claude"]);
+    const task = buildGroupTask(g, { meta: store.bundleMeta(), openBundle: (x) => store.aiOpenBundle(x), now: NOW, notes, attachmentsDir: tmpdir() })!;
+    assert.match(task.text, /N1 【库管理面板】图标：先弹新窗口｜图标：先弹新窗口的小结/);
+    assert.equal(task.images.length, 0, "读过的条目不再带原图");
+
+    const calls: string[] = [];
+    let n = 0;
+    const fetchFn: FetchFn = async (_url, init) => {
+      calls.push(init.body);
+      n += 1;
+      const reply = n === 1
+        ? { join: [{ item: "N1", bundle: "B1", why: "也是库管理面板" }, { item: "N2", bundle: "B2", why: "也是库管理面板" }], create: [], skip: [] }
+        : { name: "库管理面板：返回键没反应·每层都有管理·图标先弹新窗口" };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply) } }] }) };
+    };
+    const summary = await runOrganizer({ store, agents: ["Claude"], config, now: NOW, fetchFn, notes });
+    assert.equal(calls.length, 2, "分捆一次＋给 AI 的捆改名一次，你起名的捆不问");
+    const nameAsk = JSON.parse(calls[1]);
+    assert.match(nameAsk.messages[0].content, /每一条都要有份/);
+    assert.match(nameAsk.messages[1].content, /图标：先弹新窗口/);
+    assert.equal(store.bundleMeta()[aiBundle].name, "库管理面板：返回键没反应·每层都有管理·图标先弹新窗口");
+    assert.equal(store.bundleMeta()[userBundle].name, "我起的名");
+    assert.deepEqual(organizeRows(summary, store.list()).map((r) => r.action), ["放进", "放进", "改捆名"]);
+    assert.equal(MAX_BUNDLE_NAME, 39);
+    assert.match(hardRulesText(), /每张图/);
   }));

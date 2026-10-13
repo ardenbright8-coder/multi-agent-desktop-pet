@@ -1,6 +1,6 @@
 // 书签看板「AI 交接单专区」后台驱动验证（Playwright·零抢鼠标）。
 // 验证点：①未派发交接单默认落 Agent分组页最底部的 📋专区（不进待定，专区垫底在＋加Agent上方）
-//        ②条目显眼（📋 标记+handoff 样式），普通条目没有  ③详情默认收起、点开可展开可收起
+//        ②条目显眼（序号下面的交接小标+handoff 样式），普通条目没有  ③详情默认收起、点开可展开可收起
 //        ④拖到哪个组=派给谁（组内现形+assignee 落库）；CLI 带 --to 的直接进组不进专区
 //        ⑤收回回专区 ⑥remove 自删后条目消失。
 // 用法：node scripts/verify-bookmark-handoff.mjs（独立 AGENT_PET_HUB_HOME，不碰真库）。
@@ -103,15 +103,18 @@ try {
   check("① 交接单默认落在专区里（1 条）", zoneState?.taskCount === 1 && zoneState.text.includes("分页改完"),
     `专区名=${zoneState?.zoneName} 计数=${zoneState?.zoneCount}`);
 
-  // ② 显眼标记：专区条目带 handoff 样式+📋 徽标。
+  // ② 显眼标记：专区条目带 handoff 样式＋序号正下方的交接小标（细线图标，不用表情；2026-10-13 用户拍板）。
   const mark = await panel.evaluate(() => {
     const task = document.querySelector('.group.handoff-zone .task');
+    const badge = task?.querySelector(".num-col .handoff-badge");
     return {
       isHandoff: task?.classList.contains("handoff") ?? false,
-      badge: task?.querySelector(".handoff-badge")?.textContent ?? "",
+      underNum: Boolean(badge && badge.previousElementSibling?.classList.contains("num")),
+      icon: Boolean(badge?.querySelector("svg")),
+      noEmoji: !(task?.textContent ?? "").includes("📋"),
     };
   });
-  check("② 专区条目带 handoff 样式+📋标记", mark.isHandoff && mark.badge.includes("📋"), JSON.stringify(mark));
+  check("② 专区条目带 handoff 样式＋序号下面的交接小标（不用表情）", mark.isHandoff && mark.underNum && mark.icon && mark.noEmoji, JSON.stringify(mark));
 
   // ③ 详情默认收起，点条目展开看到详情文本，再点收起。
   const detailHiddenBefore = await panel.evaluate(() => {

@@ -13,8 +13,17 @@ export const DEFAULT_BASE_URL = "https://api.commandcode.ai/provider/v1";
 export const DEFAULT_MODELS = ["deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash"];
 /** 刚写的条目先不整理：输入框边写边存，写到一半就被捆走会乱。 */
 export const MIN_AGE_MS = 3 * 60 * 1000;
-const MAX_IMAGES_PER_GROUP = 6;
+/** 读条目时一条最多带几张图（第五版 2026-10-13 用户：每张图都要看，一条一条看压力小）。 */
+const MAX_IMAGES_PER_ITEM = 12;
+/** 分捆那一步：还没读成小结的条目才带原图，兜底用。 */
+const MAX_IMAGES_PER_GROUP = 12;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+/** 捆标题最长几个字（2026-10-13 用户：上限 39，尽量写满）。 */
+export const MAX_BUNDLE_NAME = 39;
+/** 每条小标题最长几个字。 */
+export const MAX_ITEM_TITLE = 30;
+/** 读条目同时发几条（一条一问，太多会被限流）。 */
+const NOTE_CONCURRENCY = 3;
 export const BANNED_NAMES = ["杂项", "其他", "其它", "待办", "未分类", "零散", "综合", "混合"];
 /** 整理记录最多留几次（用户：干完的不留账，不然越攒越多）。 */
 export const MAX_RUNS = 50;
@@ -172,6 +181,8 @@ export interface TaskOptions {
   attachmentsDir?: string;
   /** 规矩页「AI 每次收到的题目」用：散着的（你动过的也算）都当新条目，好让用户看到题目长什么样。 */
   previewAll?: boolean;
+  /** 读条目写好的小卡片：有就拿它出题，不再带原图。 */
+  notes?: NoteBook;
 }
 
 function movable(r: BookmarkRecord): boolean {
@@ -194,6 +205,143 @@ export function shortText(record: BookmarkRecord, limit = 24): string {
   return cleanText({ ...record, detail: null, kind: "note" }, limit);
 }
 
+function fnv(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(36);
+}
+
+// ── 读条目（第五版，2026-10-13 用户：一条一条看、每张图都看，先给每条写小标题和小结，再拿小结去分捆）──
+
+export interface ItemNote {
+  /** 哪个项目（2–10 字） */
+  project: string;
+  /** 小标题：这个项目里哪一块＋要干的活，不带项目名。板上第一行显示它 */
+  title: string;
+  /** 小结：这条具体要干哪几件事。分捆、检查、写捆标题都看它，不再看原文和图 */
+  summary: string;
+  /** 读的时候条目长什么样（字、详情、图）。变了就重读 */
+  key: string;
+}
+
+/** 条目 id → 小卡片。存看板数据夹 AI条目小结.json。 */
+export type NoteBook = Record<string, ItemNote>;
+
+export function noteKey(r: BookmarkRecord): string {
+  return fnv(`${r.text}\n${r.detail ?? ""}\n${r.attachments.join(",")}`);
+}
+
+/** 这条的小卡片还作数吗（读过、读完没改过）。 */
+export function freshNote(r: BookmarkRecord, book: NoteBook | undefined): ItemNote | null {
+  const n = book?.[r.id];
+  return n && n.key === noteKey(r) ? n : null;
+}
+
+export function parseNoteBook(raw: unknown): NoteBook {
+  const out: NoteBook = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    const n = (v ?? {}) as Record<string, unknown>;
+    if (typeof n.title === "string" && typeof n.key === "string") {
+      out[id] = { project: String(n.project ?? ""), title: n.title, summary: String(n.summary ?? ""), key: n.key };
+    }
+  }
+  return out;
+}
+
+/** 条目删了，小卡片跟着删（用户：干完的不留账）。 */
+export function liveNoteBook(book: NoteBook, records: BookmarkRecord[]): NoteBook {
+  const alive = new Set(records.map((r) => r.id));
+  return Object.fromEntries(Object.entries(book).filter(([id]) => alive.has(id)));
+}
+
+export const ITEM_RULES = `你是看板读条员。用户在任务看板里随手记事，多半是语音转的字：错字多、啰嗦、一段里绕好几圈。你这次只读一条，读懂它，写成一张小卡片。
+
+照这三步做：
+
+第一步：看图。这条带的每一张图都看一遍。图里的字、界面、按钮、红框标注都算这条讲的内容；用户说"你看这个""这里""这块"，指的就是图里那块。
+
+第二步：认项目（project）。这条讲的是哪个软件、哪个工具、哪个项目，2 到 10 个字。语音转字常把名字说歪，按意思认：
+- "看板""Agent 看板""桌宠看板""AG 的看板""bookmark-cli 看板命令" → Agent看板
+- "酒馆前端""酒馆出图""套餐出图""粉色炼金""Anima 出图模型" → 酒馆
+认不出就写"认不出"。
+
+第三步：写小标题（title）和小结（summary）。
+
+小标题＝这个项目里哪一块 + 要干的活。写事件：用户要动手干的那件事。
+- 12 到 25 个字，项目名已经在 project 里，小标题从"哪一块"写起
+- 格式：哪一块：要干的活。一条里有几件事，用「·」连起来，每件都写上
+- ✅ "返回箭头：点了没反应要修·底部图标改成先弹新窗口"
+- ✅ "看板命令：加「从文件读详情」选项"
+- ✅ "出图历史：按套餐分开存"
+- ❌ "用户觉得这个面板不太好用"（写的是感受，看不出要干什么活）
+- ❌ "关于看板的一些想法"（看不出是哪件事）
+
+小结＝这条具体要干哪几件事，一件一句，60 到 150 字。后面分捆的同事看不到原文和图，全靠这段：写清哪一块、现在什么毛病、用户要改成什么样。
+
+只输出一个 JSON，不要任何解释、不要 markdown 代码块：
+{"project":"库管理面板","title":"返回箭头：点了没反应要修·底部图标改成先弹新窗口","summary":"项目页左上角的返回箭头点了没反应，要修好。点底部任务栏图标时，先弹出一个新窗口（像苹果那样），方便同时停在不同层。"}`;
+
+export interface ItemTask {
+  text: string;
+  images: string[];
+}
+
+/** 一条的题：全文、详情、它带的每张图（有标注版用标注版）。图片标记换成 [图1] [图2]，跟后面附的图对上号。 */
+export function buildItemTask(r: BookmarkRecord, attachmentsDir?: string): ItemTask {
+  const images: string[] = [];
+  const order = new Map<string, number>();
+  if (attachmentsDir) {
+    for (const name of r.attachments) {
+      if (images.length >= MAX_IMAGES_PER_ITEM) break;
+      const marked = join(attachmentsDir, `${name}.marked.png`);
+      const file = existsSync(marked) ? marked : join(attachmentsDir, name);
+      try {
+        if (existsSync(file) && statSync(file).size <= MAX_IMAGE_BYTES) {
+          images.push(file);
+          order.set(name, images.length);
+        }
+      } catch {
+        // 图读不了就当没有，不拦读条。
+      }
+    }
+  }
+  let body = r.text.replace(/\[图片:([^\]]*)\]/g, (_m, name: string) => (order.has(name) ? `[图${order.get(name)}]` : "[图]")).trim();
+  if (body.length > 4000) body = `${body.slice(0, 4000)}…`;
+  const lines = [r.kind === "handoff" ? "这条是交接单（上一个 AI 窗口没干完留下的活）：" : "这条：", body];
+  if (r.detail) {
+    const d = r.detail.trim();
+    lines.push("", "详情：", d.length > 2500 ? `${d.slice(0, 2500)}…` : d);
+  }
+  if (images.length) lines.push("", `这条带 ${images.length} 张图，按 [图1] [图2] 的顺序附在后面，每张都看。`);
+  return { text: lines.join("\n"), images };
+}
+
+export function parseItemNote(text: string, key: string): ItemNote {
+  const raw = parsePlanText(text) as Record<string, unknown>;
+  const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().replace(/^["「]|["」]$/g, "").slice(0, n);
+  const title = clip(raw.title, MAX_ITEM_TITLE);
+  if (title.length < 4) throw new Error("模型没写小标题");
+  return { project: clip(raw.project, 12) || "认不出", title, summary: clip(raw.summary, 300), key };
+}
+
+/** 谁该读：没读过的、读完又改过的。在干的、待审的也读——板上每条都要有小标题。刚写的先不读（可能还在写）。 */
+export function recordsNeedingNotes(records: BookmarkRecord[], agents: string[], book: NoteBook, now: number, minAgeMs = MIN_AGE_MS): BookmarkRecord[] {
+  return groupsForOrganizer(records, agents)
+    .flatMap((g) => g.records)
+    .filter((r) => !freshNote(r, book) && now - Date.parse(r.createdAt) >= minAgeMs);
+}
+
+/** 题目里写一条：读过的用小卡片（项目、小标题、小结），没读成的退回原文。 */
+function lineOf(r: BookmarkRecord, notes: NoteBook | undefined, limit: number): string {
+  const n = freshNote(r, notes);
+  if (!n) return cleanText(r, limit);
+  return `${r.kind === "handoff" ? "（交接单）" : ""}【${n.project}】${n.title}｜${n.summary}`;
+}
+
 export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupTask | null {
   const minAge = opts.minAgeMs ?? MIN_AGE_MS;
   const oldEnough = (r: BookmarkRecord) => opts.now - Date.parse(r.createdAt) >= minAge;
@@ -213,7 +361,7 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     const members = group.records.filter((r) => r.bundleId === bid);
     const name = opts.meta[bid]?.name ?? cleanText(members[0], 16);
     lines.push(`${alias}「${name}」，里面有：`);
-    for (const m of members) lines.push(`  - ${cleanText(m, 120)}`);
+    for (const m of members) lines.push(`  - ${lineOf(m, opts.notes, 120)}`);
   });
   lines.push("");
 
@@ -225,7 +373,7 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     const alias = `O${i + 1}`;
     items.set(alias, r.id);
     oldAliases.push(alias);
-    lines.push(`${alias} ${cleanText(r, 160)}`);
+    lines.push(`${alias} ${lineOf(r, opts.notes, 160)}`);
   });
   lines.push("");
 
@@ -237,7 +385,8 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     items.set(alias, r.id);
     newAliases.push(alias);
     let pics = 0;
-    if (opts.attachmentsDir) {
+    const note = freshNote(r, opts.notes);
+    if (opts.attachmentsDir && !note) {
       for (const name of r.attachments) {
         if (images.length >= MAX_IMAGES_PER_GROUP) break;
         const marked = join(opts.attachmentsDir, `${name}.marked.png`);
@@ -252,19 +401,38 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
         }
       }
     }
-    lines.push(`${alias} ${cleanText(r)}${pics ? `（带 ${pics} 张图，见下面标着 ${alias} 的图）` : ""}`);
+    lines.push(`${alias} ${lineOf(r, opts.notes, 300)}${pics ? `（带 ${pics} 张图，见下面标着 ${alias} 的图）` : ""}`);
   });
 
   return { label: group.label, items, bundles, newAliases, oldAliases, seenIds: unseen.map((r) => r.id), text: lines.join("\n"), images };
 }
 
+/** 捆标题怎么写：开新捆、捆里加了条目重写标题，都照这一段（2026-10-13 用户：写事件，捆标题是各条小标题的总结）。 */
+const BUNDLE_NAME_GUIDE = `捆标题（name）规则（用户看捆标题就要知道这捆里有哪些活要干、好派活）：
+- 格式：项目名：事件1·事件2·事件3。先写项目名，冒号，再把捆里每一条要干的活用「·」连起来
+- 写事件：每条小标题里"要干的活"那部分，缩成几个字。捆里每一条都要有份，一条也别漏
+- ${MAX_BUNDLE_NAME} 个字以内，尽量写满。事情多就把每件缩短，件数一件不少
+- ✅ "库管理面板：返回键没反应·图标先弹新窗口·每层都有管理·找不到规矩模板"
+- ✅ "Agent看板：F1置顶后鼠标一动就消·底部链接改回文字·命令加读文件·整理标题写全"
+- ❌ "库管理面板：界面问题"（看不出有哪几件活）
+- ❌ "Agent看板：一捆机制·F1置顶"（捆里有五条，只写了两条）
+- 不许用：${BANNED_NAMES.join("、")}`;
+
+/** 捆里加了条目后重写标题（只改 AI 开的捆，用户起名的不碰）。 */
+export const BUNDLE_NAME_RULES = `你是看板起名员。一捆里放着同一个项目的几条任务，每条都有读条员写好的小卡片：【项目】小标题｜小结。你给这一捆写一个新标题。
+
+${BUNDLE_NAME_GUIDE}
+
+只输出一个 JSON，不要任何解释、不要 markdown 代码块：
+{"name":"库管理面板：返回键没反应·图标先弹新窗口·每层都有管理"}`;
+
 /** 给弱模型的规矩：写得很细、带对错例子、说清每条违规的下场。改这里先跑 organizer 单测。 */
-export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看板里随手记事（多半是语音转的字，错字多、啰嗦），一条一条写得很乱。你的活只有一件：把「新条目」按"讲的是不是同一个项目"归到捆里。
+export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看板里随手记事（多半是语音转的字，错字多、啰嗦）。读条员已经把每条读过一遍、看过它带的图，写成了小卡片：【项目】小标题｜小结。没读成的条目给的是原文。你的活只有一件：把「新条目」按"讲的是不是同一个项目"归到捆里。
 
 照这三步做：
 
 第一步：给每条新条目贴一个"项目名"标签（写进 topics）。
-- 项目名 = 这条说的是哪个软件、哪个工具、哪个项目。2 到 10 个字。
+- 项目名 = 这条说的是哪个软件、哪个工具、哪个项目。2 到 10 个字。小卡片【】里写的项目名先照抄。
 - 已有的捆名里出现过的项目名，优先照抄同一个写法（比如已有捆叫"Markdown脑图：右键新建不显示"，新条目也是说 Markdown 脑图，就贴"Markdown脑图"）。
 - 同一个东西只用一种写法：语音转字常把名字说歪，按意思认。例："看板""Agent 看板""桌宠看板""AG 的看板""bookmark-cli 看板命令"都是同一个项目，统一贴"Agent看板"；"酒馆前端""酒馆出图""套餐出图"都贴"酒馆"。
 - 实在认不出是哪个项目，贴"认不出"。
@@ -282,11 +450,7 @@ export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看
 ❌ "Markdown 脑图右键新建" 和 "库管理面板返回键没反应" → 两个不同的软件，就算都是界面问题也不捆
 ❌ 只是大类相同不算：都跟 AI 有关、都是改代码、都是界面问题、都是"要做的事"
 
-捆名规则（用户看捆名就要知道这捆是干啥的、好派活）：
-- 10 到 20 个字：先写项目名，冒号，再写这捆里最主要的两三件事，用「·」隔开
-- 照顾到捆里每一条的主要意思，别只写第一条的；事情多就挑最要紧的三件
-- 例："Agent看板：一捆机制·F1置顶·链接显示"、"酒馆：看图对比·套餐出图分开"、"Markdown脑图：右键新建不显示"
-- 不许用：杂项、其他、待办、未分类、零散、综合
+${BUNDLE_NAME_GUIDE}
 
 理由（why）：每个 join、每个 create 都写一句为什么这么归，给用户看的，20 字以内，说人话。例："都在说 Agent 看板的界面"、"讲的是酒馆出图，跟这捆一样"。
 
@@ -295,16 +459,18 @@ export const ORGANIZER_RULES = `你是看板整理员。用户在一个任务看
 - 每个编号在 join、create、skip 里一共只能出现一次
 - 不许改写条目内容，不许把条目分到别的组，不许把已有捆里的条目拿出来
 
-图片：有的条目带截图，每张图前面会写它属于哪条。图里的文字和界面也算这条讲的内容，能帮你认出是哪个软件。
+图片：没读成小卡片的条目会附原图，每张图前面写着它属于哪条。图里的文字和界面也算这条讲的内容，能帮你认出是哪个软件。
 
 只输出一个 JSON，不要任何解释、不要 markdown 代码块。格式：
-{"topics":{"N1":"Markdown脑图","N2":"Agent看板","N3":"Agent看板","N4":"认不出"},"join":[{"item":"N1","bundle":"B1","why":"都在说 Markdown 脑图"}],"create":[{"name":"Agent看板：一捆机制·F1置顶","items":["N2","N3"],"why":"两条都在说 Agent 看板"}],"skip":["N4"]}
+{"topics":{"N1":"Markdown脑图","N2":"Agent看板","N3":"Agent看板","N4":"认不出"},"join":[{"item":"N1","bundle":"B1","why":"都在说 Markdown 脑图"}],"create":[{"name":"Agent看板：F1置顶后鼠标一动就消·底部链接改回文字","items":["N2","N3"],"why":"两条都在说 Agent 看板"}],"skip":["N4"]}
 没有的就写空数组 []。每条新条目必须出现在 join、create、skip 三处中的某一处。`;
 
 /** 检查（2026-10-12 用户：放错的给个提示，不改；我还是按我的来）。整组连用户捆的一起看。 */
 export const CHECK_RULES = `你是看板检查员。用户的任务看板里，条目按"讲的是不是同一个项目"捆成一捆一捆，有的是用户自己捆的，有的是 AI 捆的，可能有放错的。你的活只有一件：挑出放错的条目，给用户一个提示。你不改任何东西，挪不挪由用户自己决定。
 
-先认项目：每条说的是哪个软件、哪个工具、哪个项目。语音转字常把名字说歪，按意思认。例："看板""Agent 看板""桌宠看板""AG 的看板"都是 Agent看板；"酒馆前端""酒馆出图""套餐出图"都是酒馆。
+每条读条员已经读过、看过图，写成了小卡片：【项目】小标题｜小结。没读成的给的是原文。
+
+先认项目：每条说的是哪个软件、哪个工具、哪个项目，小卡片【】里的项目名先照着认。语音转字常把名字说歪，按意思认。例："看板""Agent 看板""桌宠看板""AG 的看板"都是 Agent看板；"酒馆前端""酒馆出图""套餐出图"都是酒馆。
 
 什么算放错：
 - 捆里的某条，讲的项目跟这捆别的条目明显不是同一个 → 放错了。它跟另一个捆是同一个项目，to 写那个捆的编号；跟哪个捆都不是，to 写"散着"。
@@ -363,7 +529,7 @@ export function validatePlan(raw: RawPlan, task: GroupTask): CleanPlan {
   for (const c of Array.isArray(raw.create) ? raw.create : []) {
     const entry = (c ?? {}) as { name?: unknown; items?: unknown; why?: unknown };
     const aliases = Array.isArray(entry.items) ? entry.items.map(norm) : [];
-    const name = String(entry.name ?? "").trim().replace(/["「」]/g, "").slice(0, 24);
+    const name = String(entry.name ?? "").trim().replace(/["「」]/g, "").slice(0, MAX_BUNDLE_NAME);
     const unique = new Set(aliases);
     if (
       aliases.length < 2 ||
@@ -412,7 +578,7 @@ function checkable(r: BookmarkRecord): boolean {
   return !r.claimedBy && !r.report;
 }
 
-export function buildCheckTask(group: OrganizerGroup, opts: { meta: Record<string, BundleMeta>; openBundle: (bundleId: string) => boolean }): CheckTask | null {
+export function buildCheckTask(group: OrganizerGroup, opts: { meta: Record<string, BundleMeta>; openBundle: (bundleId: string) => boolean; notes?: NoteBook }): CheckTask | null {
   const bundleIds = [...new Set(group.records.map((r) => r.bundleId).filter((b): b is string => Boolean(b)))].filter(opts.openBundle);
   if (!bundleIds.length) return null; // 没有捆，就没有「放错」可言
   const items = new Map<string, string>();
@@ -433,7 +599,7 @@ export function buildCheckTask(group: OrganizerGroup, opts: { meta: Record<strin
       const ia = `I${n}`;
       items.set(ia, m.id);
       where.set(ia, alias);
-      lines.push(`  ${ia} ${cleanText(m, 120)}`);
+      lines.push(`  ${ia} ${lineOf(m, opts.notes, 120)}`);
     }
   });
   const loose = group.records.filter((r) => !r.bundleId && checkable(r));
@@ -443,7 +609,7 @@ export function buildCheckTask(group: OrganizerGroup, opts: { meta: Record<strin
     n += 1;
     const ia = `I${n}`;
     items.set(ia, r.id);
-    lines.push(`${ia} ${cleanText(r, 120)}`);
+    lines.push(`${ia} ${lineOf(r, opts.notes, 120)}`);
   }
   return { label: group.label, items, bundles, where, bundleNames, text: lines.join("\n") };
 }
@@ -542,7 +708,7 @@ export function groupFingerprint(group: OrganizerGroup): string {
 
 // ── 整理记录（AI整理记录.json）：一次一条，一行一件事；理由放气泡里 ──
 
-export type RowAction = "开新捆" | "放进" | "没动" | "提示" | "没成" | "全部重来" | "撤销重来";
+export type RowAction = "开新捆" | "放进" | "改捆名" | "没动" | "提示" | "没成" | "全部重来" | "撤销重来";
 
 export interface RecordRow {
   group: string;
@@ -602,18 +768,22 @@ export function hardRulesText(): string {
     `- 刚写不到 ${Math.round(MIN_AGE_MS / 60000)} 分钟的条目先不整理（你可能还在写）。`,
     "",
     "整理一次（自动整理也是这一套）：",
-    "- 只看 AI 没看过的新条目，看过一次就不再看。",
+    "- 先读条目：一条一问，把这条的字、详情、带的每张图都给 AI，让它写项目名、小标题、小结。板上每条第一行显示小标题。",
+    "- 读过的条目不再读；改了字、换了图，下一轮重读。刚写的也先不读。",
+    `- 读条目时一条最多带 ${MAX_IMAGES_PER_ITEM} 张图，单张超过 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB 不带。`,
+    "- 再分捆：拿小卡片出题，不再送原文和原图；没读成的条目退回送原文和原图。",
+    "- 分捆只看 AI 没看过的新条目，看过一次就不再看。",
     "- AI 只能做两件事：把新条目放进已有的捆、拿两条以上开一个新捆。不能改字、不能把捆里的拿出来。",
     "- 你手动动过的条目（拖进拖出、右键成捆、拆捆）不碰。",
-    `- 捆名不许用：${BANNED_NAMES.join("、")}。`,
-    `- 每组最多带 ${MAX_IMAGES_PER_GROUP} 张图给 AI，单张超过 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB 不带。`,
+    `- 捆名不许用：${BANNED_NAMES.join("、")}。捆名最长 ${MAX_BUNDLE_NAME} 个字。`,
+    "- AI 往它自己开的捆里加了条目，就让 AI 照捆里各条的小标题重写捆名；你起名的捆不改名。",
     "- AI 说错的那一条（编号不对、重复、跨组）直接丢掉，不连累同一轮别的。",
     "- 整理完接着检查一遍：整组连你捆的一起看，放错的在条目右边挂小橙点，不挪任何东西。",
     "- 看板上没变化的组不再检查，不花钱。",
     "- 你点了「知道了」的那条，只要还在原地就不再提示；挪了地方，提示和「知道了」一起作废。",
     "",
     "全部重来：",
-    "- 所有捆全拆开，你动过的也一样，然后马上重新整理加检查。",
+    "- 所有捆全拆开，你动过的也一样；每条的小标题也清掉重读，然后马上重新整理加检查。",
     "- 有 AI 正在干的、写了报告等你审的、多人派工占住的捆和条目，不拆不碰。",
     "- 重来之前存一份原样；在下一次整理之前，点「撤销重来」能一键回去。",
     "",
@@ -632,6 +802,8 @@ export interface GroupResult {
   label: string;
   created: { name: string; ids: string[]; why: string }[];
   joined: { name: string; id: string; text: string; why: string }[];
+  /** AI 捆里加了条目后重写的捆名 */
+  renamed: { from: string; to: string; ids: string[] }[];
   skippedIds: string[];
   dropped: string[];
   error?: string;
@@ -658,6 +830,8 @@ export interface RunDeps {
   timeoutMs?: number;
   /** 用户在设置里改过的整理规矩；不传用默认 ORGANIZER_RULES。 */
   rules?: string;
+  /** 读条目写好的小卡片：分捆拿它出题，捆里加了条目拿它重写捆名。 */
+  notes?: NoteBook;
 }
 
 function dataUrl(file: string): string {
@@ -718,6 +892,80 @@ export async function askModel(task: GroupTask, config: OrganizerConfig, fetchFn
   ], config.effort, fetchFn, timeoutMs);
 }
 
+/** 读一条：字＋详情＋它带的每张图，一问一答。 */
+export async function askItemNote(r: BookmarkRecord, config: OrganizerConfig, fetchFn: FetchFn, attachmentsDir?: string, timeoutMs = 300000, rules = ITEM_RULES): Promise<ItemNote> {
+  const task = buildItemTask(r, attachmentsDir);
+  const parts: unknown[] = [{ type: "text", text: task.text }];
+  task.images.forEach((file, i) => {
+    try {
+      parts.push({ type: "text", text: `[图${i + 1}]` }, { type: "image_url", image_url: { url: dataUrl(file) } });
+    } catch {
+      // 读不了的图跳过。
+    }
+  });
+  const text = await chat(activeModel(config), [
+    { role: "system", content: rules },
+    { role: "user", content: parts.length === 1 ? task.text : parts },
+  ], config.effort, fetchFn, timeoutMs);
+  return parseItemNote(text, noteKey(r));
+}
+
+export interface NoteDeps {
+  store: BookmarkStore;
+  agents: string[];
+  config: OrganizerConfig;
+  fetchFn: FetchFn;
+  book: NoteBook;
+  attachmentsDir?: string;
+  timeoutMs?: number;
+  rules?: string;
+  now?: number;
+  minAgeMs?: number;
+  /** 读完一条就叫一声（存盘、刷新看板上的小标题）。 */
+  onNote?: (book: NoteBook) => void;
+}
+
+export interface NoteResult {
+  book: NoteBook;
+  read: number;
+  /** 没读成的：条目 id ＋ 为什么 */
+  errors: { id: string; error: string }[];
+}
+
+/** 读条目：该读的一条一条读，同时最多读 NOTE_CONCURRENCY 条。读不成的这轮跳过，下一轮再读。 */
+export async function runItemNotes(deps: NoteDeps): Promise<NoteResult> {
+  const records = deps.store.list();
+  const book = liveNoteBook(deps.book, records);
+  const result: NoteResult = { book, read: 0, errors: [] };
+  if (!activeModel(deps.config).apiKey) throw new Error("还没填模型钥匙");
+  const queue = recordsNeedingNotes(records, deps.agents, book, deps.now ?? Date.now(), deps.minAgeMs);
+  const worker = async () => {
+    for (let r = queue.shift(); r; r = queue.shift()) {
+      try {
+        book[r.id] = await askItemNote(r, deps.config, deps.fetchFn, deps.attachmentsDir, deps.timeoutMs, deps.rules?.trim() || ITEM_RULES);
+        result.read += 1;
+        deps.onNote?.(book);
+      } catch (error) {
+        result.errors.push({ id: r.id, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: NOTE_CONCURRENCY }, worker));
+  return result;
+}
+
+/** 捆里加了条目：照各条小卡片重写捆标题。 */
+export async function askBundleName(members: BookmarkRecord[], notes: NoteBook | undefined, config: OrganizerConfig, fetchFn: FetchFn, timeoutMs = 300000): Promise<string> {
+  const text = ["这一捆里有：", ...members.map((m, i) => `${i + 1}. ${lineOf(m, notes, 160)}`)].join("\n");
+  const reply = parsePlanText(await chat(activeModel(config), [
+    { role: "system", content: BUNDLE_NAME_RULES },
+    { role: "user", content: text },
+  ], config.effort, fetchFn, timeoutMs)) as { name?: unknown };
+  const name = String(reply.name ?? "").trim().replace(/["「」]/g, "").slice(0, MAX_BUNDLE_NAME);
+  if (name.length < 2 || BANNED_NAMES.some((b) => name.includes(b))) throw new Error(`捆名不合规矩：${name || "空的"}`);
+  return name;
+}
+
 /** 「测一下」：发一句最短的话，回得来就算通。 */
 export async function testModel(entry: ModelEntry, fetchFn: FetchFn, timeoutMs = 90000): Promise<string> {
   const text = await chat(entry, [{ role: "user", content: "只回一个字：好" }], "low", fetchFn, timeoutMs, 2000);
@@ -736,10 +984,11 @@ export async function runOrganizer(deps: RunDeps): Promise<OrganizeSummary> {
       now: deps.now ?? Date.now(),
       minAgeMs: deps.minAgeMs,
       attachmentsDir: deps.attachmentsDir,
+      notes: deps.notes,
     });
     if (!task) continue;
     const newIds = task.newAliases.map((a) => task.items.get(a)!);
-    const result: GroupResult = { label: group.label, created: [], joined: [], skippedIds: [], dropped: [], newIds };
+    const result: GroupResult = { label: group.label, created: [], joined: [], renamed: [], skippedIds: [], dropped: [], newIds };
     summary.groups.push(result);
     let plan: CleanPlan;
     try {
@@ -771,6 +1020,19 @@ export async function runOrganizer(deps: RunDeps): Promise<OrganizeSummary> {
         result.dropped.push(`放进捆没成：${error instanceof Error ? error.message : error}`);
       }
     }
+    // AI 自己开的捆里加了条目：照各条小卡片重写捆名，让新加的事也进标题。用户起名的捆不改。
+    for (const bid of new Set(plan.joins.filter((j) => touched.has(j.id)).map((j) => j.bundleId))) {
+      const from = store.bundleMeta()[bid];
+      if (from?.by !== "ai") continue;
+      try {
+        const name = await askBundleName(store.list().filter((r) => r.bundleId === bid), deps.notes, config, deps.fetchFn, deps.timeoutMs);
+        if (name !== from.name && store.aiRenameBundle(bid, name)) {
+          result.renamed.push({ from: from.name, to: name, ids: store.list().filter((r) => r.bundleId === bid).map((r) => r.id) });
+        }
+      } catch (error) {
+        result.dropped.push(`改捆名「${from.name}」没成：${error instanceof Error ? error.message : error}`);
+      }
+    }
     result.skippedIds = newIds.filter((id) => !touched.has(id));
     if (touched.size) summary.changed = true;
     store.markSorted(task.seenIds);
@@ -789,6 +1051,7 @@ export function organizeRows(s: OrganizeSummary, records: BookmarkRecord[]): Rec
     }
     for (const c of g.created) rows.push({ group: g.label, action: "开新捆", title: `开新捆「${c.name}」${c.ids.length} 条`, why: c.why || "AI 没写理由", itemIds: c.ids });
     for (const j of g.joined) rows.push({ group: g.label, action: "放进", title: `「${j.text}」→ 放进「${j.name}」`, why: j.why || "AI 没写理由", itemIds: [j.id] });
+    for (const n of g.renamed) rows.push({ group: g.label, action: "改捆名", title: `「${n.from}」改名「${n.to}」`, why: "捆里加了条目，标题重写，把新加的事也写进去", itemIds: n.ids });
     if (g.skippedIds.length) {
       const names = g.skippedIds.map((id) => byId.get(id)).filter((r): r is BookmarkRecord => Boolean(r)).map((r) => `「${shortText(r, 12)}」`);
       rows.push({ group: g.label, action: "没动", title: `${g.skippedIds.length} 条先散着：${names.slice(0, 3).join("")}${names.length > 3 ? "…" : ""}`, why: "AI 没找到讲同一个项目的伙伴，或者认不出是哪个项目", itemIds: g.skippedIds });
@@ -822,6 +1085,7 @@ export interface CheckDeps {
   timeoutMs?: number;
   rules?: string;
   now?: number;
+  notes?: NoteBook;
 }
 
 export interface CheckResult {
@@ -845,7 +1109,7 @@ export async function runChecker(deps: CheckDeps): Promise<CheckResult> {
   for (const group of groupsForOrganizer(records, deps.agents)) {
     const fp = groupFingerprint(group);
     if (book.checked[group.label] === fp) continue;
-    const task = buildCheckTask(group, { meta: store.bundleMeta(), openBundle: (id) => store.aiOpenBundle(id) });
+    const task = buildCheckTask(group, { meta: store.bundleMeta(), openBundle: (id) => store.aiOpenBundle(id), notes: deps.notes });
     const inGroup = new Set(group.records.map((r) => r.id));
     if (!task) {
       book.hints = book.hints.filter((h) => !inGroup.has(h.itemId));

@@ -33,9 +33,10 @@ import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./laun
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
-  activeModel, buildCheckTask, buildGroupTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText, liveHintBook, modelLabel,
-  ORGANIZER_RULES, organizeRows, parseHintBook, parseOrganizerConfig, parseRunRecords, pruneRunRecords, runChecker, runOrganizer, shortSummary, testModel,
-  type Effort, type FetchFn, type HintBook, type OrganizerConfig, type RecordRow, type RunRecord,
+  activeModel, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
+  freshNote, ITEM_RULES, liveHintBook, liveNoteBook, modelLabel, ORGANIZER_RULES, organizeRows, parseHintBook, parseNoteBook, parseOrganizerConfig, parseRunRecords,
+  pruneRunRecords, runChecker, runItemNotes, runOrganizer, shortSummary, testModel,
+  type Effort, type FetchFn, type HintBook, type NoteBook, type OrganizerConfig, type RecordRow, type RunRecord,
 } from "./organizer";
 
 const log = createLogger("bookmark");
@@ -854,6 +855,17 @@ function registerIpc(): void {
   ipcMain.handle("bookmark:organizer:records", () => readRunRecords());
   // 看板上的小橙点：条目 id → 提示。
   ipcMain.handle("bookmark:organizer:hints", () => readHintBook().hints);
+  // 每条的小标题（第五版）：板上第一行显示。只给还作数的（读完没改过的）。
+  ipcMain.handle("bookmark:organizer:notes", () => {
+    const records = requireStore().list();
+    const book = readNoteBook();
+    const out: Record<string, { project: string; title: string }> = {};
+    for (const r of records) {
+      const n = freshNote(r, book);
+      if (n) out[r.id] = { project: n.project, title: n.title };
+    }
+    return out;
+  });
   ipcMain.handle("bookmark:organizer:dismiss", (_event, itemId: unknown) => {
     const id = String(itemId ?? "");
     const book = readHintBook();
@@ -875,6 +887,7 @@ function registerIpc(): void {
       rmSync(`${hintBookPath()}.before-reset`, { force: true }); // 原来没有提示本，撤销时也就没有
     }
     writeHintBook({ hints: [], dismissed: [], checked: {} });
+    writeNoteBook({}); // 全部重来＝每条也重读、小标题重写
     log.记(`AI 整理全部重来：拆了 ${split} 个捆`, "organizer");
     notifyInboxChanged();
     await runOrganizerOnce("全部重来", [{ group: "全部", action: "全部重来", title: `全部重来：拆了 ${split} 个捆，所有条目重新整理`, why: "你点了「全部重来」。重来前的样子存着，下一次整理之前能撤销", itemIds: requireStore().list().map((r) => r.id) }]);
@@ -1152,6 +1165,24 @@ function appendRunRecord(run: RunRecord): void {
   }
 }
 
+/** 每条的小卡片（第五版）：项目、小标题、小结。读的时候顺手把删掉的条目清出去。 */
+const NOTES_FILE = "AI条目小结.json";
+
+function readNoteBook(): NoteBook {
+  const raw = parseNoteBook(readJsonFile(NOTES_FILE));
+  const live = liveNoteBook(raw, requireStore().list());
+  if (Object.keys(live).length !== Object.keys(raw).length) writeNoteBook(live);
+  return live;
+}
+
+function writeNoteBook(book: NoteBook): void {
+  try {
+    writeJsonAtomic(join(bookmarkDataDirectory(), NOTES_FILE), book);
+  } catch (error) {
+    log.出事("每条的小标题存不下来（下一轮会重读）", error, "organizer");
+  }
+}
+
 function hintBookPath(): string {
   return join(bookmarkDataDirectory(), HINTS_FILE);
 }
@@ -1179,6 +1210,8 @@ function boardRulesList(skillRoot: string) {
   const rules: { key: string; group: string; title: string; note: string; text: string; editable: boolean }[] = [
     { key: "organizer", group: "AI 整理捆", title: "整理规矩", note: "整理模型照这个把新条目捆起来。能直接改，改完点保存", text: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES), editable: true },
     { key: "checker", group: "AI 整理捆", title: "检查规矩", note: "整理完照这个挑放错的、挂小橙点，一条都不挪。能直接改，改完点保存", text: readRulesFile(CHECK_RULES_FILE, CHECK_RULES), editable: true },
+    { key: "item", group: "AI 整理捆", title: "读条目规矩", note: `整理第一步：一条一条读、每张图都看，写项目名、小标题、小结。${inCode}`, text: ITEM_RULES, editable: false },
+    { key: "bundle-name", group: "AI 整理捆", title: "捆标题规矩", note: `AI 开的捆里加了条目，照这个重写捆标题。${inCode}`, text: BUNDLE_NAME_RULES, editable: false },
     { key: "hard", group: "AI 整理捆", title: "程序卡死的规矩", note: `程序直接拿代码里的数拼出来的，跟真执行的一样。${inCode}`, text: hardRulesText(), editable: false },
     { key: "question", group: "AI 整理捆", title: "AI 每次收到的题目", note: "拿你看板现在的条目现做的：上面两份规矩之外，AI 就只收到这些", text: questionPreview(), editable: false },
     { key: "claim-day", group: "AI 领到活时看到的", title: "日常档", note: `一条和一捆一样：干完讲给你听，你说可以才删。${inCode}`,
@@ -1205,13 +1238,16 @@ function boardRulesList(skillRoot: string) {
 function questionPreview(): string {
   const store = requireStore();
   const groups = groupsForOrganizer(store.list(), requireRoster().list());
-  const opts = { meta: store.bundleMeta(), openBundle: (id: string) => store.aiOpenBundle(id) };
+  const opts = { meta: store.bundleMeta(), openBundle: (id: string) => store.aiOpenBundle(id), notes: readNoteBook() };
   for (const g of groups) {
     const organize = buildGroupTask(g, { ...opts, now: Date.now(), previewAll: true });
     const check = buildCheckTask(g, opts);
     if (!organize && !check) continue;
     return [
-      `下面拿「${g.label}」组现做。每组单独发一份，图片另附。`,
+      `下面拿「${g.label}」组现做。读条目一条一份、图片另附；整理题和检查题每组一份。`,
+      "",
+      "━━ 读条目题（拿这组第一条做例子）━━",
+      buildItemTask(g.records[0], attachmentsRoot()).text,
       "",
       "━━ 整理题（散着的都当新条目，好让你看全格式；真整理时你动过的不送）━━",
       organize ? organize.text : "（这组现在没有能整理的条目）",
@@ -1279,13 +1315,29 @@ async function runOrganizerOnce(reason: string, lead: RecordRow[] = []): Promise
   const rows: RecordRow[] = [...lead];
   let model = modelLabel(activeModel(config));
   try {
-    const summary = await runOrganizer({ store, agents, config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot(), rules: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES) });
+    // 第一步读条目（第五版 2026-10-13）：一条一条读、每张图都看，写小标题和小结；读完一条存一次、板上马上露出小标题。
+    let notes: NoteBook = readNoteBook();
+    try {
+      const read = await runItemNotes({ store, agents, config, fetchFn: organizerFetch, book: notes, attachmentsDir: attachmentsRoot(),
+        onNote: (book) => { writeNoteBook(book); notifyInboxChanged(); } });
+      notes = read.book;
+      writeNoteBook(notes);
+      const byId = new Map(store.list().map((r) => [r.id, r]));
+      if (read.errors.length) {
+        rows.push({ group: "全部", action: "没成", title: `${read.errors.length} 条没读成，下一轮再读`, why: read.errors.slice(0, 3).map((e) => e.error).join("；"),
+          itemIds: read.errors.map((e) => e.id).filter((id) => byId.has(id)) });
+      }
+      if (read.read) log.记(`读条目：读了 ${read.read} 条`, "organizer");
+    } catch (error) {
+      log.出事(`${reason}读条目失败`, error, "organizer");
+    }
+    const summary = await runOrganizer({ store, agents, config, fetchFn: organizerFetch, attachmentsDir: attachmentsRoot(), rules: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES), notes });
     model = summary.model;
     rows.push(...organizeRows(summary, store.list()));
     if (summary.changed) notifyInboxChanged();
     let text = shortSummary(summary);
     try {
-      const check = await runChecker({ store, agents, config, fetchFn: organizerFetch, book: readHintBook(), rules: readRulesFile(CHECK_RULES_FILE, CHECK_RULES) });
+      const check = await runChecker({ store, agents, config, fetchFn: organizerFetch, book: readHintBook(), rules: readRulesFile(CHECK_RULES_FILE, CHECK_RULES), notes });
       writeHintBook(check.book);
       rows.push(...check.rows);
       for (const e of check.errors) rows.push({ group: e.split("：")[0], action: "没成", title: "这组没检查成，下一轮再查", why: e, itemIds: [] });

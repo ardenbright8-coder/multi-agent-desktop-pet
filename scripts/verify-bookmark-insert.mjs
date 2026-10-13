@@ -7,7 +7,7 @@
 //   ② 点空白框光标进框；不写字点别处 → 不多出条目、空白框还在
 //   ③ 写了字点别处 → 这条挪到第二格，第一格又是空的；③b 回车同样挪下去，光标留在空白框能接着写
 //   ④ 单击条目文字进改字，光标在改字框里；点别处收起
-//   ⑤ 交接单专区保留小加号，点了能手写一张交接单（带 📋，落在专区）
+//   ⑤ 交接单专区保留小加号，点了能手写一张交接单（带交接小标，落在专区）
 //   ⑥ 打字中途看板重画，光标还在空白框里、字不丢
 //   ⑦ 分组页每个 agent 组第一格都是空白框、没有小加号；写进哪组落在哪组
 // 用法：npm run build 之后 node scripts/verify-bookmark-insert.mjs
@@ -180,7 +180,7 @@ try {
       const task = [...document.querySelectorAll(`${sel} .task`)].find((el) => el.textContent.includes("手写的交接单"));
       return task ? { badge: task.classList.contains("handoff") && !!task.querySelector(".handoff-badge") } : null;
     }, zone), 3000);
-    check("⑤ 点专区加号能手写一张交接单（带 📋、落在专区）", !!handoff && handoff.badge, JSON.stringify(handoff));
+    check("⑤ 点专区加号能手写一张交接单（带交接小标、落在专区）", !!handoff && handoff.badge, JSON.stringify(handoff));
   }
 } catch (error) {
   failures.push(`脚本异常：${error?.message ?? error}`);

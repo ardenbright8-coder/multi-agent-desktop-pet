@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("bookmark", {
   organizerLedger: () => ipcRenderer.invoke("bookmark:organizer:ledger"),
   organizerRecords: () => ipcRenderer.invoke("bookmark:organizer:records"),
   organizerHints: () => ipcRenderer.invoke("bookmark:organizer:hints"),
+  organizerNotes: () => ipcRenderer.invoke("bookmark:organizer:notes") as Promise<Record<string, { project: string; title: string }>>,
   organizerDismiss: (itemId: string) => ipcRenderer.invoke("bookmark:organizer:dismiss", itemId),
   boardRules: () => ipcRenderer.invoke("bookmark:board-rules"),
   onOrganized: (callback: (text: string) => void) => {

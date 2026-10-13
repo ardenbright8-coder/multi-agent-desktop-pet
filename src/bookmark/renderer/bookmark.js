@@ -4,7 +4,7 @@
 // （2026-09-11 改版三，用户原话：写了就是写了，不用点保存）。
 
 const BM_INBOX_KEY = "__inbox__"; // 💭 待定（想想区）：assignee 为空的普通条目都归这（交接单归专区，见下）
-const BM_HANDOFF_ZONE_KEY = "__handoff_zone__"; // 📋 交接单专区：AI 写的未派发交接单默认落这（Agent分组页最底部·＋加Agent按钮上方，用户拍板位置别挪）
+const BM_HANDOFF_ZONE_KEY = "__handoff_zone__"; // 交接单专区：AI 写的未派发交接单默认落这（Agent分组页最底部·＋加Agent按钮上方，用户拍板位置别挪）
 const BM_DEFAULT_ASSIGNEES = ["Claude", "ChatGPT", "Pi Agent", "Antigravity", "Hermes"]; // 仅渲染兜底用，真名单以主进程为准
 const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "#b9a0c9", "#c9b47f", "#9fb8c9"];
 const bmOpenDetails = new Set(); // 点开过详情的条目 id：输入行自动存档会触发重画，别把人手点开的详情洗掉
@@ -18,6 +18,7 @@ let bmInsertSaveTimer = null;
 let bmEditSaveTimer = null;
 let bmBundleMeta = {}; // 捆号 → { name, by: user/ai }（设定21：捆名、AI 捆的标个小机器人）
 let bmHints = new Map(); // 条目 id → AI 检查的提示（第四版：条目右边挂小橙点）
+let bmNotes = {}; // 条目 id → { project, title }：AI 读条目写的小标题（第五版：板上每条第一行）
 
 function bmDotColor(name) {
   let hash = 0;
@@ -41,6 +42,8 @@ const BM_ICONS = {
   down: '<path d="M6 9l6 6 6-6"/>',
   right: '<path d="M9 6l6 6-6 6"/>',
   copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2.5 2.5 0 0 0-2.5-2.5H6.5A2.5 2.5 0 0 0 4 6.5V13a2.5 2.5 0 0 0 2.5 2.5h2"/>',
+  // 交接单小标（2026-10-13 用户：别用表情，跟复制钮一个路子的细线小图标）：一块写字板
+  handoff: '<rect x="5" y="4.5" width="14" height="16.5" rx="2.5"/><path d="M9 4.5V4a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4v.5"/><path d="M8.5 11h7M8.5 15h4.5"/>',
 };
 // 组名前的官方标志（2026-09-24 用户拍板：比圆点专业）。Claude/OpenAI 取自 simple-icons 开源图标库，
 // Pi 取自 pi.dev 官网，Hermes 官网图标就是 ⚕；原文件在 E 盘 40_下载资产「AI官方标志」夹。认不出的组照旧叶形圆点。
@@ -208,10 +211,12 @@ function bmInit() {
 
 async function bmRefresh() {
   try {
-    const [agents, records, dispatch, meta, hints] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
+    const [agents, records, dispatch, meta, hints, notes] = await Promise.all([window.bookmark.agents(), window.bookmark.list(),
       window.bookmark.dispatch ? window.bookmark.dispatch({ action: 'list' }) : Promise.resolve({ bundles: [] }),
       window.bookmark.bundleMeta ? window.bookmark.bundleMeta() : Promise.resolve({}),
-      window.bookmark.organizerHints ? window.bookmark.organizerHints().catch(() => []) : Promise.resolve([])]);
+      window.bookmark.organizerHints ? window.bookmark.organizerHints().catch(() => []) : Promise.resolve([]),
+      window.bookmark.organizerNotes ? window.bookmark.organizerNotes().catch(() => ({})) : Promise.resolve({})]);
+    bmNotes = notes && typeof notes === "object" ? notes : {};
     bmHints = new Map((Array.isArray(hints) ? hints : []).map((h) => [h.itemId, h]));
     bmDispatchBundles = new Map((dispatch.bundles || []).map(b => [b.id, b]));
     bmBundleMeta = meta || {};
@@ -564,7 +569,7 @@ function bmBuildGroup(key, displayName, records) {
 function bmBuildTask(record, groupKey, order) {
   const item = document.createElement("li");
   item.className = "task";
-  if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（📋 标记+淡黄底），一眼认出
+  if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（序号下面一个交接小标+淡黄底），一眼认出
   item.dataset.id = record.id;
   item.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -594,18 +599,32 @@ function bmBuildTask(record, groupKey, order) {
   });
   item.appendChild(handle);
 
+  // 序号一列：交接单在序号正下方挂一个小标（2026-10-13 用户拍板：别占第一行，第一行留给标题）。
+  const numCol = document.createElement("span");
+  numCol.className = "num-col";
   const num = document.createElement("span");
   num.className = "num";
   num.textContent = String(order).padStart(2, "0");
-  item.appendChild(num);
-
-  const body = document.createElement("div");
-  body.className = "task-body";
+  numCol.appendChild(num);
   if (record.kind === "handoff") {
     const badge = document.createElement("span");
     badge.className = "handoff-badge";
-    badge.textContent = "📋 交接单";
-    body.appendChild(badge);
+    badge.title = "交接单（上一个 AI 窗口没干完留下的活）";
+    badge.innerHTML = bmIcon("handoff");
+    numCol.appendChild(badge);
+  }
+  item.appendChild(numCol);
+
+  const body = document.createElement("div");
+  body.className = "task-body";
+  // 小标题（第五版）：AI 读完这条写的「哪一块：要干的活」。散着的条目前面带项目名，捆里的项目名在捆标题上。
+  // 交接单自己那句就是标题，不另加。
+  const note = bmNotes[record.id];
+  if (note && note.title && record.kind !== "handoff" && bmEditingId !== record.id) {
+    const title = document.createElement("div");
+    title.className = "task-title";
+    title.textContent = !record.bundleId && note.project && note.project !== "认不出" ? `${note.project} · ${note.title}` : note.title;
+    body.appendChild(title);
   }
   if (bmEditingId === record.id) {
     const input = document.createElement("textarea");
@@ -777,7 +796,7 @@ function bmRenderCurrent() {
 // ── 交接单专区（Agent分组页最底部）─────────────────────
 
 /**
- * 📋 交接单专区：AI 干完活写的交接单（kind=handoff 且未派发）默认落这，用户拍板位置——
+ * 交接单专区：AI 干完活写的交接单（kind=handoff 且未派发）默认落这，用户拍板位置——
  * Agent分组页最底部、＋加Agent 按钮上方，别处不加。拖到哪个组头=派给谁（条目拖拽复用 bmBuildTask）。
  */
 function bmBuildHandoffZone(records) {
@@ -789,8 +808,8 @@ function bmBuildHandoffZone(records) {
   head.className = "group-head";
 
   const mark = document.createElement("span");
-  mark.className = "handoff-zone-mark";
-  mark.textContent = "📋";
+  mark.className = "handoff-badge handoff-zone-mark";
+  mark.innerHTML = bmIcon("handoff");
   head.appendChild(mark);
 
   const name = document.createElement("span");

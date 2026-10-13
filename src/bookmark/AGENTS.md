@@ -5,7 +5,7 @@
 **这块管什么**：随手记 / 网址收藏 / 「交给谁」标记的独立板块，2026-09-10 界面改版成 **「Agent 看板」**（照用户原型图：💭待定区置顶 + 各 agent 分组任务行，分组清单无限加，行尾无确认钮——自动同步）。2026-09-09 用户拍板并入桌宠当常驻壳——**一个壳两个项目**：代码一个区、数据一个库、与桌宠本体零共享状态，后期想拆整块搬走。
 
 **看板分组与待定的约定**（手机端收发箱同款约定，接 ntfy 时对齐）：
-- 条目归属看 `assignee` 字段：空 = 普通条目进 💭待定区、交接单（kind=handoff）进 Agent分组页底部的 📋交接单专区；值 = 对应 agent 组（大小写不敏感对齐）
+- 条目归属看 `assignee` 字段：空 = 普通条目进 💭待定区、交接单（kind=handoff）进 Agent分组页底部的交接单专区；值 = 对应 agent 组（大小写不敏感对齐）
 - 分组清单存在 `<appDataRoot>\bookmark\agents.json`，真名单以主进程 AgentRoster 为准；assignee 指向已删除的组时条目回落待定区
 - 外来新增入口 = `BookmarkStore.add(input)`（含 dedupeKey），ntfy 收信接线时直接调，不走 UI
 
@@ -13,7 +13,7 @@
 |---|---|
 | `coordination.ts` / `dispatch-cli.ts` | 明确启用的多人派工：每捆一个窗口、逐条领取、调度收件箱、用户验收后清理；普通捆不登记，不启动模型或后台工兵 |
 | `skills.ts` / `renderer/dispatch.js/.css` | 读取项目技能正本；Ctrl 多选后右键「捆成一捆」（设定21，以最后一次为准）、技能页、协同捆复制领取命令；不替用户打开执行窗口 |
-| `organizer.ts` | AI 整理捆（设定21，第四版 2026-10-12）：「整理一次」＝每组新条目出题给便宜模型（模型可加任意一家 OpenAI 式接口，每个自带地址＋钥匙，老格式读时自动搬家）、回 JSON 带理由逐条过筛，只走 store 的 `aiJoinBundle` / `aiCreateBundle`；接着「检查」整组（含用户捆的）挑放错的，只挂提示不挪（`runChecker`，组指纹没变不再问）。规矩正文 `ORGANIZER_RULES` / `CHECK_RULES`，程序卡死的规矩 `hardRulesText` 拿常数现拼。全部重来＋撤销在 store（`aiResetAll` 存 `bookmarks.json.reset-undo.json`、`undoReset`）。panel-window 管定时器和看板数据夹里的 `organizer.json`（模型和钥匙）、`AI整理规矩.md` / `AI检查规矩.md`（用户改过的规矩）、`AI整理记录.json`（一行一件事，条目删了跟着删，最多 50 次）、`AI整理提示.json`（小橙点、知道了、组指纹）；旧 `AI整理记录.md` 不再读写。界面：设置浮层一行入口＋弹窗口（`bmOpenOrganizerDialog`：整理捆页两个钮＋整理记录、规矩页），条目右边小橙点 `bmBuildHintDot`，气泡 `bmBindBubble`；验证 `scripts/verify-bookmark-organize.mjs` |
+| `organizer.ts` | AI 整理捆（设定21，第五版 2026-10-13）：「整理一次」＝先读条目（`runItemNotes`：每条单独问一次、带它自己的每张图，写项目名／小标题／小结，存 `AI条目小结.json`，内容指纹变了才重读；板上每条第一行显示小标题，IPC `bookmark:organizer:notes`）→ 每组新条目拿小卡片出题给便宜模型（模型可加任意一家 OpenAI 式接口，每个自带地址＋钥匙，老格式读时自动搬家）、回 JSON 带理由逐条过筛，只走 store 的 `aiJoinBundle` / `aiCreateBundle`；AI 捆里加了条目就 `askBundleName` 重写捆名（`aiRenameBundle`，用户起名的不改，捆名写法 `BUNDLE_NAME_GUIDE` 一处、最长 `MAX_BUNDLE_NAME`=39）；接着「检查」整组（含用户捆的）挑放错的，只挂提示不挪（`runChecker`，组指纹没变不再问）。规矩正文 `ITEM_RULES` / `ORGANIZER_RULES` / `BUNDLE_NAME_RULES` / `CHECK_RULES`（读条目和捆标题两份规矩页只读），程序卡死的规矩 `hardRulesText` 拿常数现拼。全部重来＋撤销在 store（`aiResetAll` 存 `bookmarks.json.reset-undo.json`、`undoReset`）。panel-window 管定时器和看板数据夹里的 `organizer.json`（模型和钥匙）、`AI整理规矩.md` / `AI检查规矩.md`（用户改过的规矩）、`AI整理记录.json`（一行一件事，条目删了跟着删，最多 50 次）、`AI整理提示.json`（小橙点、知道了、组指纹）；旧 `AI整理记录.md` 不再读写。界面：设置浮层一行入口＋弹窗口（`bmOpenOrganizerDialog`：整理捆页两个钮＋整理记录、规矩页），条目右边小橙点 `bmBuildHintDot`，气泡 `bmBindBubble`；验证 `scripts/verify-bookmark-organize.mjs` |
 | `store.ts` | 本地库：增删查改（updateText 改正文/链接，输入行自动存档用）、「交给谁」标记、dedupeKey 去重（手机离线重发防重复入库）；条目带 `detail`（详情，交接单等长内容）与 `kind`（note 普通 / handoff 交接单），旧库读入自动补齐默认；JSON 原子写；捆一捆与 AI 领活（设定15）：`bundleId/claimedBy/claimedAt`、`bundleWith`/`claimNext`/`done`（必须带用户原话）/`release` |
 | `appearance.ts` | 看板外观纯函数：透明度解析/夹取（范围 0.30–0.95，默认 0.6，坏档回落默认）；存取 IO 在 panel-window（appearance.json） |
 | `zoom.ts` | 看板字号纯函数（设定20）：档位 50%–200% 一档 10%、zoom.json 解析、哪个键算调字号；接线在 panel-window `wireBoardZoom`（看板窗口 before-input-event + zoom-changed，🚨 不走 globalShortcut） |
@@ -30,7 +30,7 @@
 | `agents.ts` | Agent 看板分组清单（默认五组 Claude/ChatGPT/Pi Agent/Antigravity/Hermes + 自定义无限加；2026-09-24 加 Antigravity 时，老名单靠 `agents-seen.json` 只补一次、插在 Hermes 上面，用户删了不再回来），独立存 `agents.json`；坏档回落默认组 |
 | `panel-window.ts` | 面板窗口（Win11 毛玻璃）+ **常驻贴屏/总在其他窗口之下**（koffi 调 user32 SetWindowPos HWND_BOTTOM；失焦即沉底、聚焦不压、2秒兑底）+ **F1 置顶/沉底开关**（2026-09-11 改版三：旧 F3 显示/收起已撤，看板永远常驻显示；F1 提顶 HWND_TOPMOST↔沉回最底，纯函数 pinToggleSteps 在 dock.ts）、本块专属 IPC（bookmark:*，含 agents:*） |
 | `preload.ts` | 本块渲染层专属桥（`window.bookmark`），跟 `channel\preload` 互不相干 |
-| `renderer\` | 界面三件套（index.html / bookmark.js / styles.css）——**Agent 看板**：💭待定区置顶 + 各 agent 分组任务行，⊕无限加，行尾无确认钮（自动同步）；分组页拖到组头改派，右键「派给」只在待定页（设定12）；行尾复制给用户自己用（常显淡色，点一下复制这条）、左边六个点在 agent 组里是「启动 Agent · 带编程/普通」（设定12）；拖到别条正中间＝捆、捆头六个点整捆启动、条目显示「🔄 窗口名 在干」（设定15）；每组第一格是常驻空白框（设定17，不用按加号），组内输入行**边写边自动存**（2026-09-11 改版三：防抖 400ms 落库+失焦必落盘，无「记下来/取消」钮）；分组页最底部有 **📋交接单专区**（AI 未派发交接单默认落这，拖组头=派给谁）；独立窗口自含，**不经 shell.js 调度** |
+| `renderer\` | 界面三件套（index.html / bookmark.js / styles.css）——**Agent 看板**：💭待定区置顶 + 各 agent 分组任务行，⊕无限加，行尾无确认钮（自动同步）；分组页拖到组头改派，右键「派给」只在待定页（设定12）；行尾复制给用户自己用（常显淡色，点一下复制这条）、左边六个点在 agent 组里是「启动 Agent · 带编程/普通」（设定12）；拖到别条正中间＝捆、捆头六个点整捆启动、条目显示「🔄 窗口名 在干」（设定15）；每组第一格是常驻空白框（设定17，不用按加号），组内输入行**边写边自动存**（2026-09-11 改版三：防抖 400ms 落库+失焦必落盘，无「记下来/取消」钮）；分组页最底部有 **交接单专区**（AI 未派发交接单默认落这，拖组头=派给谁）；独立窗口自含，**不经 shell.js 调度** |
 
 ## 对外露出什么
 
@@ -55,7 +55,7 @@ BookmarkStore（testkit 单测用）
 - 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM，只发 BOTTOM 摘不掉置顶样式。
 - 🚨 **单击和拖动分开（2026-09-24 用户拍板，设定 11）**：鼠标按下挪过 5 像素就是拖（不用等，`BM_DRAG_SLOP`）；没挪就松手是单击，**松手马上响应**（条目文字单击改字、项目页单击进夹/打开 md），按多久都算单击；拖完那一下点击被 `row.dataset.swallow` 吞掉。🚫 别改回「按住 0.3 秒才能拖」（人按下就挪，会被判成单击直接进改字）；🚫 别改成双击、别给单击加延时（当天试过双击，用户：「单击点了半天没反应」）。不走系统拖放，不靠左边小点（小点只管「派给 / 删除」）；别给条目加 `draggable`。待定、分组条目、项目页同一个 `bmBindDrag`（组框不绑，设定13）。
 - 🚨 **每组第一格是常驻空白框，组标题行不放小加号（设定17，2026-09-24）**：空白框 `bmBuildInsertRow(组, true)` **不带 `task` 类**（不是条目，带了会被拖动、数条目、「第一条」算进去）；找输入框一律 `bmFindInsertInput(组, 是不是空白框)`，别再 `querySelector(".insert-row textarea")`（第一个永远是别的组的）。只有交接单专区留小加号。
-- 🚨 **组标题行只放颜色点 / 📋 + 组名（交接单专区另有小加号）（设定13，2026-09-24）**：不放条数、不放折叠钮，组高度跟内容走；组框不能拖（只拖组里条目，拖到别组标题=改派）。折叠记录 `bm-collapsed-groups` 已不读不写，别加回来——加回来会让以前收起过的组永远收着。页签上的待定数字另算，保留。
+- 🚨 **组标题行只放颜色点 / 交接小标 + 组名（交接单专区另有小加号）（设定13，2026-09-24）**：不放条数、不放折叠钮，组高度跟内容走；组框不能拖（只拖组里条目，拖到别组标题=改派）。折叠记录 `bm-collapsed-groups` 已不读不写，别加回来——加回来会让以前收起过的组永远收着。页签上的待定数字另算，保留。
 - 🚨 **输入行 / 改字框：画完再放光标，重画不许拔掉正在打的框**（2026-09-24 修，维修记录在书签工具 `维修（排障）\02_点加号冒出的输入行关不掉（已修好）\`）：`bmBeginInsert` / `bmBeginEdit` 要 `await bmRefresh()` 再 focus，别用 requestAnimationFrame 抢跑；`bmRefresh` 画前记下光标在哪个框、画完放回；画的时候 `bmRepainting=true`，新加任何「失焦就收起」的框都要先看它，不然手机一来消息框就自己收了。交接单专区也有同款小加号（手写交接单）。
 - 🚨 **拖动期间不许重画看板**（2026-09-24 修残影）：窗口拿焦点、手机来消息都会 `bmRefresh` 整张重画，按着的那条被换掉 → 影子宽 0 且收不回，留成 `⠿01` 窄残影。现在靠 `bmDragActive` 从按下到松手压住重画、松手补画；松手监听挂 `window` 不挂单条；开拖时发现条目已被换掉就作废。新加任何会重画看板的入口，一律走 `bmRefresh`，别绕过它直接 `bmRenderBoard`。
 - 🚨 **输入行自动存档的落库纪律（改版三 2026-09-11，用户原话：写了就是写了）**：一份草稿只对应一条——首笔 `add`，之后 `updateText` 改同一条（IPC `bookmark:update-text`），别一份草稿存出好几条；打字防抖 400ms，失焦/回车/⊕收起必落盘；框清空=把存出来的那条删掉；落库后重画要把草稿文字+焦点还回去，别把人正在打的字冲掉。
@@ -63,7 +63,7 @@ BookmarkStore（testkit 单测用）
 - `backgroundMaterial: "acrylic"` 只有 Win11 有效，构造时 try/catch 回落无材质版本；窗口背景色 `#00000000` + CSS 半透明底，两层一起兜。
 - 渲染层保持 sandbox 默认隔离，别图省事开 nodeIntegration。
 - 面板里的链接一律走 `setWindowOpenHandler` → `shell.openExternal`，别让网页在面板里开。
-- 🚨 **交接单条目（kind=handoff）必须保留 📋 标记**，底色只比普通条目暖一点点；**交接单专区跟别的组同一个底和边框**，别整块换色（2026-09-24 用户：统一风格上再差异化，设定13）；**交接单专区固定在 Agent分组页最底部、＋加Agent 按钮上方，别处不加**（用户画的黄框位置，2026-09-10 拍板）；未派发交接单默认落专区，拖到哪个组头=派给谁，组内交接单可「收回交接单专区」；「接完活自己 remove 删掉」的规矩草案写在仓库根 AGENT_INTEGRATION.md 的 CLI 节，别删了它。
+- 🚨 **交接单条目（kind=handoff）必须保留交接小标**：序号正下方的细线图标小方块（`.num-col .handoff-badge`，图标 `BM_ICONS.handoff`），不用表情（2026-10-13 用户拍板，设定04），第一行留给标题；底色只比普通条目暖一点点；**交接单专区跟别的组同一个底和边框**，别整块换色（2026-09-24 用户：统一风格上再差异化，设定13）；**交接单专区固定在 Agent分组页最底部、＋加Agent 按钮上方，别处不加**（用户画的黄框位置，2026-09-10 拍板）；未派发交接单默认落专区，拖到哪个组头=派给谁，组内交接单可「收回交接单专区」；「接完活自己 remove 删掉」的规矩草案写在仓库根 AGENT_INTEGRATION.md 的 CLI 节，别删了它。
 - 🚨 **透明度只调 renderer 半透明底**（CSS 变量 `--bm-alpha`，滑条在左下角 ⚙ 设置浮层，存档 appearance.json）——acrylic 材质别动；设置浮层结构「一项一行」，以后新设置项往里加行。
 - 渲染层是普通 script 共享全局作用域（边界检查②会扫），**函数名一律 `bm` 前缀**（bmRefresh / bmRenderList…），别跟 pet renderer 的全局函数撞名。
 
@@ -89,7 +89,7 @@ BookmarkStore（testkit 单测用）
 1. `npm run build` 过
 2. `npm test` 过（含 `testkit\tests\bookmark-store.test.ts`）
 3. `node 检查边界.mjs` 过（bookmark 只认 shared，零越界）
-4. `node scripts/verify-bookmark-handoff.mjs` 过（交接单专区后台驱动验证：落位/📋标记/详情展开/拖拽派活/收回/自删）
+4. `node scripts/verify-bookmark-handoff.mjs` 过（交接单专区后台驱动验证：落位/序号下交接小标/详情展开/拖拽派活/收回/自删）
 5. `node scripts/verify-bookmark-copy.mjs` 过（行尾复制、六个点启动 Agent（含提示开了哪个快捷方式、测试实例不许真开 Claude 窗口）、右键精简、组头图标、官方标志、捆一捆、真敲命令领活/done/放回去；会动系统剪贴板，脚本自己存了还原）
 6. `node scripts/verify-bookmark-images.mjs` 过（贴多图、光标位置、图文编辑、大图、交给 AI、重载改派、移除图、非图片和越界路径拒绝；隐藏窗口跑，不动系统剪贴板）。🚨 样图必须是校验和都对的真 PNG，Electron 解码器很严
    图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（打开就能标、一套流水号、自动存不动原图、撤销、拖动编号、删光清附属文件、改字框里能标、交给 AI 带编号清单；隐藏窗口）。

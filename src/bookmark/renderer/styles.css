@@ -134,12 +134,9 @@ body {
   border-color: rgba(201, 165, 76, 0.35);
 }
 
-/* 交接单专区（Agent分组页最底部）：跟别的组同一个底和边框，只靠 📋 标记区分（2026-09-24 用户：统一风格上再差异化，别整块换色） */
-.handoff-zone-mark {
-  font-size: 17px;
-  line-height: 1;
-  flex: none;
-}
+/* 交接单专区（Agent分组页最底部）：跟别的组同一个底和边框，只靠交接小标区分（2026-09-24 用户：统一风格上再差异化，别整块换色） */
+.handoff-badge.handoff-zone-mark { width: 22px; height: 22px; margin: 0; }
+.handoff-badge.handoff-zone-mark svg { width: 15px; height: 15px; }
 
 .group-head {
   display: flex;
@@ -263,11 +260,30 @@ body {
 
 .task .handle:hover { color: rgba(47, 62, 44, 0.75); }
 
+/* 序号一列：序号在上，交接单的小标在它正下方（2026-10-13 用户：第一行留给标题） */
+.task .num-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
 .task .num {
   color: rgba(47, 62, 44, 0.45);
   font-size: 13px;
   padding-top: 1px;
   flex: none;
+}
+
+/* 小标题（第五版 2026-10-13）：AI 读完这条写的「哪一块：要干的活」，原文在下面照旧露两行 */
+.task .task-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #2f3e2c;
+  word-break: break-all;
+  margin-bottom: 1px;
 }
 
 .task-body { flex: 1; min-width: 0; }
@@ -321,7 +337,7 @@ body {
 
 .task .task-url:hover { text-decoration: underline; }
 
-/* ── 交接单（📋 标记认人，底色只比普通条目暖一点点，别整块换色） ── */
+/* ── 交接单（序号下面的交接小标认人，底色只比普通条目暖一点点，别整块换色） ── */
 
 .task.handoff {
   background: rgba(250, 244, 226, 0.7);
@@ -330,18 +346,21 @@ body {
 
 .task.handoff .handle { color: rgba(138, 111, 47, 0.55); }
 
+/* 交接小标（2026-10-13 用户：别用表情，照复制钮那种圆角小方块＋细线图标，颜色比复制钮重一点、一眼认得出） */
 .handoff-badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
   color: #8a6f2f;
-  background: rgba(201, 165, 76, 0.18);
-  border: 1px solid rgba(201, 165, 76, 0.45);
-  border-radius: 999px;
-  padding: 0 7px;
-  margin-right: 6px;
-  vertical-align: 1px;
+  background: rgba(201, 165, 76, 0.2);
+  border: 1px solid rgba(201, 165, 76, 0.5);
+  box-sizing: border-box;
+  flex: none;
 }
+.handoff-badge svg { width: 13px; height: 13px; }
 
 .task-detail {
   margin-top: 6px;
@@ -788,7 +807,8 @@ body {
 /* 捆头六个点跟条目的一样淡、一样大（2026-10-12 用户：上面那栏的点口味太重，跟下边不统一） */
 .bundle-head .handle { border: 0; background: transparent; color: rgba(47, 62, 44, 0.35); cursor: pointer; font: inherit; font-size: 13px; padding: 2px 2px; letter-spacing: 1px; flex: none; }
 .bundle-head .handle:hover { color: rgba(47, 62, 44, 0.75); }
-.bundle-head .bundle-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 捆标题写满一行放不下就换行，不出省略号（2026-10-13 用户：标题为什么带省略号） */
+.bundle-head .bundle-name { flex: 1; min-width: 0; white-space: normal; word-break: break-all; line-height: 1.35; padding: 2px 0; }
 .bundle-head .bundle-ai { flex: none; font-size: 11px; opacity: 0.55; }
 .task.in-bundle {
   margin-bottom: 0;
