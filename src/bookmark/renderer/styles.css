@@ -174,7 +174,8 @@ body {
 .g-add:hover, .t-copy:hover { background: rgba(47, 62, 44, 0.08); color: rgba(47, 62, 44, 0.85); }
 
 /* 条目行尾复制钮（给用户自己用）：常显、平时淡一点，鼠标移到这一行变清楚（2026-09-24 用户：别全藏，藏久了看不见） */
-.t-copy { opacity: 0.35; align-self: center; }
+/* 复制钮、小橙点钉在右上角，跟第一行（小标题）齐平，条目多长都不跑（2026-10-13 用户） */
+.t-copy { opacity: 0.35; align-self: flex-start; }
 .task:hover .t-copy, .t-copy:focus-visible { opacity: 1; }
 
 /* 小加号紧跟组名：更小更淡，清爽不抢眼（2026-09-24 用户：别那么重口味，放左边顺手） */
@@ -278,15 +279,19 @@ body {
   flex: none;
 }
 
-/* 小标题（第五版 2026-10-13）：AI 读完这条写的「哪一块：要干的活」，原文在下面照旧露两行 */
+/* 小标题（第五版 2026-10-13）：AI 用大白话写的「这条要干啥」。只比正文强一点点，看着舒服就行（用户：口味别那么重）。
+   有小标题的条目原文默认收起，点小标题展开 / 收起 */
 .task .task-title {
   font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-weight: 500;
+  line-height: 1.4;
   color: #2f3e2c;
   word-break: break-all;
-  margin-bottom: 1px;
+  cursor: pointer;
 }
+.task .task-title + .task-text { margin-top: 3px; color: rgba(47, 62, 44, 0.72); }
+.task .task-text.full { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.task .task-text[hidden] { display: none !important; }
 
 .task-body { flex: 1; min-width: 0; }
 
@@ -802,8 +807,9 @@ body {
 /* 捆头六个点跟条目的一样淡、一样大（2026-10-12 用户：上面那栏的点口味太重，跟下边不统一） */
 .bundle-head .handle { border: 0; background: transparent; color: rgba(47, 62, 44, 0.35); cursor: pointer; font: inherit; font-size: 13px; padding: 2px 2px; letter-spacing: 1px; flex: none; }
 .bundle-head .handle:hover { color: rgba(47, 62, 44, 0.75); }
-/* 捆标题写满一行放不下就换行，不出省略号（2026-10-13 用户：标题为什么带省略号） */
-.bundle-head .bundle-name { flex: 1; min-width: 0; white-space: normal; word-break: break-all; line-height: 1.35; padding: 2px 0; }
+/* 捆标题写满一行放不下就换行，不出省略号（2026-10-13 用户：标题为什么带省略号）。
+   大标题比条目小标题稍深一点，但别粗重（用户：清爽更重要） */
+.bundle-head .bundle-name { flex: 1; min-width: 0; white-space: normal; word-break: break-all; line-height: 1.4; padding: 2px 0; font-size: 13px; font-weight: 600; color: rgba(47, 62, 44, 0.88); }
 .bundle-head .bundle-ai { flex: none; font-size: 11px; opacity: 0.55; }
 .task.in-bundle {
   margin-bottom: 0;
@@ -938,7 +944,7 @@ body {
 .bm-hint-what { font-weight: 600; color: #9a5c1c; }
 .bm-hint-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 2px; font-size: 11.5px; color: rgba(47, 62, 44, 0.5); }
 /* 看板条目右边的小橙点：AI 检查觉得可能放错了（跟左边六个点差不多分量，不抢眼） */
-.bm-hint-dot { flex: none; align-self: center; width: 14px; height: 14px; padding: 0; border: 0; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.bm-hint-dot { flex: none; align-self: flex-start; margin-top: 4px; width: 14px; height: 14px; padding: 0; border: 0; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .bm-hint-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: rgba(224, 145, 60, 0.85); box-shadow: 0 0 0 2px rgba(224, 145, 60, 0.15); }
 .bm-hint-dot:hover::before, .bm-hint-dot.bubble-pinned::before { background: #e0913c; box-shadow: 0 0 0 3px rgba(224, 145, 60, 0.22); }
 .org-status { flex: 1; min-width: 0; font-size: 12px; color: rgba(47, 62, 44, 0.62); line-height: 1.35; overflow-wrap: anywhere; }

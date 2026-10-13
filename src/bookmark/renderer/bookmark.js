@@ -8,6 +8,7 @@ const BM_HANDOFF_ZONE_KEY = "__handoff_zone__"; // 交接单专区：AI 写的�
 const BM_DEFAULT_ASSIGNEES = ["Claude", "ChatGPT", "Pi Agent", "Antigravity", "Hermes"]; // 仅渲染兜底用，真名单以主进程为准
 const BM_DOT_PALETTE = ["#d9b98a", "#8fbf9f", "#7fa8c9", "#c9a0a8", "#a8b8d8", "#b9a0c9", "#c9b47f", "#9fb8c9"];
 const bmOpenDetails = new Set(); // 点开过详情的条目 id：输入行自动存档会触发重画，别把人手点开的详情洗掉
+const bmOpenBodies = new Set(); // 有小标题的条目，点开过原文的 id（2026-10-13 用户：原文收起，主要看小标题，想看再点开）
 
 let bmAgents = [...BM_DEFAULT_ASSIGNEES];
 let bmOpenComposerGroup = null; // 当前展开输入行的组 key
@@ -173,14 +174,16 @@ function bmInit() {
     }
     if (event.key === "Escape") bmToggleAddAgentRow(false);
   });
-  document.addEventListener("click", (event) => {
-    // 点菜单外面收起右键菜单。
+  // 在菜单 / 设置浮层外面一按下（左键右键都算）就收起（2026-10-13 用户：误点开了，点哪儿都该消掉）。
+  // 挂在按下、抓在最外层：点到条目文字会被「进改字」截走 click，靠 click 收不起来。
+  window.addEventListener("pointerdown", (event) => {
     const menu = document.getElementById("ctx-menu");
     if (!menu.hidden && !menu.contains(event.target)) bmHideCtxMenu();
-    // 点浮层外面收起设置浮层（浮层内部点击已 stopPropagation）。
     const pop = document.getElementById("settings-popover");
-    if (pop && !pop.hidden && !pop.contains(event.target)) pop.hidden = true;
-  });
+    const gear = document.getElementById("settings-btn");
+    if (pop && !pop.hidden && !pop.contains(event.target) && !(gear && gear.contains(event.target))) pop.hidden = true;
+  }, true);
+  window.addEventListener("blur", () => bmHideCtxMenu());
   window.addEventListener("focus", () => { void bmRefresh(); });
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   window.bookmark.onInboxChanged?.(() => { void bmRefresh(); });
@@ -697,14 +700,24 @@ function bmBuildTask(record, groupKey, order) {
 
   const body = document.createElement("div");
   body.className = "task-body";
-  // 小标题（第五版）：AI 读完这条写的「哪一块：要干的活」。散着的条目前面带项目名，捆里的项目名在捆标题上。
-  // 交接单自己那句就是标题，不另加。
+  // 小标题（第五版）：AI 读完这条用大白话写的「这条要干啥」。散着的条目前面带项目名，捆里的项目名在捆标题上。
+  // 交接单自己那句就是标题，不另加。有小标题的条目原文默认收起，点小标题展开 / 收起（2026-10-13 用户拍板）。
   const note = bmNotes[record.id];
-  if (note && note.title && record.kind !== "handoff" && bmEditingId !== record.id) {
+  const titled = Boolean(note && note.title && record.kind !== "handoff" && bmEditingId !== record.id);
+  const bodyOpen = !titled || bmOpenBodies.has(record.id);
+  if (titled) {
     const title = document.createElement("div");
     title.className = "task-title";
     title.textContent = !record.bundleId && note.project && note.project !== "认不出" ? `${note.project} · ${note.title}` : note.title;
+    title.title = bodyOpen ? "点一下收起原文" : "点一下看原文";
+    title.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (bmOpenBodies.has(record.id)) bmOpenBodies.delete(record.id);
+      else bmOpenBodies.add(record.id);
+      bmRenderCurrent();
+    });
     body.appendChild(title);
+    item.classList.add("titled");
   }
   if (bmEditingId === record.id) {
     const input = document.createElement("textarea");
@@ -736,6 +749,11 @@ function bmBuildTask(record, groupKey, order) {
     text.className = "task-text";
     // 板上只露两行：换行和空行压成一个空格，两行里都是字（2026-10-12 用户：从别处贴来的长文开头是空行，板上只剩一个链接，看不出写的啥）。
     bmRenderImages(text, record.text.replace(/\s*\n+\s*/g, " "), false, record.attachments || []);
+    // 有小标题的：原文默认收起；点开了就整段露出来，不再只露两行。
+    if (titled) {
+      text.hidden = !bodyOpen;
+      text.classList.add("full");
+    }
     // 单击就改字；按下挪了算拖（bmBindDrag），拖完那一下点击会被吞掉，不会误进改字。
     text.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -743,7 +761,7 @@ function bmBuildTask(record, groupKey, order) {
     });
     body.appendChild(text);
   }
-  if (record.url) {
+  if (record.url && bodyOpen) {
     const link = document.createElement("a");
     link.className = "task-url";
     link.href = record.url;
