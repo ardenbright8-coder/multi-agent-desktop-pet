@@ -5,10 +5,24 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { BookmarkStore } from "../../bookmark/store";
 import {
   activeModel,
+  askItemNote,
+  BUNDLE_NAME_RULES,
+  CHECK_RULES,
+  chatAny,
+  fillRule,
+  ITEM_RULES,
+  knownProjects,
+  loadRule,
+  missingRuleFiles,
+  ORGANIZER_RULES,
+  repairJson,
+  resetModelHealth,
+  retryPlan,
+  takeModelSwitches,
   buildCheckTask,
   buildGroupTask,
   buildItemTask,
@@ -61,6 +75,11 @@ function fakeModel(reply: unknown, calls: string[] = []): FetchFn {
 }
 
 const config = parseOrganizerConfig({ apiKey: "测试钥匙" });
+/** 只有一个模型：测「没成」时不让它换备用模型。 */
+const single = parseOrganizerConfig({ models: [{ id: "a", provider: "甲", baseUrl: "https://a.example/v1", apiKey: "k", model: "a-model" }] });
+
+retryPlan.delaysMs = [0, 0]; // 重拨不真等
+beforeEach(() => resetModelHealth());
 
 test("设置：老格式（一个地址一把钥匙）搬成新格式，默认两个排前面、自己加的留着、坏值回落默认", () => {
   const c = parseOrganizerConfig({ apiKey: "k", models: ["my/model"], model: "my/model", intervalHours: 999 });
@@ -227,12 +246,10 @@ test("跑一轮：开新捆、放进已有捆，用户动过的不碰；第二�
 
 test("模型没回好：这组不标看过，下一轮再试；别的组照常", () =>
   withStore(async (store) => {
-    seed(store, ["一", "二"], "Claude");
+    seed(store, ["坏组甲", "坏组乙"], "Claude");
     seed(store, ["三", "四"], "Pi Agent");
-    let n = 0;
-    const flaky: FetchFn = async () => {
-      n += 1;
-      if (n === 1) return { ok: false, status: 500, text: async () => "坏了" };
+    const flaky: FetchFn = async (_url, init) => {
+      if (JSON.stringify(JSON.parse(init.body).messages[1]).includes("坏组")) return { ok: false, status: 500, text: async () => "坏了" };
       return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: '{"join":[],"create":[],"skip":["N1","N2"]}' } }] }) };
     };
     const s = await runOrganizer({ store, agents: ["Claude", "Pi Agent"], config, now: NOW, fetchFn: flaky });
@@ -372,11 +389,11 @@ test("读条目：一条一问，只带这条自己的图；图片标记换成 [
       const fetchFn: FetchFn = async (_url, init) => {
         bodies.push(init.body);
         const user = JSON.stringify(JSON.parse(init.body).messages[1]);
-        if (user.includes("坏的那条")) return { ok: false, status: 500, text: async () => "坏了" };
+        if (user.includes("坏的那条")) return { ok: false, status: 401, text: async () => "钥匙不对" };
         const title = user.includes("返回箭头") ? "返回箭头：点了没反应要修" : "看图界面：两边黑框收窄";
         return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify({ project: "库管理面板", title, summary: "要修" }) } }] }) };
       };
-      const r1 = await runItemNotes({ store, agents: ["Claude"], config, fetchFn, book: {}, attachmentsDir: dir, now: NOW });
+      const r1 = await runItemNotes({ store, agents: ["Claude"], config: single, fetchFn, book: {}, attachmentsDir: dir, now: NOW });
       assert.equal(bodies.length, 3, "三条各问一次");
       assert.equal(r1.read, 2);
       assert.deepEqual(r1.errors.map((e) => e.id), [c], "坏的那条记下来，别的照常");
@@ -388,7 +405,7 @@ test("读条目：一条一问，只带这条自己的图；图片标记换成 [
 
       bodies.length = 0;
       store.updateText(b, "酒馆黑框太多，对比也难[图片:image-b1.png]");
-      const r2 = await runItemNotes({ store, agents: ["Claude"], config, fetchFn, book: r1.book, attachmentsDir: dir, now: NOW });
+      const r2 = await runItemNotes({ store, agents: ["Claude"], config: single, fetchFn, book: r1.book, attachmentsDir: dir, now: NOW });
       assert.equal(bodies.length, 2, "只重读改了字的和上次没读成的");
       assert.equal(r2.read, 1);
       store.remove(a);
@@ -450,3 +467,99 @@ test("分捆拿小卡片出题、不再带原图；捆名全交给 AI：变了�
     assert.equal(MAX_BUNDLE_NAME, 39);
     assert.match(hardRulesText(), /每张图/);
   }));
+
+// ── 2026-10-13：全部重来时对面回 524 一次就放弃、小标题格式坏了就丢、规矩搬进 skills 夹 ──
+
+const okReply = (content: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: typeof content === "string" ? content : JSON.stringify(content) } }] }) });
+
+test("对面一时忙（524）就重拨，同一个模型拨通了照常用，不换模型", async () => {
+  let n = 0;
+  const fetchFn: FetchFn = async () => (++n < 3 ? { ok: false, status: 524, text: async () => "Upstream model provider is temporarily unavailable" } : okReply("好"));
+  assert.equal(await chatAny(config, [], fetchFn), "好");
+  assert.equal(n, 3, "拨了三次");
+  assert.deepEqual(takeModelSwitches(), []);
+});
+
+test("选中的模型重拨几次都不通，换设置里下一个；这轮后面的调用直接用备用的，不再白等", async () => {
+  const seen: string[] = [];
+  const fetchFn: FetchFn = async (_url, init) => {
+    const model = JSON.parse(init.body).model as string;
+    seen.push(model);
+    return model === "deepseek/deepseek-v4.1-flash" ? { ok: false, status: 524, text: async () => "忙" } : okReply("好");
+  };
+  assert.equal(await chatAny(config, [], fetchFn), "好");
+  assert.deepEqual(seen, ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash", "z-ai/glm-5.3-flash"]);
+  seen.length = 0;
+  await chatAny(config, [], fetchFn);
+  assert.deepEqual(seen, ["z-ai/glm-5.3-flash"], "主模型刚挂过，先跳过它");
+  assert.match(takeModelSwitches().join(""), /不通，改用「Command Code · z-ai\/glm-5.3-flash」/);
+});
+
+test("钥匙不对这类不是一时的毛病：不重拨，直接换下一个模型；都不通就报最后那个错", async () => {
+  let n = 0;
+  const fetchFn: FetchFn = async () => {
+    n += 1;
+    return { ok: false, status: 401, text: async () => "钥匙不对" };
+  };
+  await assert.rejects(chatAny(config, [], fetchFn), /401/);
+  assert.equal(n, 2, "两个模型各拨一次");
+});
+
+test("整组没整理成会在整理记录里写没成；换了模型的照常整理完", () =>
+  withStore(async (store) => {
+    seed(store, ["一", "二"], "Claude");
+    const fetchFn: FetchFn = async (_url, init) =>
+      JSON.parse(init.body).model === "deepseek/deepseek-v4.1-flash" ? { ok: false, status: 503, text: async () => "忙" } : okReply({ join: [], create: [{ name: "测试：一·二", items: ["N1", "N2"], why: "同一个" }], skip: [] });
+    const s = await runOrganizer({ store, agents: ["Claude"], config, now: NOW, fetchFn });
+    assert.equal(s.groups[0].error, undefined);
+    assert.equal(s.groups[0].created.length, 1, "备用模型捆好了");
+    assert.equal(takeModelSwitches().length, 1);
+  }));
+
+test("模型回的 JSON 字里夹了英文双引号、直接换行：补好照读", () => {
+  const broken = '{"project":"库管理面板","title":"点"返回"没反应\n要修","summary":"小结"}';
+  assert.throws(() => JSON.parse(broken));
+  assert.equal((JSON.parse(repairJson(broken)) as { title: string }).title, '点"返回"没反应\n要修');
+  assert.equal((parsePlanText(broken) as { project?: string }).project, "库管理面板");
+  assert.equal(repairJson('{"a":"好","b":["x"]}'), '{"a":"好","b":["x"]}', "好的不动");
+});
+
+test("读条目回来的读不懂，当场再问一次，不留到下一轮", () =>
+  withStore(async (store) => {
+    const [a] = seed(store, ["返回箭头没反应"]);
+    let n = 0;
+    const fetchFn: FetchFn = async () => (++n === 1 ? okReply("我觉得这条讲的是返回箭头") : okReply({ project: "库管理面板", title: "库管理面板的返回箭头点了没反应要修好", summary: "要修" }));
+    const note = await askItemNote(store.list().find((r) => r.id === a)!, config, fetchFn);
+    assert.equal(n, 2);
+    assert.equal(note.project, "库管理面板");
+  }));
+
+test("读条目时附上看板上已经认出的项目名，让同一个东西只用一个名字", () =>
+  withStore((store) => {
+    const [a] = seed(store, ["这个工具的返回键坏了"]);
+    const book: NoteBook = {
+      x: { project: "库管理面板", title: "t", summary: "s", key: "k" },
+      y: { project: "认不出", title: "t", summary: "s", key: "k" },
+      z: { project: "库管理面板", title: "t", summary: "s", key: "k" },
+    };
+    assert.deepEqual(knownProjects(book), ["库管理面板"]);
+    assert.match(buildItemTask(store.list().find((r) => r.id === a)!, undefined, knownProjects(book)).text, /已经认出的项目：库管理面板/);
+  }));
+
+test("内置模型的规矩从 skills 夹读进来：开头说明去掉，{{}} 全填上，跟代码卡的数一致", () => {
+  assert.deepEqual(missingRuleFiles, []);
+  for (const rules of [ITEM_RULES, ORGANIZER_RULES, CHECK_RULES, BUNDLE_NAME_RULES]) {
+    assert.ok(rules.length > 200);
+    assert.doesNotMatch(rules, /\{\{|^---/);
+  }
+  assert.match(ITEM_RULES, /^你是看板读条员/);
+  assert.match(ORGANIZER_RULES, new RegExp(`${MAX_BUNDLE_NAME} 个字以内`));
+  assert.match(BUNDLE_NAME_RULES, /不许用：杂项/);
+  const dir = mkdtempSync(join(tmpdir(), "agent-pet-rules-"));
+  try {
+    writeFileSync(join(dir, "试.md"), "﻿---\r\n这是啥: 说明\r\n---\r\n正文 {{数}}\r\n");
+    assert.equal(fillRule(loadRule("试", [dir]), { 数: "39" }), "正文 39");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -35,7 +35,7 @@ import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
   activeModel, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
   boardFingerprint, freshNote, ITEM_RULES, parseNameBook, runBundleNames, type NameBook, liveHintBook, liveNoteBook, modelLabel, ORGANIZER_RULES, organizeRows, parseHintBook, parseNoteBook, parseOrganizerConfig, parseRunRecords,
-  pruneRunRecords, runChecker, runItemNotes, runOrganizer, shortSummary, testModel,
+  pruneRunRecords, RULES_DIR, runChecker, runItemNotes, runOrganizer, shortSummary, takeModelSwitches, testModel,
   type Effort, type FetchFn, type HintBook, type NoteBook, type OrganizerConfig, type RecordRow, type RunRecord,
 } from "./organizer";
 
@@ -1304,11 +1304,12 @@ function boardRulesList(skillRoot: string) {
   };
   const base = { item, prompt: "（这里是那条任务的原文、图片、要求模板）", position: 1, total: 3, remaining: 2, busy: [] as string[] };
   const inCode = "写在程序里，要改跟 AI 说一声";
+  const inSkill = (file: string) => `正文在看板程序夹 ${RULES_DIR} 里的 ${file}，要改跟 AI 说一声`;
   const rules: { key: string; group: string; title: string; note: string; text: string; editable: boolean }[] = [
     { key: "organizer", group: "AI 整理捆", title: "整理规矩", note: "整理模型照这个把新条目捆起来。能直接改，改完点保存", text: readRulesFile(ORGANIZER_RULES_FILE, ORGANIZER_RULES), editable: true },
     { key: "checker", group: "AI 整理捆", title: "检查规矩", note: "整理完照这个挑放错的、挂小橙点，一条都不挪。能直接改，改完点保存", text: readRulesFile(CHECK_RULES_FILE, CHECK_RULES), editable: true },
-    { key: "item", group: "AI 整理捆", title: "读条目规矩", note: `整理第一步：一条一条读、每张图都看，写项目名、小标题、小结。${inCode}`, text: ITEM_RULES, editable: false },
-    { key: "bundle-name", group: "AI 整理捆", title: "捆标题规矩", note: `AI 开的捆里加了条目，照这个重写捆标题。${inCode}`, text: BUNDLE_NAME_RULES, editable: false },
+    { key: "item", group: "AI 整理捆", title: "读条目规矩", note: `整理第一步：一条一条读、每张图都看，写项目名、小标题、小结。${inSkill("读条目.md")}`, text: ITEM_RULES, editable: false },
+    { key: "bundle-name", group: "AI 整理捆", title: "捆标题规矩", note: `捆里的条目变了，照这个重写捆标题。${inSkill("起捆名.md")}`, text: BUNDLE_NAME_RULES, editable: false },
     { key: "hard", group: "AI 整理捆", title: "程序卡死的规矩", note: `程序直接拿代码里的数拼出来的，跟真执行的一样。${inCode}`, text: hardRulesText(), editable: false },
     { key: "question", group: "AI 整理捆", title: "AI 每次收到的题目", note: "拿你看板现在的条目现做的：上面两份规矩之外，AI 就只收到这些", text: questionPreview(), editable: false },
     { key: "claim-day", group: "AI 领到活时看到的", title: "日常档", note: `一条和一捆一样：干完讲给你听，你说可以才删。${inCode}`,
@@ -1403,8 +1404,9 @@ async function runOrganizerOnce(reason: string, lead: RecordRow[] = []): Promise
     }
     return;
   }
-  // 全部重来的撤销机会只到下一次整理之前。
-  if (reason !== "全部重来") requireStore().dropResetUndo();
+  // 全部重来的撤销机会只到下一次整理之前（补跑是接着上一轮没做完的，不算新的一次）。
+  if (reason !== "全部重来" && reason !== FOLLOW_UP) requireStore().dropResetUndo();
+  takeModelSwitches(); // 上一轮剩的不算这轮的
   organizerRunning = true;
   notifyOrganized("");
   const store = requireStore();
@@ -1461,9 +1463,38 @@ async function runOrganizerOnce(reason: string, lead: RecordRow[] = []): Promise
     log.出事(`${reason}整理失败`, error, "organizer");
   } finally {
     organizerRunning = false;
+    for (const note of takeModelSwitches()) rows.push({ group: "全部", action: "换模型", title: note, why: "选中的模型重拨几次都不通，自动换了设置里的下一个模型", itemIds: [] });
+    if (scheduleFollowUp(rows.some((r) => r.action === "没成")) && organizerLast) organizerLast.text += `；没成的 ${FOLLOW_UP_MIN} 分钟后自动再试`;
     appendRunRecord({ at: new Date().toISOString(), model, rows });
     notifyOrganized(organizerLast?.text ?? "");
   }
+}
+
+/** 补跑（2026-10-13：对面一时忙，整组没整理成，原来要等 2 小时下一轮）：这轮有没成的，过几分钟再整理一次；连着补 3 次还不成就等定时那一轮。 */
+const FOLLOW_UP = "补跑";
+const FOLLOW_UP_MIN = 5;
+const MAX_FOLLOW_UPS = 3;
+let followUpTimer: NodeJS.Timeout | null = null;
+let followUps = 0;
+
+/** 这轮有没成的就排一次补跑，返回排上了没有；全成了把次数清零。 */
+function scheduleFollowUp(failed: boolean): boolean {
+  if (!failed) {
+    followUps = 0;
+    return false;
+  }
+  if (followUpTimer) return true;
+  if (followUps >= MAX_FOLLOW_UPS) {
+    followUps = 0;
+    return false;
+  }
+  followUps += 1;
+  followUpTimer = setTimeout(() => {
+    followUpTimer = null;
+    void runOrganizerOnce(FOLLOW_UP);
+  }, FOLLOW_UP_MIN * 60_000);
+  followUpTimer.unref?.();
+  return true;
 }
 
 function startOrganizerTimer(firstMs = 30_000): void {

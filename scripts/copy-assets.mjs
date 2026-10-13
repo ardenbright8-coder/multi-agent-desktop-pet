@@ -9,6 +9,10 @@ const integrationsOut = resolve("dist", "integrations");
 mkdirSync(integrationsOut, { recursive: true });
 cpSync(resolve("integrations"), integrationsOut, { recursive: true });
 
+// 看板内置模型整理捆的规矩（organizer.ts 运行时读）：打包只带 dist，所以拷一份进去。
+const organizerRules = "skills（看板内置模型用·整理捆的规矩）";
+cpSync(resolve(organizerRules), resolve("dist", organizerRules), { recursive: true });
+
 const assetsOut = resolve("dist", "assets");
 mkdirSync(assetsOut, { recursive: true });
 cpSync(resolve("assets"), assetsOut, { recursive: true });
