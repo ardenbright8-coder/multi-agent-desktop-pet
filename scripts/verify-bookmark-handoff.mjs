@@ -122,13 +122,13 @@ try {
     return task?.querySelector(".task-detail")?.hidden ?? null;
   });
   check("③ 详情默认收起", detailHiddenBefore === true, `hidden=${detailHiddenBefore}`);
-  await panel.locator(".group.handoff-zone .task.has-detail .task-body").first().click();
+  await panel.locator(".group.handoff-zone .task .task-title").first().click(); // 2026-10-13 起点标题展开原文和详情，没有「详情」按钮
   const detailShown = await panel.evaluate(() => {
     const detail = document.querySelector(".group.handoff-zone .task .task-detail");
     return { hidden: detail?.hidden ?? null, text: detail?.textContent?.includes("手机端待拍板") ?? false };
   });
   check("③ 点条目展开详情看到详情文本", detailShown.hidden === false && detailShown.text, JSON.stringify(detailShown));
-  await panel.locator(".group.handoff-zone .task.has-detail .task-body").first().click();
+  await panel.locator(".group.handoff-zone .task .task-title").first().click(); // 2026-10-13 起点标题展开原文和详情，没有「详情」按钮
   const detailHiddenAgain = await panel.evaluate(() => {
     return document.querySelector(".group.handoff-zone .task .task-detail")?.hidden ?? null;
   });

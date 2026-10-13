@@ -172,3 +172,31 @@ test("拖动说清了去向：拖到捆底下边缘＝拆出来；夹在两捆�
     assert.equal(where(ids.丙), null);
   });
 });
+
+// 2026-10-13 跨组一步到位、复制一条（Ctrl+C 再放下）
+test("跨组一步到位：改派＋放到锚点旁边＋进捆；复制一条：紧跟原条、领活报告捆都不带", () => {
+  withStore((store) => {
+    const ids = seed(store);
+    const other = store.add({ text: "戊", assignee: "Antigravity" }).id;
+    store.createTaskBundle([ids.乙, ids.丙], "捆一");
+    const one = store.list().find((r) => r.id === ids.乙)!.bundleId!;
+    // 戊 从 Antigravity 拖进 Claude 的捆一、插在乙下面
+    const moved = store.relocate(other, "Claude", ids.乙, "below", one)!;
+    assert.equal(moved.assignee, "Claude");
+    assert.equal(moved.bundleId, one);
+    assert.deepEqual(claudeRows(store).map((r) => r[0]), ["甲", "乙", "戊", "丙", "丁"]);
+    assert.equal(moved.sortedAt, null, "换组＝新组里的新条目，AI 会重读");
+    // 甲 拖进空的 Antigravity 组（没有锚点）：改派过去就行
+    assert.equal(store.relocate(ids.甲, "Antigravity", null, "above")!.assignee, "Antigravity");
+
+    store.claimNext(ids.丁, "窗口1");
+    const copy = store.duplicate(ids.丁)!;
+    assert.notEqual(copy.id, ids.丁);
+    assert.equal(copy.text, "丁");
+    assert.equal(copy.claimedBy, null, "领活不带");
+    assert.equal(copy.bundleId, null);
+    const rows = claudeRows(store).map((r) => r[0]);
+    assert.equal(rows.lastIndexOf("丁"), rows.indexOf("丁") + 1, "紧跟在原条后面");
+    assert.equal(store.duplicate("没有这条"), null);
+  });
+});

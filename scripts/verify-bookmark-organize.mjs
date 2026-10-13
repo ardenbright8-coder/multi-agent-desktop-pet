@@ -38,7 +38,7 @@ try {
   // ① Ctrl 点 A B C，右键选中的那条 → 捆成一捆
   for (const id of ids.slice(0, 3)) await page.locator(`.task[data-id="${id}"] .num`).click({ modifiers: ['Control'] });
   assert.equal(await page.locator('.dispatch-selected').count(), 3);
-  await page.locator(`.task[data-id="${ids[1]}"] .task-text`).click({ button: 'right' });
+  await page.locator(`.task[data-id="${ids[1]}"] .task-title`).click({ button: 'right' });
   assert.match(await page.locator('#ctx-menu').innerText(), /已选 3 条[\s\S]*捆成一捆/);
   await page.locator('#ctx-menu .ctx-input').fill('第一捆');
   await page.locator('#ctx-menu .ctx-input').press('Enter');
@@ -47,7 +47,7 @@ try {
   assert.equal(await page.locator('.dispatch-selected').count(), 0, '捆完清掉选择');
 
   // ② 没选中时右键还是原来那条的菜单
-  await page.locator(`.task[data-id="${ids[4]}"] .task-text`).click({ button: 'right' });
+  await page.locator(`.task[data-id="${ids[4]}"] .task-title`).click({ button: 'right' });
   assert.doesNotMatch(await page.locator('#ctx-menu').innerText(), /捆成一捆/);
   await page.keyboard.press('Escape');
   await page.evaluate(() => bmHideCtxMenu());
@@ -55,7 +55,7 @@ try {
   // ③ 以最后一次为准：C 已在第一捆，再选 C D E 捆 → C 出来进新捆，第一捆剩 A B
   for (const id of ids.slice(2, 5)) await page.locator(`.task[data-id="${id}"] .num`).click({ modifiers: ['Control'] });
   assert.equal(await page.locator('.dispatch-selected').count(), 3, '捆里的条目也能选');
-  await page.locator(`.task[data-id="${ids[3]}"] .task-text`).click({ button: 'right' });
+  await page.locator(`.task[data-id="${ids[3]}"] .task-title`).click({ button: 'right' });
   await page.locator('#ctx-menu .ctx-item').filter({ hasText: '捆成一捆' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.bundle-head').length === 2);
   const rows = await page.evaluate(() => window.bookmark.list());
@@ -71,7 +71,7 @@ try {
 
   // ④ 再捆一次让第一捆只剩一条 → 第一捆自己散掉
   for (const id of [ids[1], ids[5]]) await page.locator(`.task[data-id="${id}"] .num`).click({ modifiers: ['Control'] });
-  await page.locator(`.task[data-id="${ids[5]}"] .task-text`).click({ button: 'right' });
+  await page.locator(`.task[data-id="${ids[5]}"] .task-title`).click({ button: 'right' });
   await page.locator('#ctx-menu .ctx-item').filter({ hasText: '捆成一捆' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.bundle-head').length === 2);
   const rows2 = await page.evaluate(() => window.bookmark.list());
@@ -277,6 +277,8 @@ try {
     await bmRefresh();
     return r.id;
   });
+  // 2026-10-13 起各组条目原文收着，点标题展开再看原文和链接
+  await page.locator(`.task[data-id="${linkId}"] .task-title`).click();
   assert.match(await page.locator(`.task[data-id="${linkId}"] .task-text`).innerText(), /思考了 1m 17s \.\.\. 结论先说/);
   assert.equal(await page.locator(`.task[data-id="${linkId}"] .task-url`).innerText(), '链接 · huggingface.co/kohya-ss/x.safetensors');
 

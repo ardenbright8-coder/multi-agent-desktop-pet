@@ -572,6 +572,58 @@ export class BookmarkStore {
   }
 
   /** 挪完之后定它在不在捆里：夹在同一捆两条中间＝进这捆；本来在捆里、挪到捆边上还挨着＝留下；别的都＝离开。 */
+  /** 跨组一步到位（2026-10-13 用户：拖到别的组哪儿就放哪儿，不用先拖到组名上再调）：
+   *  先改派到新组（离开原捆、领活作废、在新组算新条目），再挪到锚点旁边、按 into 进捆或单独放。
+   *  新组里没有条目时不给锚点，改派完就留在原位置。 */
+  relocate(id: string, assignee: string | null, anchorId: string | null, place: "above" | "below", into?: string | null): BookmarkRecord | null {
+    const moved = this.setAssignee(id, assignee);
+    if (!moved || !anchorId) return moved;
+    return this.move(id, anchorId, place, into === undefined ? null : into);
+  }
+
+  /** 复制一条（Ctrl+C 再放下，2026-10-13）：新条目紧跟在原条目后面、同一组，字、链接、详情一样；
+   *  图另存一份新文件名（连标注），删一条或改标注不连累另一条。领活、报告、捆、AI 看没看过都不带。 */
+  duplicate(id: string): BookmarkRecord | null {
+    this.ensureLoaded();
+    const src = this.records.find((r) => r.id === id);
+    if (!src) return null;
+    const dir = attachmentsRoot();
+    let text = src.text;
+    const attachments: string[] = [];
+    for (const name of src.attachments) {
+      const fresh = `image-${randomUUID()}.png`;
+      try {
+        copyFileSync(join(dir, name), join(dir, fresh));
+        for (const tail of [".marks.json", ".marked.png"]) {
+          if (existsSync(join(dir, `${name}${tail}`))) copyFileSync(join(dir, `${name}${tail}`), join(dir, `${fresh}${tail}`));
+        }
+        text = text.split(`[图片:${name}]`).join(`[图片:${fresh}]`);
+        attachments.push(fresh);
+      } catch {
+        attachments.push(name); // 拷不了就共用原图，不拦复制
+      }
+    }
+    const copy: BookmarkRecord = {
+      ...src,
+      id: `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
+      text,
+      attachments,
+      dedupeKey: null,
+      bundleId: null,
+      claimedBy: null,
+      claimedAt: null,
+      report: null,
+      reportedBy: null,
+      reportedAt: null,
+      createdAt: new Date().toISOString(),
+      sortedAt: null,
+      userPinned: false,
+    };
+    this.records.splice(this.records.indexOf(src) + 1, 0, copy);
+    this.save();
+    return copy;
+  }
+
   /** 拖动时界面已经说清了进哪捆还是单独放：照办，再把位置理顺，免得一捆被插断成两截。 */
   private placeExplicitly(item: BookmarkRecord, into: string | null): void {
     const key = groupKeyOf(item);

@@ -54,6 +54,7 @@ BookmarkStore（testkit 单测用）
 - 🚨 **看板永远常驻显示（改版三 2026-09-11 拍板）**：旧 F3/托盘的显示/收起逻辑已撤，别加回收起路径；托盘「书签台」入口现在的动作 = F1 同款置顶开关（提上来/沉回去）。
 - 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM，只发 BOTTOM 摘不掉置顶样式。
 - 🚨 **右键菜单、设置浮层在外面一按下就收（2026-10-13，设定12）**：挂 `window` 的 pointerdown 抓最外层，左键右键都算，窗口失焦也收。别改回 document 的 click——点条目文字会被「进改字」的 stopPropagation 截走，菜单就关不掉了。
+- 🚨 **跨组一步到位、剪切复制后拿着走（2026-10-13，设定21）**：任务条目的拖动和 Ctrl+V 拿着走共用 `bmTaskHitAt`（指着哪个组就按哪个组的捆和缝算，组名或空组＝改派；`bmCanLand` 卡交接单只进 agent 组和交接单专区、普通条目只进 agent 组）和 `bmDropTask`（跨组走 `store.relocate`，复制先 `store.duplicate`）。拿着走：`bmClip` 记剪 / 复制哪条（认按着的 `bmPressedTaskId` 或停着的 `bmHoverTaskId`），Ctrl+V 进 `bmCarry`，按住左键拖、松开放下，右键 / Esc 不要；在输入框或选中了字时不抢普通复制粘贴（`bmTyping`）。改其中一个，两种操作一起变，别各写一套。
 - 🚨 **拖动去向看颜色（2026-10-13 用户拍板，设定21）：变绿＝合并，不绿＝单独放。** 任务列表（能捆的组、或里面有捆的组）拖动走 `bmPlanDrop`：进一捆范围（捆头下半截到最后一条底边往上 16 像素）整捆加 `.bundle-drop` 变绿、松手插进这捆这个位置；压在散条正中间 40% 它变绿（`.bundle-target`）、松手捆一起；别处（块和块之间、捆头上半截、捆底边缘）只露缝、松手单独放，原来在捆里就拆出来。去向由界面算好交给 `store.move(…, into)`（捆号／null），store 只把位置理顺、不再猜；不传 into 才按邻居推断（命令行、待定区用）。别再加「拖到捆底还算在捆里」那种暗规矩——用户看不出来，拆不出来。
 - 🚨 **单击和拖动分开（2026-09-24 用户拍板，设定 11）**：鼠标按下挪过 5 像素就是拖（不用等，`BM_DRAG_SLOP`）；没挪就松手是单击，**松手马上响应**（条目文字单击改字、项目页单击进夹/打开 md），按多久都算单击；拖完那一下点击被 `row.dataset.swallow` 吞掉。🚫 别改回「按住 0.3 秒才能拖」（人按下就挪，会被判成单击直接进改字）；🚫 别改成双击、别给单击加延时（当天试过双击，用户：「单击点了半天没反应」）。不走系统拖放，不靠左边小点（小点只管「派给 / 删除」）；别给条目加 `draggable`。待定、分组条目、项目页同一个 `bmBindDrag`（组框不绑，设定13）。
 - 🚨 **每组第一格是常驻空白框，组标题行不放小加号（设定17，2026-09-24）**：空白框 `bmBuildInsertRow(组, true)` **不带 `task` 类**（不是条目，带了会被拖动、数条目、「第一条」算进去）；找输入框一律 `bmFindInsertInput(组, 是不是空白框)`，别再 `querySelector(".insert-row textarea")`（第一个永远是别的组的）。只有交接单专区留小加号。
@@ -96,6 +97,7 @@ BookmarkStore（testkit 单测用）
 6. `node scripts/verify-bookmark-images.mjs` 过（贴多图、光标位置、图文编辑、大图、交给 AI、重载改派、移除图、非图片和越界路径拒绝；隐藏窗口跑，不动系统剪贴板）。🚨 样图必须是校验和都对的真 PNG，Electron 解码器很严
    图片标注另跑 `node scripts/verify-bookmark-annotations.mjs`（打开就能标、一套流水号、自动存不动原图、撤销、拖动编号、删光清附属文件、改字框里能标、交给 AI 带编号清单；隐藏窗口）。
 7. `node scripts/verify-bookmark-drag.mjs` 过（拖动时看板重画不留残影；按下直接挪就拖、单击马上改字/进夹、拖完不误点；组框拖不动、标题行无条数无折叠、小加号贴组名、交接单专区同底）
+7d. `node scripts/verify-bookmark-carry.mjs` 过（所有组第一行都是标题、交接单没有「详情」按钮；跨组拖到两块中间、跨组拖进别组的捆、普通条目进不了交接单专区、交接单拖进空组；Ctrl+X 拿着走进捆、右键不要了、Ctrl+C 复制放到别组、按住时剪、Esc 放弃、输入框里不抢；截图在 `.runtime/carry/`）
 7c. `node scripts/verify-bookmark-titles.mjs` 过（小标题在第一行、原文收起点开再收；复制钮跟第一行齐平；右键菜单点到别条文字、右键别处、点空白都收起；截图在 `.runtime/titles/`）
 7b. `node scripts/verify-bookmark-drag-bundle.mjs` 过（变绿＝合并、不绿＝单独放：捆里调顺序整捆绿、两捆中间不绿松手拆出来、捆下边缘不绿拆出来、拖进别的捆整捆绿插在指定位置、压在散条正中间它变绿捆一起；截图在 `.runtime/drag-bundle/`）
 8. `node scripts/verify-bookmark-launch-paste.mjs` 过（🚨 真机真窗口：假快捷方式指向假 AI 程序 `scripts/bookmark-fake-agent.ps1`，外加 powershell 复制改名 `ChatGPT.exe` 冒充 Codex 跑 `scripts/bookmark-fake-desktop-agent.ps1`；真开窗、真按 Ctrl+N / Ctrl+V；验收到的字＝启动句、没有回车。跑的半分钟别碰键盘鼠标，抢了最前面看板按规矩不贴，这关就红）。只动了启动 Agent 才必跑

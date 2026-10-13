@@ -1,0 +1,164 @@
+// 隔离看板回归（2026-10-13）：跨组一步到位拖动；Ctrl+X / Ctrl+C → Ctrl+V 拿着走、按住左键拖、松开放下、右键不要；
+// 所有组、所有时候第一行都是标题（还没读的拿自己的字顶着）。官方 Playwright 后台驱动，截图在 .runtime/carry/。
+import { createRequire } from 'node:module';
+import { mkdtempSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+const require = createRequire(import.meta.url);
+const { _electron } = require('E:/个人AI资源管理/60_公用资源（钩子·skill·搜索引擎·可后期扩展）/后台驱动测试（Playwright·零抢鼠标·测Electron应用）/包（npm下载·playwright完整包）/node_modules/playwright');
+const root = resolve(import.meta.dirname, '..');
+const home = mkdtempSync(join(tmpdir(), 'bm-carry-'));
+const out = join(root, '.runtime/carry');
+mkdirSync(out, { recursive: true });
+let failed = 0;
+function check(name, ok, detail = '') {
+  console.log(`${ok ? '✔' : '✖'} ${name}${detail ? `（${detail}）` : ''}`);
+  if (!ok) failed += 1;
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+let app;
+try {
+  app = await _electron.launch({ executablePath: join(root, 'node_modules/electron/dist/electron.exe'), args: [join(root, 'dist/app.js')], env: { ...process.env, AGENT_PET_HUB_HOME: home } });
+  let page;
+  const end = Date.now() + 15000;
+  while (!page && Date.now() < end) {
+    page = app.windows().find((w) => w.url().includes('bookmark/renderer'));
+    if (!page) await wait(100);
+  }
+  await page.waitForLoadState('domcontentloaded');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.hide()));
+  await page.setViewportSize({ width: 520, height: 1100 });
+  const ids = await page.evaluate(async () => {
+    const o = {};
+    for (const t of ['D', 'C', 'B', 'A']) o[t] = (await window.bookmark.add({ text: `条目${t}`, assignee: 'Claude' })).id;
+    for (const t of ['F', 'E']) o[t] = (await window.bookmark.add({ text: `条目${t}`, assignee: 'Antigravity' })).id;
+    o.H = (await window.bookmark.add({ text: '交接单甲', kind: 'handoff', detail: '交接单甲的详情' })).id;
+    await window.bookmark.bundleSelected([o.B, o.C], '捆一');
+    await bmRefresh();
+    return o;
+  });
+  await page.locator('#tab-groups').click();
+  await wait(300);
+  const rec = (id) => page.evaluate(async (x) => (await window.bookmark.list()).find((r) => r.id === x) ?? null, id);
+  const order = (who) => page.evaluate(async (w) => (await window.bookmark.list()).filter((r) => r.assignee === w).map((r) => r.text.replace('条目', '')), who);
+  const box = async (sel) => { const b = await page.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2, top: b.y, bottom: b.y + b.height, h: b.height }; };
+  const task = (id) => `.task[data-id="${id}"]`;
+  const marks = () => page.evaluate(() => ({
+    green: document.querySelectorAll('.bundle-drop').length,
+    target: document.querySelectorAll('.bundle-target').length,
+    head: document.querySelectorAll('.group-head.drag-target').length,
+    gap: document.querySelectorAll('.gap-above, .gap-below, .gap-below-in, .gap-below-out').length,
+  }));
+  async function drag(id, to, shot) {
+    const from = await box(`${task(id)} .num`);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 2, from.y + 10, { steps: 3 });
+    const p = await to();
+    await page.mouse.move(p.x, p.y, { steps: 10 });
+    await wait(200);
+    const m = await marks();
+    if (shot) await page.screenshot({ path: join(out, shot) });
+    await page.mouse.up();
+    await wait(500);
+    return m;
+  }
+
+  // ⓪ 统一样子：还没读的条目、交接单，第一行都是标题，原文收着，没有「详情」按钮
+  check('⓪ 还没读的条目第一行是标题（拿自己的字顶着）、原文收着', (await page.locator(`${task(ids.A)} .task-title.raw-title`).isVisible()) && !(await page.locator(`${task(ids.A)} .task-text`).isVisible()));
+  check('⓪ 交接单也一样，没有「详情」按钮', (await page.locator(`${task(ids.H)} .task-title`).isVisible()) && (await page.locator(`${task(ids.H)} .detail-fold`).count()) === 0 && !(await page.locator(`${task(ids.H)} .task-detail`).isVisible()));
+
+  // ① 跨组一步到位：Antigravity 的 E 拖到 Claude 组里 A 和捆一中间（捆头上半截）→ 不绿 → 松手进 Claude、单独放在 A 后面
+  let m = await drag(ids.E, async () => { const h = await box(`.bundle-head`); return { x: h.x, y: h.top + 2 }; }, '1-跨组拖到两块中间.png');
+  check('① 跨组拖到 Claude 组两块中间：不绿、露缝', m.green === 0 && m.target === 0 && m.gap >= 1, JSON.stringify(m));
+  let e = await rec(ids.E);
+  let cl = await order('Claude');
+  check('① 松手 E 进了 Claude 组、单独放在 A 后面', e.assignee === 'Claude' && e.bundleId === null && cl.indexOf('E') === cl.indexOf('A') + 1, JSON.stringify(cl));
+
+  // ② 跨组拖进捆：Antigravity 的 F 拖到捆一 B 的下半截 → 整捆绿 → 松手进捆一、插在 B 后面
+  m = await drag(ids.F, async () => { const b = await box(task(ids.B)); return { x: b.x, y: b.bottom - b.h * 0.4 }; }, '2-跨组拖进捆.png');
+  check('② 跨组拖进别组的捆：整捆变绿', m.green >= 2, JSON.stringify(m));
+  const f = await rec(ids.F);
+  const bundle = (await rec(ids.B)).bundleId;
+  cl = await order('Claude');
+  check('② 松手 F 进了 Claude 组的捆一、插在 B 后面', f.assignee === 'Claude' && f.bundleId === bundle && cl.indexOf('F') === cl.indexOf('B') + 1, JSON.stringify(cl));
+
+  // ③ 普通条目拖不进交接单专区；交接单拖到空的 Antigravity 组（组里没条目）→ 组名亮 → 松手改派过去
+  m = await drag(ids.D, async () => { const z = await box(`.group.handoff-zone .task`); return { x: z.x, y: z.y }; });
+  check('③ 普通条目拖到交接单专区：什么都不亮、松手不动', m.green === 0 && m.gap === 0 && m.head === 0 && (await rec(ids.D)).assignee === 'Claude', JSON.stringify(m));
+  m = await drag(ids.H, async () => { const g = await box(`.group[data-group="Antigravity"]`); return { x: g.x, y: g.y }; });
+  check('③ 交接单拖进空的 Antigravity 组：组名亮、松手派过去', m.head === 1 && (await rec(ids.H)).assignee === 'Antigravity', JSON.stringify(m));
+
+  // ④ Ctrl+X → Ctrl+V 拿着走 → 按住左键拖进捆 → 松手放下
+  let a = await box(task(ids.A));
+  await page.mouse.move(a.x, a.y);
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  check('④ 鼠标停在 A 上按 Ctrl+X：A 变淡带虚线', await page.locator(`${task(ids.A)}.clip-cut`).count() === 1);
+  await page.keyboard.press('Control+v');
+  await wait(150);
+  check('④ 按 Ctrl+V：A 粘到鼠标上（原位置腾空）', (await page.evaluate(() => document.body.classList.contains('carrying'))) && (await page.locator('.drag-ghost').count()) === 1);
+  // 指到哪、哪就开缝，下面的条会挪；像人手一样边看边对准：挪过去、再量、再对准
+  let c;
+  for (let i = 0; i < 3; i += 1) {
+    c = await box(task(ids.C));
+    await page.mouse.move(c.x, c.y, { steps: 6 });
+    await wait(200);
+  }
+  m = await marks();
+  await page.screenshot({ path: join(out, '4-拿着走进捆.png') });
+  check('④ 拿着走到捆里：整捆变绿', m.green >= 2, JSON.stringify(m));
+  await page.mouse.down();
+  await page.mouse.move(c.x, c.y + 2, { steps: 3 });
+  await page.mouse.up();
+  await wait(500);
+  const aRec = await rec(ids.A);
+  check('④ 按住左键拖、松开：A 放进了捆一', aRec.bundleId === bundle && !(await page.evaluate(() => document.body.classList.contains('carrying'))), JSON.stringify(await order('Claude')));
+  check('④ 放下后没误进改字', (await page.locator('.task-edit').count()) === 0);
+
+  // ⑤ 拿着走时点右键＝不要了：D 留在原地，也不弹右键菜单
+  const before = await order('Claude');
+  const d = await box(task(ids.D));
+  await page.mouse.move(d.x, d.y);
+  await page.keyboard.press('Control+x');
+  await page.keyboard.press('Control+v');
+  await page.mouse.move(d.x, d.y - 120, { steps: 6 });
+  await page.mouse.click(d.x, d.y - 120, { button: 'right' });
+  await wait(500);
+  check('⑤ 右键不要了：D 留在原地、拿着的状态没了、没弹菜单', JSON.stringify(await order('Claude')) === JSON.stringify(before) && !(await page.evaluate(() => document.body.classList.contains('carrying'))) && !(await page.locator('#ctx-menu').isVisible()), JSON.stringify(await order('Claude')));
+
+  // ⑥ Ctrl+C 复制 → Ctrl+V → 拖到 Antigravity 组名 → 松手：Antigravity 多一条「条目D」，Claude 的 D 还在
+  await page.mouse.move(d.x, d.y);
+  await page.keyboard.press('Control+c');
+  check('⑥ Ctrl+C：D 带虚线、不变淡', await page.locator(`${task(ids.D)}.clip-copy`).count() === 1);
+  await page.keyboard.press('Control+v');
+  const g = await box(`.group[data-group="Antigravity"] .group-head`);
+  await page.mouse.move(g.x, g.y, { steps: 8 });
+  await page.mouse.down();
+  await page.mouse.up();
+  await wait(600);
+  const ag = await order('Antigravity');
+  check('⑥ 复制放下：Antigravity 多了一条条目D，Claude 的 D 还在', ag.includes('D') && (await order('Claude')).includes('D'), JSON.stringify(ag));
+
+  // ⑦ 按住某条（长按）再按 Ctrl+X：剪下的就是按着的那条，这次拖动作废
+  const b = await box(`${task(ids.B)} .num`);
+  await page.mouse.move(b.x, b.y);
+  await page.mouse.down();
+  await page.keyboard.press('Control+x');
+  await page.mouse.up();
+  await wait(200);
+  check('⑦ 按住 B 按 Ctrl+X：剪的是 B', await page.locator(`${task(ids.B)}.clip-cut`).count() === 1);
+  await page.keyboard.press('Escape');
+
+  // ⑧ 在输入框里 Ctrl+C 是普通复制，不剪条目
+  check('⑦ 没拿着时按 Esc：剪下的那条也放弃了', await page.locator('.task.clip-cut').count() === 0);
+  await page.locator('.group[data-group="Claude"] .insert-row textarea').first().click();
+  await page.keyboard.type('随便写');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Control+c');
+  check('⑧ 输入框里按 Ctrl+C：不碰条目', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-copy, .task.clip-cut').count()) === 0);
+  console.log(failed ? `结果：${failed} 项没过` : '结果：全部验证点通过');
+} finally {
+  if (app) await app.close();
+}
+process.exit(failed ? 1 : 0);

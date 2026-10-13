@@ -695,6 +695,16 @@ function registerIpc(): void {
     const into = raw.into === null ? null : typeof raw.into === "string" && raw.into ? raw.into : undefined;
     return requireStore().move(String(raw.id ?? ""), String(raw.anchorId ?? ""), place, into);
   });
+  // 跨组一步到位、复制一条（2026-10-13 拖动和剪切粘贴）。
+  ipcMain.handle("bookmark:relocate", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { id?: unknown; assignee?: unknown; anchorId?: unknown; place?: unknown; into?: unknown };
+    const place = raw.place === "below" ? "below" : "above";
+    const into = raw.into === null ? null : typeof raw.into === "string" && raw.into ? raw.into : undefined;
+    const assignee = typeof raw.assignee === "string" && raw.assignee ? raw.assignee : null;
+    const anchorId = typeof raw.anchorId === "string" && raw.anchorId ? raw.anchorId : null;
+    return requireStore().relocate(String(raw.id ?? ""), assignee, anchorId, place, into);
+  });
+  ipcMain.handle("bookmark:duplicate", (_event, id: unknown) => requireStore().duplicate(String(id ?? "")));
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => requireStore().remove(String(id)));
   ipcMain.handle(
     "bookmark:set-assignee",
@@ -860,10 +870,11 @@ function registerIpc(): void {
   ipcMain.handle("bookmark:organizer:notes", () => {
     const records = requireStore().list();
     const book = readNoteBook();
-    const out: Record<string, { project: string; title: string }> = {};
+    // 读完没改过的给新的；改过、或规矩改了正在重读的，先给旧的顶着（stale），别让板上露回原文、样子不统一。
+    const out: Record<string, { project: string; title: string; stale: boolean }> = {};
     for (const r of records) {
-      const n = freshNote(r, book);
-      if (n) out[r.id] = { project: n.project, title: n.title };
+      const n = book[r.id];
+      if (n) out[r.id] = { project: n.project, title: n.title, stale: !freshNote(r, book) };
     }
     return out;
   });

@@ -990,3 +990,12 @@ body {
 .task-report .report-ok { margin-top: 3px; border: 1px solid rgba(122, 156, 94, 0.55); border-radius: 6px; background: rgba(255, 255, 255, 0.6); color: #4d6b3a; font: inherit; font-size: 12px; padding: 1px 8px; cursor: pointer; }
 .task-report .report-ok:hover { background: rgba(122, 156, 94, 0.2); }
 
+
+/* 还没读出小标题的条目：拿自己的字顶着当标题，最多露三行（2026-10-13 用户：所有组、所有时候都一个样） */
+.task .task-title.raw-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 剪切 / 复制后等着 Ctrl+V（2026-10-13）：剪下的变淡带虚线，复制的只带虚线 */
+.task.clip-cut { opacity: 0.45; outline: 1.5px dashed rgba(122, 156, 94, 0.9); outline-offset: -1px; }
+.task.clip-copy { outline: 1.5px dashed rgba(122, 156, 94, 0.9); outline-offset: -1px; }
+/* 拿着走的时候：整页都是「拿着」的手势 */
+body.carrying, body.carrying * { cursor: grabbing !important; }

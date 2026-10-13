@@ -19,6 +19,11 @@ contextBridge.exposeInMainWorld("bookmark", {
   /** into：捆号＝放进这捆，null＝单独放（从捆里拆出来），不传＝按两边邻居推断（老办法）。 */
   move: (id: string, anchorId: string, place: "above" | "below", into?: string | null) => ipcRenderer.invoke("bookmark:move", { id, anchorId, place, into }),
   remove: (id: string) => ipcRenderer.invoke("bookmark:remove", id),
+  /** 跨组一步到位：改派到 assignee（null＝交接单专区／待定）再挪到锚点旁边。 */
+  relocate: (id: string, assignee: string | null, anchorId: string | null, place: "above" | "below", into?: string | null) =>
+    ipcRenderer.invoke("bookmark:relocate", { id, assignee, anchorId, place, into }),
+  /** 复制一条（Ctrl+C 再放下）：返回新条目。 */
+  duplicate: (id: string) => ipcRenderer.invoke("bookmark:duplicate", id),
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
   updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),
@@ -45,7 +50,7 @@ contextBridge.exposeInMainWorld("bookmark", {
   organizerLedger: () => ipcRenderer.invoke("bookmark:organizer:ledger"),
   organizerRecords: () => ipcRenderer.invoke("bookmark:organizer:records"),
   organizerHints: () => ipcRenderer.invoke("bookmark:organizer:hints"),
-  organizerNotes: () => ipcRenderer.invoke("bookmark:organizer:notes") as Promise<Record<string, { project: string; title: string }>>,
+  organizerNotes: () => ipcRenderer.invoke("bookmark:organizer:notes") as Promise<Record<string, { project: string; title: string; stale: boolean }>>,
   organizerDismiss: (itemId: string) => ipcRenderer.invoke("bookmark:organizer:dismiss", itemId),
   boardRules: () => ipcRenderer.invoke("bookmark:board-rules"),
   onOrganized: (callback: (text: string) => void) => {

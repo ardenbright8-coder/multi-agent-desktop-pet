@@ -49,7 +49,7 @@ try {
   const vis = (sel) => page.locator(sel).isVisible();
 
   check('① 有小标题的：第一行是小标题，原文收起', (await vis(`${T} .task-title`)) && !(await vis(`${T} .task-text`)));
-  check('① 没小标题的：照旧露原文', await vis(`${P} .task-text`));
+  check('① 没小标题的：拿自己的字当标题、原文收着（2026-10-13 所有组一个样）', (await vis(`${P} .task-title.raw-title`)) && !(await vis(`${P} .task-text`)));
   const box = (sel) => page.locator(sel).first().boundingBox();
   const [copy, title] = [await box(`${T} .t-copy`), await box(`${T} .task-title`)];
   check('② 复制钮钉在右上角、跟小标题第一行齐平', Math.abs(copy.y - title.y) <= 6, `复制钮 y=${Math.round(copy.y)} 小标题 y=${Math.round(title.y)}`);
@@ -73,8 +73,8 @@ try {
   // ④ 右键菜单：点到别条文字（会进改字、截走 click）也要收起
   await page.locator(`${T} .handle`).click();
   check('④ 点六个点打开菜单', await vis('#ctx-menu'));
-  await page.locator(`${P} .task-text`).click();
-  check('④ 点到别条的文字：菜单收起', !(await vis('#ctx-menu')));
+  await page.locator(`${P} .task-title`).click();
+  check('④ 点到别条（标题）：菜单收起', !(await vis('#ctx-menu')));
   await page.keyboard.press('Escape');
   await page.locator(`${T} .handle`).click();
   await page.locator('#tab-groups').click({ button: 'right' });
