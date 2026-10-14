@@ -137,7 +137,7 @@ if (args.command === 'dispatch') {
 } else if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `✅ 已进看板（${data.id}）`);
 } else if (args.command === "handoff") {
-  console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）；接手的 AI 接完活要用 remove 删掉它`);
+  console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）；接手的 AI 先 next 标在干，用户说完工再 done 消掉`);
 } else if (args.command === "remove") {
   console.log(args.json ? JSON.stringify(data) : "✅ 已删");
 } else if (args.command === "next") {

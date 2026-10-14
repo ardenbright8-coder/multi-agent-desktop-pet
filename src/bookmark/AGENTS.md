@@ -70,7 +70,7 @@ BookmarkStore（testkit 单测用）
 - `backgroundMaterial: "acrylic"` 只有 Win11 有效，构造时 try/catch 回落无材质版本；窗口背景色 `#00000000` + CSS 半透明底，两层一起兜。
 - 渲染层保持 sandbox 默认隔离，别图省事开 nodeIntegration。
 - 面板里的链接一律走 `setWindowOpenHandler` → `shell.openExternal`，别让网页在面板里开。
-- 🚨 **交接单条目（kind=handoff）必须保留交接小标**：序号正下方的细线图标小方块（`.num-col .handoff-badge`，图标 `BM_ICONS.handoff`），不用表情（2026-10-13 用户拍板，设定04），第一行留给标题；底色只比普通条目暖一点点；**交接单专区跟别的组同一个底和边框**，别整块换色（2026-09-24 用户：统一风格上再差异化，设定13）；**交接单专区固定在 Agent分组页最底部、＋加Agent 按钮上方，别处不加**（用户画的黄框位置，2026-09-10 拍板）；未派发交接单默认落专区，拖到哪个组头=派给谁，组内交接单可「收回交接单专区」；「接完活自己 remove 删掉」的规矩草案写在仓库根 AGENT_INTEGRATION.md 的 CLI 节，别删了它。
+- 🚨 **交接单条目（kind=handoff）必须保留交接小标**：序号正下方的细线图标小方块（`.num-col .handoff-badge`，图标 `BM_ICONS.handoff`），不用表情（2026-10-13 用户拍板，设定04），第一行留给标题；底色只比普通条目暖一点点；**交接单专区跟别的组同一个底和边框**，别整块换色（2026-09-24 用户：统一风格上再差异化，设定13）；**交接单专区固定在 Agent分组页最底部、＋加Agent 按钮上方，别处不加**（用户画的黄框位置，2026-09-10 拍板）；未派发交接单默认落专区，拖到哪个组头=派给谁，组内交接单可「收回交接单专区」；交接单接手规矩（next 标在干 → 用户说完工才 done）写在仓库根 AGENT_INTEGRATION.md 的 CLI 节，别删了它。
 - 🚨 **透明度只调 renderer 半透明底**（CSS 变量 `--bm-alpha`，滑条在左下角 ⚙ 设置浮层，存档 appearance.json）——acrylic 材质别动；设置浮层结构「一项一行」，以后新设置项往里加行。
 - 渲染层是普通 script 共享全局作用域（边界检查②会扫），**函数名一律 `bm` 前缀**（bmRefresh / bmRenderList…），别跟 pet renderer 的全局函数撞名。
 
