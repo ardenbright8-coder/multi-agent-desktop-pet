@@ -19,6 +19,7 @@ let bmEditingField = "text"; // 正在改正文（text）还是详情（detail�
 let bmInsertSaveTimer = null;
 let bmEditSaveTimer = null;
 let bmBundleMeta = {}; // 捆号 → { name, by: user/ai }（设定21：捆名、AI 捆的标个小机器人）
+let bmNumberStart = {}; // 组 key → { item, bundle }：这组的条目号、捆号从几往下接（全板统一编号，bmRenderBoard 算）
 let bmHints = new Map(); // 条目 id → AI 检查的提示（第四版：条目右边挂小橙点）
 let bmNotes = {}; // 条目 id → { project, title, stale }：AI 读条目写的小标题（第五版：板上每条第一行；stale＝正在按新规矩重读，先用旧的顶着）
 // 剪切后拿着走（2026-10-13 用户）：Ctrl+X 记下哪条（或在捆标题上＝整捆），Ctrl+V 粘到鼠标上，按住左键拖、松开放下，右键或 Esc 不要了。
@@ -345,6 +346,16 @@ function bmRenderBoard(records) {
   const board = document.getElementById("board");
   board.textContent = "";
   const { inbox, byAgent, handoffZone } = bmGroupRecords(records);
+  // 全板统一编号（2026-10-15 用户：一个号只有一条，跟 AI 说「第 14 条」不用说哪组）：
+  // 各组照组名单顺序 → 交接单专区 → 待定页，条目号、捆号都一路往下接着编。看板命令 show 跟这里同一个数法（board-index.ts）。
+  bmNumberStart = {};
+  let itemNo = 0;
+  let bundleNo = 0;
+  for (const [key, list] of [...bmAgents.map((n) => [n, byAgent.get(n) ?? []]), [BM_HANDOFF_ZONE_KEY, handoffZone], [BM_INBOX_KEY, inbox]]) {
+    bmNumberStart[key] = { item: itemNo, bundle: bundleNo };
+    itemNo += list.length;
+    list.forEach((r, i) => { if (r.bundleId && r.bundleId !== list[i - 1]?.bundleId) bundleNo += 1; });
+  }
   // 待定页签角标：两页都实时跟真数据对上（在分组页也能看到待定又多了几条）。
   const tabCount = document.getElementById("tab-inbox-count");
   if (tabCount) tabCount.textContent = String(inbox.length);
@@ -1656,8 +1667,9 @@ function bmFillTaskList(list, records, groupKey) {
   // 第一格永远是空白框（交接单专区除外，它还是点小加号才冒输入行）；写在最上面的草稿就写在这个框里。
   if (groupKey !== BM_HANDOFF_ZONE_KEY) list.appendChild(bmBuildInsertRow(groupKey, true));
   else if (draft && !anchored) list.appendChild(bmBuildInsertRow(groupKey, false));
-  // 条目号、捆号都是同组从上往下数（看板命令 show 跟这里同一个数法：src/bookmark/board-index.ts，改一边另一边也要改）
-  let bundleNo = 0;
+  // 条目号、捆号全板接着编，这组从哪个号起由 bmRenderBoard 算好（看板命令 show 跟这里同一个数法：src/bookmark/board-index.ts，改一边另一边也要改）
+  const start = bmNumberStart[groupKey] ?? { item: 0, bundle: 0 };
+  let bundleNo = start.bundle;
   records.forEach((record, index) => {
     const prevBundle = index > 0 ? records[index - 1].bundleId : null;
     const nextBundle = index < records.length - 1 ? records[index + 1].bundleId : null;
@@ -1666,7 +1678,7 @@ function bmFillTaskList(list, records, groupKey) {
       list.appendChild(bmBuildBundleHead(record.bundleId, records.filter((r) => r.bundleId === record.bundleId), groupKey, bundleNo));
     }
     if (draft && anchored && draft.anchorId === record.id && draft.place === "above") list.appendChild(bmBuildInsertRow(groupKey, false));
-    const task = bmBuildTask(record, groupKey, index + 1);
+    const task = bmBuildTask(record, groupKey, start.item + index + 1);
     if (record.bundleId) {
       task.dataset.bundle = record.bundleId;
       task.classList.add("in-bundle");
@@ -2156,7 +2168,7 @@ function bmBuildBundleHead(bundleId, members, groupKey, bundleNo) {
     const no = document.createElement("span");
     no.className = "bundle-no";
     no.textContent = `捆${bundleNo}`;
-    no.title = `跟 AI 说「看 ${groupKey === BM_HANDOFF_ZONE_KEY ? "交接单" : groupKey} 捆${bundleNo}」，它就只读这一捆`;
+    no.title = `跟 AI 说「看捆${bundleNo}」，它就只读这一捆（捆号全板统一，不用说哪组）`;
     head.appendChild(no);
   }
   const name = document.createElement("span");
@@ -2887,8 +2899,10 @@ async function bmRemove(id) {
     bmOpenDetails.delete(id); // 条目没了，展开手气也一并清掉，别攒脏 id
     bmHideCtxMenu();
     await bmRefresh();
+    return true;
   } catch (error) {
     bmShowError("删失败了： " + bmErrorText(error));
+    return false;
   }
 }
 
@@ -3002,6 +3016,16 @@ function bmInitClipboard() {
     }
     if (event.key === "Escape" && !bmTyping() && (bmPickedTaskId || bmPickedBundleId)) {
       bmPickTask(null);
+      return;
+    }
+    // 选中一条按 Delete＝删掉（2026-10-15 用户）；它那份小文件跟着删，Ctrl+Z 能撤回。捆不整捆删，免得误删一片。
+    if (event.key === "Delete" && !bmTyping() && !bmCarry && bmPickedTaskId) {
+      const el = document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`);
+      if (!el) return;
+      event.preventDefault();
+      const id = bmPickedTaskId;
+      bmPickTask(null);
+      void bmRemove(id).then((ok) => { if (ok) bmToast("删了这条（它的小文件也删了）；删错了按 Ctrl+Z", 3500); });
       return;
     }
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;

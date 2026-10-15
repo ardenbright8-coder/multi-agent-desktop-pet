@@ -110,7 +110,7 @@ try {
   await menu.locator(".ctx-item", { hasText: "启动 Agent · 普通" }).click();
 
   const got = await waitFor(async () => (existsSync(outFile) ? JSON.parse(readFileSync(outFile, "utf8")) : null), 45_000, 300);
-  const expectLine = `领看板的活：node "${cliScript.split("\\").join("/")}" next ${id} --by Claude-1`;
+  const expectLine = `领看板的活（规矩这条命令会给，不用另读看板说明书）：node "${cliScript.split("\\").join("/")}" next ${id} --by Claude-1`;
   check("① 真开出了新命令窗口（假 AI 程序跑起来并交了结果）", Boolean(got), got ? "" : "45 秒没等到结果文件");
   check("② 新窗口收到的字＝启动句一字不差", got?.text === expectLine, `收到=${JSON.stringify(got?.text)}`);
   check("③ 没有按回车", got?.enter === false, `enter=${got?.enter}`);
@@ -139,7 +139,7 @@ try {
   await menu.waitFor({ state: "visible", timeout: 3000 });
   await menu.locator(".ctx-item", { hasText: "启动 Agent · 普通" }).click();
   const got2 = await waitFor(async () => (existsSync(appOutFile) ? JSON.parse(readFileSync(appOutFile, "utf8")) : null), 60_000, 300);
-  const expectHead = `领看板的活：node "${cliScript.split("\\").join("/")}" next ${id2} --by ChatGPT-`;
+  const expectHead = `领看板的活（规矩这条命令会给，不用另读看板说明书）：node "${cliScript.split("\\").join("/")}" next ${id2} --by ChatGPT-`;
   check("⑤ 假 Codex 开出来并交了结果（按程序名认出来了）", Boolean(got2), got2 ? "" : "60 秒没等到结果文件");
   check("⑥ 先收到 Ctrl+N（新开对话），再收到字", got2?.ctrlN === true && got2?.order === "N-first", `ctrlN=${got2?.ctrlN} 顺序=${got2?.order}`);
   check("⑦ 输入框收到的字＝启动句", typeof got2?.text === "string" && got2.text.startsWith(expectHead) && /^ChatGPT-[0-9]+$/.test(got2.text.slice(expectHead.length - "ChatGPT-".length)),

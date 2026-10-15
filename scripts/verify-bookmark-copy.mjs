@@ -133,9 +133,9 @@ try {
   await menu.locator(".ctx-item", { hasText: "启动 Agent · 带编程" }).click();
   const line = await waitFor(async () => {
     const text = await readClipboard();
-    return text.startsWith("领看板的活：") ? text : null;
+    return text.startsWith("领看板的活") ? text : null;
   }, 3000, 50);
-  const expectLine = `领看板的活：node "${cliScript.split("\\").join("/")}" next ${ids.甲} --by Claude-1 --coding`;
+  const expectLine = `领看板的活（规矩这条命令会给，不用另读看板说明书）：node "${cliScript.split("\\").join("/")}" next ${ids.甲} --by Claude-1 --coding`;
   // 剪贴板先写、查完快捷方式才弹提示，等提示换成这次的再读（别读到开机那句「代码是最新的」）
   const toast = await waitFor(async () => {
     const text = (await panel.locator("#bm-toast").textContent()) ?? "";

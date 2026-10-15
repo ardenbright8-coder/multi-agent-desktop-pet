@@ -117,7 +117,7 @@ export interface CliArgs {
 }
 
 const CLI_USAGE =
-  '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <组名> <号码：7 / 7-9 / 7,8,9 / 捆2>（只读点名的全文）| '
+  '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <号码：7 / 7-9 / 7,8,9 / 捆2>（号码全板统一，只读点名的全文）| '
   + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
   + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id> | '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
@@ -142,12 +142,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
   if (command === "show") {
+    // 号码全板统一（2026-10-15）：直接写号码就行；前面多写一个组名也认（不在那组时会提一句）
     const rest = argv.slice(1).filter((a) => a !== "--json");
-    const group = rest[0];
-    if (!group || /^(捆)?\d/.test(group)) throw new Error("show 先写组名再写号码：show Claude 7 ／ show Claude 7-9 ／ show 交接单 2 ／ show Claude 捆2");
-    if (rest.length < 2) throw new Error(`show ${group} 后面要跟号码：7 ／ 7-9 ／ 7,8,9 ／ 捆2`);
-    parseShowSpec(rest.slice(1)); // 号码写错当场报，别等连上看板
-    return { command, group, spec: rest.slice(1), json: argv.includes("--json"), attach: [] };
+    const named = rest[0] != null && !/^(捆)?\d/.test(rest[0]);
+    const group = named ? rest[0] : "";
+    const spec = named ? rest.slice(1) : rest;
+    if (!spec.length) throw new Error("show 后面要跟号码：show 7 ／ show 7-9 ／ show 7,8,9 ／ show 捆2");
+    parseShowSpec(spec); // 号码写错当场报，别等连上看板
+    return { command, group, spec, json: argv.includes("--json"), attach: [] };
   }
   if (command !== "add" && command !== "list" && command !== "handoff" && command !== "remove") {
     throw new Error(CLI_USAGE);

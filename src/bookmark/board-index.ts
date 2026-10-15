@@ -1,6 +1,8 @@
-// 看板号码的账（2026-10-13 用户：我说「Claude 第 9 条」「Claude 捆2」，AI 那边就知道是哪条，只读点名的，别的一概不看——省读字的钱）。
-// 🚨 数法跟看板界面一模一样（renderer/bookmark.js 的 bmGroupRecords + bmFillTaskList）：
-//    条目号＝同组按看板从上往下的顺序从 1 数；捆号＝同组捆头出现的先后从 1 数。改一边另一边也要改，不然 AI 读到的跟屏幕上对不上。
+// 看板号码的账（2026-10-13 用户：我说「第 9 条」「捆2」，AI 那边就知道是哪条，只读点名的，别的一概不看——省读字的钱）。
+// 🚨 数法跟看板界面一模一样（renderer/bookmark.js 的 bmRenderBoard 算起点 + bmFillTaskList）：
+//    全板统一编号（2026-10-15 用户：一个号只有一条）：各组照组名单顺序 → 交接单专区 → 待定区，条目号从 1 一路往下接；
+//    捆号按捆头出现的先后同样全板接着数。改一边另一边也要改，不然 AI 读到的跟屏幕上对不上。
+//    号码只是给人和 AI 说话用的，跟着位置变；程序里认条目一律用 id（小文件名也是 id），挪位置不用改任何文件。
 // 纯函数：数据由 cli-server 的 /view 端点喂进来，读图片标注的那一下由调用方注入（测试不碰磁盘）。
 
 import type { CliRecord } from "./cli-server";
@@ -44,11 +46,13 @@ export function indexBoard(records: CliRecord[], agents: string[]): BoardGroup[]
     const owner = r.assignee ? owners.get(r.assignee.toLowerCase()) : undefined;
     buckets.get(owner ?? (r.kind === "handoff" ? HANDOFF_GROUP : INBOX_GROUP))!.push(r);
   }
+  let no = 0;
+  let bundleNo = 0;
   return [...buckets].map(([name, list]) => {
-    let bundleNo = 0;
     const rows = list.map((record, i) => {
       if (record.bundleId && record.bundleId !== list[i - 1]?.bundleId) bundleNo += 1;
-      return { no: i + 1, bundleNo: record.bundleId ? bundleNo : null, record };
+      no += 1;
+      return { no, bundleNo: record.bundleId ? bundleNo : null, record };
     });
     return { name, rows };
   });
@@ -86,7 +90,7 @@ export function parseShowSpec(tokens: string[]): ShowSpec {
     if (from < 1 || to < from || to - from > 50) throw new Error(`「${piece}」这段号码不对`);
     for (let n = from; n <= to; n += 1) (m[1] ? bundles : items).push(n);
   }
-  if (!items.length && !bundles.length) throw new Error("要说看第几条或第几捆：show Claude 7 / show Claude 7-9 / show Claude 捆2");
+  if (!items.length && !bundles.length) throw new Error("要说看第几条或第几捆：show 7 / show 7-9 / show 捆2");
   return { items: [...new Set(items)], bundles: [...new Set(bundles)] };
 }
 
@@ -122,7 +126,7 @@ function bundleName(groupRows: BoardRow[], bundleId: string, names: BoardNames):
 export function formatBrief(groups: BoardGroup[], names: BoardNames, only?: string): string {
   const picked = only ? [findGroup(groups, only)].filter((g): g is BoardGroup => g !== null) : groups.filter((g) => g.rows.length);
   if (only && !picked.length) return `没有叫「${only}」的组。有：${groups.map((g) => g.name).join("、")}`;
-  const out: string[] = ["（只列了标题。要看哪条的全文：show <组名> 7 ／ 7-9 ／ 7,8,9 ／ 捆2）"];
+  const out: string[] = ["（只列了标题。号码全板统一，要看哪条的全文：show 7 ／ 7-9 ／ 7,8,9 ／ 捆2）"];
   for (const g of picked) {
     out.push("", `【${g.name}】${g.rows.length} 条`);
     if (!g.rows.length) out.push("  （空的）");
@@ -144,43 +148,48 @@ export function formatBrief(groups: BoardGroup[], names: BoardNames, only?: stri
 
 /** 点名读全文（show）：只吐点到的那几条——原文、图（换成路径和标注清单）、链接、详情、报告，外加删改要用的 id。 */
 export function formatShow(groups: BoardGroup[], names: BoardNames, groupName: string, spec: ShowSpec, expandImages: (text: string) => string): string {
-  const g = findGroup(groups, groupName);
-  if (!g) throw new Error(`没有叫「${groupName}」的组。有：${groups.map((x) => x.name).join("、")}`);
+  // 号码全板统一（2026-10-15）：不写组名就全板找；写了组名照样全板找，只是不在那组时提一句，免得用户说错组就读不到
+  const said = groupName.trim() ? findGroup(groups, groupName) : null;
+  if (groupName.trim() && !said) throw new Error(`没有叫「${groupName}」的组。有：${groups.map((x) => x.name).join("、")}`);
+  const all = groups.flatMap((g) => g.rows.map((row) => ({ g, row })));
+  const total = all.length;
   const out: string[] = ["（号码跟着看板变：先对一下标题是不是用户说的那件事，对不上就停下问他。）"];
   const missing: string[] = [];
   const shown = new Set<string>();
-  const bundleCount = new Set(g.rows.map((r) => r.bundleNo).filter((n) => n !== null)).size;
+  const bundleCount = new Set(all.map((x) => x.row.bundleNo).filter((n) => n !== null)).size;
+  const note = (g: BoardGroup) => (said && said !== g ? [`（这条在「${g.name}」组，不在「${said.name}」组）`] : []);
   for (const b of spec.bundles) {
-    const rows = g.rows.filter((r) => r.bundleNo === b);
-    if (!rows.length) {
-      missing.push(`捆${b}（这组一共 ${bundleCount} 捆）`);
+    const hits = all.filter((x) => x.row.bundleNo === b);
+    if (!hits.length) {
+      missing.push(`捆${b}（全板一共 ${bundleCount} 捆）`);
       continue;
     }
-    out.push("", `【${g.name} 捆${b}】${bundleName(g.rows, rows[0].record.bundleId!, names)}（${rows.length} 条：${rows.map((r) => pad(r.no)).join(" ")}）`);
-    for (const row of rows) {
+    const g = hits[0].g;
+    out.push("", `【捆${b} · ${g.name} 组】${bundleName(g.rows, hits[0].row.record.bundleId!, names)}（${hits.length} 条：${hits.map((x) => pad(x.row.no)).join(" ")}）`, ...note(g));
+    for (const { row } of hits) {
       if (shown.has(row.record.id)) continue;
       shown.add(row.record.id);
       out.push(...showRow(g, row, names, expandImages), "");
     }
   }
   for (const n of spec.items) {
-    const row = g.rows.find((r) => r.no === n);
-    if (!row) {
-      missing.push(`第 ${n} 条（这组一共 ${g.rows.length} 条）`);
+    const hit = all.find((x) => x.row.no === n);
+    if (!hit) {
+      missing.push(`第 ${n} 条（全板一共 ${total} 条）`);
       continue;
     }
-    if (shown.has(row.record.id)) continue;
-    shown.add(row.record.id);
-    out.push("", ...showRow(g, row, names, expandImages));
+    if (shown.has(hit.row.record.id)) continue;
+    shown.add(hit.row.record.id);
+    out.push("", ...showRow(hit.g, hit.row, names, expandImages), ...note(hit.g));
   }
-  if (missing.length) out.push("", `${g.name} 没有：${missing.join("、")}`);
+  if (missing.length) out.push("", `看板上没有：${missing.join("、")}`);
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function showRow(g: BoardGroup, row: BoardRow, names: BoardNames, expandImages: (text: string) => string): string[] {
   const r = row.record;
   const where = row.bundleNo ? ` · 捆${row.bundleNo}` : "";
-  const lines = [`━━ ${g.name} ${pad(row.no)}${where}${r.kind === "handoff" ? " · 交接单" : r.kind === "dispatch" ? " · 派活单" : ""} · id ${r.id}`, `标题：${rowTitle(r, names)}`];
+  const lines = [`━━ 第 ${pad(row.no)} 条 · ${g.name} 组${where}${r.kind === "handoff" ? " · 交接单" : r.kind === "dispatch" ? " · 派活单" : ""} · id ${r.id}`, `标题：${rowTitle(r, names)}`];
   if (names.itemFile) {
     try {
       lines.push(`单独文件：${names.itemFile(r.id)}`);

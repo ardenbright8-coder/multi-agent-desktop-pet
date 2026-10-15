@@ -102,8 +102,8 @@ node "...同上路径...\scripts\bookmark-cli.mjs" add "明天问用户要不要
 # 看某组有啥：只列号码和小标题（大小写不敏感，对齐看板分组；--handoff 看交接单专区）
 node "...同上路径...\scripts\bookmark-cli.mjs" list --to Claude
 
-# 按屏幕上的号码只读点名那几条的全文（2026-10-13）：7 / 7-9 / 7,8,9 / 捆2；组名还认 交接单、待定
-node "...同上路径...\scripts\bookmark-cli.mjs" show Claude 7-9
+# 按屏幕上的号码只读点名那几条的全文：7 / 7-9 / 7,8,9 / 捆2（2026-10-15 起号码全板统一，不用写组名）
+node "...同上路径...\scripts\bookmark-cli.mjs" show 7-9
 
 # 整组原文（JSON，一组几万字，只给程序用）
 node "...同上路径...\scripts\bookmark-cli.mjs" list --to Claude --json
@@ -172,7 +172,7 @@ node "...同上路径...\scripts\bookmark-cli.mjs" paihuo --file "C:\某处\单�
 
 ## 看板领活（用户点「启动 Agent」派给你的活 · 2026-09-24）
 
-用户在看板上点「启动 Agent · 带编程 / 普通」，会给你一句「领看板的活：node "…/bookmark-cli.mjs" next <捆号或条目id> --by <窗口名> [--coding]」。照敲就行，**干活规矩由这条命令自己吐出来**（所有 AI 同一份），不用另读别的文件。要点：
+用户在看板上点「启动 Agent · 带编程 / 普通」，会给你一句「领看板的活（规矩这条命令会给，不用另读看板说明书）：node "…/bookmark-cli.mjs" next <捆号或条目id> --by <窗口名> [--coding]」。照敲就行，**干活规矩由这条命令自己吐出来**（所有 AI 同一份），不用另读别的文件。要点：
 
 - `next`：领这一捆里下一条没人领的，看板上标「🔄 窗口名 在干」，别的窗口领不走；一次只干这一条
 - 干完先别删：把做了啥、怎么验讲给用户，**等他亲口说可以**，再 `done <条目id> --by <窗口名> --ok "他的原话"`（不带原话命令不收）

@@ -6,6 +6,8 @@
 //   ⑤ 真命令领一张：看到的是派活单规矩（交报告、不 done）和单独文件路径；同批剩两张，一键启动变「2 个」
 //   ⑥ 点号码：复制这条单独文件的路径，文件里就是这条；删了这条，文件跟着没了
 //   ⑦ 点标题进了改字、没选中字时按 Ctrl+X：剪的是这一整条
+//   ⑧ 号码全板统一：分组页一路往下没有重号；show 不写组名也读得到
+//   ⑨ 选中按 Delete 删掉、小文件跟着没；Ctrl+Z 都回来
 // 用法：npm run build 之后 node scripts/verify-bookmark-paihuo.mjs
 // 注意：独立 AGENT_PET_HUB_HOME 起实例（不真开任何 AI 窗口）；会动系统剪贴板，开头存、结尾还原。
 
@@ -103,7 +105,9 @@ try {
     const t = await page.locator("#bm-toast").innerText().catch(() => "");
     return /开了|没开/.test(t) ? t : "";
   }, 15000);
-  check("③ 一键启动：报出三张各在自己的组（Pi Agent 01、02，Claude 01）", /Pi Agent 01/.test(toast) && /Pi Agent 02/.test(toast) && /Claude 01/.test(toast), toast);
+  // 号码全板统一：Claude 组在前，丙是第 01 条；Pi 组的甲乙接着是 02、03
+  check("③ 一键启动：报出三张各在自己的组（第 01 条 Claude，第 02、03 条 Pi Agent）",
+    /第 01 条（Claude）/.test(toast) && /第 02 条（Pi Agent）/.test(toast) && /第 03 条（Pi Agent）/.test(toast), toast);
 
   // ④ 撞文件
   runCli(["paihuo", "--file", writeCards("撞了.json", [
@@ -151,6 +155,25 @@ try {
   check("⑦ 改字时没选中字按 Ctrl+X：剪的是这一整条（变淡带虚线、改字框收起）",
     (await page.locator(`${T(C)}.clip-cut`).count()) === 1 && (await page.locator(".task-edit").count()) === 0);
   await page.keyboard.press("Escape");
+
+  // ⑧ 全板统一编号：各组接着往下编，没有重号；show 不写组名也读得到
+  const nums = await page.evaluate(() => [...document.querySelectorAll(".task .num")].map((n) => n.textContent));
+  check("⑧ 分组页号码一路往下、没有重号", nums.length > 1 && new Set(nums).size === nums.length && nums.every((n, i) => Number(n) === i + 1), nums.join(" "));
+  const shown = runCli(["show", "1"]);
+  check("⑧ show 1 不写组名也读得到第 01 条", /━━ 第 01 条 · /.test(shown.out), shown.out.split("\n")[2] ?? "");
+
+  // ⑨ 选中一条按 Delete：删掉，小文件跟着没；Ctrl+Z 撤回，小文件回来
+  await page.evaluate(() => bmRefresh());
+  const D = (await page.evaluate(() => window.bookmark.list())).find((r) => r.text === "撞乙");
+  const dPath = join(home, "bookmark", "条目（一条一份）", `${D.id}.md`);
+  await waitFor(() => existsSync(dPath));
+  await page.locator(T(D)).dispatchEvent("click");
+  await page.keyboard.press("Delete");
+  const gone = await waitFor(async () => !(await page.evaluate(async (id) => (await window.bookmark.list()).some((r) => r.id === id), D.id)));
+  check("⑨ 选中按 Delete：这条删了", Boolean(gone));
+  check("⑨ 它的小文件跟着没了", Boolean(await waitFor(() => !existsSync(dPath), 4000)));
+  await page.keyboard.press("Control+z");
+  check("⑨ Ctrl+Z：条目和小文件都回来了", Boolean(await waitFor(async () => (await page.evaluate(async (id) => (await window.bookmark.list()).some((r) => r.id === id), D.id)) && existsSync(dPath), 4000)));
   await page.screenshot({ path: join(out, "结束.png") });
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {

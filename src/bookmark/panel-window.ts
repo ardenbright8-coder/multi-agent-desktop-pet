@@ -985,7 +985,7 @@ function registerIpc(): void {
     const group = String(raw.group ?? "").trim();
     if (!target || !group) throw new Error("缺条目或组名");
     const label = nextWindowLabel(group);
-    const line = `领看板的活：node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
+    const line = `${LAUNCH_HEAD}node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
     clipboard.writeText(line);
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
     return { line, label, ...(await openAgentShortcut(group, line, label)) };
@@ -1010,7 +1010,7 @@ function registerIpc(): void {
         continue;
       }
       const label = nextWindowLabel(group);
-      const line = `领看板的活：node "${bookmarkCliScriptPath()}" next ${card.id} --by ${label}${raw.coding ? " --coding" : ""}`;
+      const line = `${LAUNCH_HEAD}node "${bookmarkCliScriptPath()}" next ${card.id} --by ${label}${raw.coding ? " --coding" : ""}`;
       clipboard.writeText(line);
       log.记(`一键启动：${label} ← ${card.id}${raw.coding ? "（带编程）" : ""}`, "cli");
       const res = await openAgentShortcut(group, line, label, true);
@@ -1027,7 +1027,7 @@ function registerIpc(): void {
     const record = requireStore().list().find((r) => r.id === String(id ?? ""));
     if (!record) throw new Error("这条已经不在了");
     const path = itemFileFor(record.id);
-    const line = `看板 ${rowName(boardRows(), record)} 这一条的单独文件（只读这一份，别翻整组）：${path}`;
+    const line = `看板${rowName(boardRows(), record)}的单独文件（只读这一份，别翻整组）：${path}`;
     clipboard.writeText(line);
     return { path, line };
   });
@@ -1241,7 +1241,7 @@ function boardRows(): Map<string, { group: string; no: number }> {
 
 function rowName(rows: Map<string, { group: string; no: number }>, record: BookmarkRecord): string {
   const row = rows.get(record.id);
-  return row ? `${row.group} ${String(row.no).padStart(2, "0")}` : groupLabelOf(record);
+  return row ? `第 ${String(row.no).padStart(2, "0")} 条（${row.group}）` : groupLabelOf(record);
 }
 
 /** 派活单派给哪个组：写了就认（大小写不管、只写开头也认），没写默认 Pi 组。 */
@@ -1259,6 +1259,9 @@ function resolveGroup(name: string | null | undefined): string {
   if (!pi) throw new Error("没说派给哪个组，默认的 Pi 组也不在看板上：用 --to 写组名");
   return pi;
 }
+
+/** 启动句开头（2026-10-15）：告诉新窗口规矩由 next 命令自己吐，开局不用先翻看板说明书——那 5 千字白读。 */
+const LAUNCH_HEAD = "领看板的活（规矩这条命令会给，不用另读看板说明书）：";
 
 /** 窗口名：组名去空格 + 递增号（Claude-3、PiAgent-7）。号存在 launch-seq.json，重启接着数，免得跟还开着的旧窗口撞名。 */
 function nextWindowLabel(group: string): string {
