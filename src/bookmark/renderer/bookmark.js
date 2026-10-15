@@ -26,9 +26,18 @@ let bmNotes = {}; // 条目 id → { project, title, stale }：AI 读条目写�
 let bmClip = null; // { id } 一条，或 { bundleId } 整捆
 let bmCarry = null; // 正拿着走：{ id | bundleId, kind, kinds, group, el, members, ghost, hit, pressed, scroll }
 let bmHoverTaskId = null;
-let bmPressedTaskId = null;
+let bmPickedTaskId = null; // 点一下选中的那条（2026-10-15 看板 Claude 01：点一下＝选中，Ctrl+X 剪它，不用按住）
 let bmHoverBundleId = null;
-let bmPressedBundleId = null;
+let bmPickedBundleId = null; // 点一下捆标题选中的那一捆
+
+/** 选中一条（或一捆）：只亮一个，再点别的就换；点看板空白处、按 Esc 就不选了。 */
+function bmPickTask(id, bundleId = null) {
+  bmPickedTaskId = id;
+  bmPickedBundleId = id ? null : bundleId;
+  document.querySelectorAll(".task-picked").forEach((n) => n.classList.remove("task-picked"));
+  if (id) document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)?.classList.add("task-picked");
+  else if (bundleId) document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"]`)?.classList.add("task-picked");
+}
 let bmMouse = { x: 0, y: 0 };
 
 function bmDotColor(name) {
@@ -55,6 +64,8 @@ const BM_ICONS = {
   copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5a2.5 2.5 0 0 0-2.5-2.5H6.5A2.5 2.5 0 0 0 4 6.5V13a2.5 2.5 0 0 0 2.5 2.5h2"/>',
   // 交接单小标（2026-10-13 用户：别用表情，跟复制钮一个路子的细线小图标）：一块写字板
   handoff: '<rect x="5" y="4.5" width="14" height="16.5" rx="2.5"/><path d="M9 4.5V4a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 4v.5"/><path d="M8.5 11h7M8.5 15h4.5"/>',
+  // 派活单小标（2026-10-15 用户：别用表情，跟交接单区分开）：一根分成三支的箭头＝一批活分给几个窗口
+  dispatch: '<path d="M12 21v-8.5"/><path d="M12 12.5L6.5 7M12 12.5L17.5 7M12 12.5V4.5"/><path d="M6.5 10.5V7H10M17.5 10.5V7H14M9.8 6.7L12 4.5l2.2 2.2"/>',
   // 状态小标（2026-10-13 用户：显示状态的一律小标，碰到才冒说明）：在干＝转圈箭头；AI 捆的＝小机器人
   busy: '<path d="M20 12a8 8 0 0 1-13.7 5.6"/><path d="M4 12a8 8 0 0 1 13.7-5.6"/><path d="M17.7 3v3.6h-3.6M6.3 21v-3.6h3.6"/>',
   robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01M9.5 16.5h5"/>',
@@ -584,7 +595,6 @@ function bmBindBundleDrag(head, bundleId, groupKey) {
     if (event.button !== 0) return;
     if (event.target instanceof Element && event.target.closest("button, textarea, input, a")) return;
     window.getSelection()?.removeAllRanges();
-    bmPressedBundleId = bundleId;
     const startX = event.clientX;
     const startY = event.clientY;
     let armed = false;
@@ -607,6 +617,7 @@ function bmBindBundleDrag(head, bundleId, groupKey) {
       const pending = bmRefreshPending;
       bmRefreshPending = false;
       const drop = armed && commit ? hit : null;
+      if (!armed && commit) bmPickTask(null, bundleId); // 没拖就松手＝单击捆标题＝选中这一捆，Ctrl+X 整捆剪
       void (async () => {
         if (drop) await bmDropBundle(drop);
         else if (pending) await bmRefresh();
@@ -852,6 +863,7 @@ function bmBuildGroup(key, displayName, records) {
   const dot = document.createElement("span");
   dot.className = "dot";
   const logo = key === BM_INBOX_KEY ? null : bmLogoKey(displayName);
+  dot.title = key === BM_INBOX_KEY ? "待定：还在想、没派给谁的" : `${displayName} 组：派给 ${displayName} 干的活`;
   if (logo) {
     dot.classList.add("logo");
     dot.dataset.logo = logo;
@@ -883,13 +895,16 @@ function bmBuildTask(record, groupKey, order) {
   const item = document.createElement("li");
   item.className = "task";
   if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（序号下面一个交接小标），一眼认出；底色跟普通条目一样
+  if (record.kind === "dispatch") item.classList.add("dispatch"); // 派活单（设定23）：序号下面一个分叉小标，六个点里是「一键启动」
   item.dataset.id = record.id;
   item.dataset.kind = record.kind || "note";
   item.dataset.group = groupKey;
-  // Ctrl+X 认「按着的那条」或「鼠标停着的那条」（2026-10-13）
+  // 点一下＝选中（2026-10-15 看板 Claude 01）：Ctrl+X 剪选中的那条；没选中才认鼠标停着的那条。不再认「按住」。
   item.addEventListener("pointerenter", () => { bmHoverTaskId = record.id; });
   item.addEventListener("pointerleave", () => { if (bmHoverTaskId === record.id) bmHoverTaskId = null; });
-  item.addEventListener("pointerdown", (event) => { if (event.button === 0) bmPressedTaskId = record.id; });
+  // 只认真单击：拖过的那一下不算选中（不然拖完再指着别条按 Ctrl+X，剪走的是刚拖的那条）。拖完的点击由 bmBindDrag 打上 swallow。
+  item.addEventListener("click", () => { if (item.dataset.swallow !== "1") bmPickTask(record.id); }, true);
+  if (bmPickedTaskId === record.id) item.classList.add("task-picked");
   if (bmClip && (bmClip.id === record.id || (bmClip.bundleId && bmClip.bundleId === record.bundleId))) item.classList.add("clip-cut");
   item.addEventListener("contextmenu", (event) => {
     event.preventDefault();
@@ -907,7 +922,7 @@ function bmBuildTask(record, groupKey, order) {
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "handle";
-  handle.title = "点开菜单";
+  handle.title = record.kind === "dispatch" && bmAgents.includes(groupKey) ? "点开菜单（一键启动这一批）" : "点开菜单";
   handle.textContent = "⠿";
   handle.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -925,12 +940,32 @@ function bmBuildTask(record, groupKey, order) {
   const num = document.createElement("span");
   num.className = "num";
   num.textContent = String(order).padStart(2, "0");
+  // 点号码（2026-10-15 看板 Claude 01）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
+  num.title = "点一下复制这条的单独文件路径：贴给 AI，它只读这一份，不用翻整组";
+  num.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    try {
+      await window.bookmark.itemFile(record.id);
+      bmToast("这条的单独文件路径复制好了：贴给 AI，它只读这一份", 3500);
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
+  });
   numCol.appendChild(num);
   if (record.kind === "handoff") {
     const badge = document.createElement("span");
     badge.className = "handoff-badge";
     badge.title = "交接单（上一个 AI 窗口没干完留下的活）";
     badge.innerHTML = bmIcon("handoff");
+    numCol.appendChild(badge);
+  } else if (record.kind === "dispatch") {
+    const badge = document.createElement("span");
+    badge.className = "handoff-badge dispatch-badge";
+    const left = bmDispatchLaunchable(record).length;
+    badge.title = left
+      ? `派活单（强模型拆好的活）：这一批还有 ${left} 张没人领，左边六个点「一键启动」一次开完`
+      : "派活单（强模型拆好的活）：这一批都有人领了";
+    badge.innerHTML = bmIcon("dispatch");
     numCol.appendChild(badge);
   }
   item.appendChild(numCol);
@@ -949,12 +984,13 @@ function bmBuildTask(record, groupKey, order) {
     const own = record.text.replace(/\[图片:[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
     title.textContent = note && note.title ? note.title : own || "（只有图）";
     if (!(note && note.title)) title.classList.add("raw-title");
-    title.title = bodyOpen ? "点一下收起原文" : "点一下看原文";
+    // 点小标题＝直接改原文（2026-10-15 看板 Claude 01：标题只是显示，点一下就能改，不用再往下挪去点正文）。
+    // 改字框里就是整段原文（交接单的详情也露在下面，单击就改）；点别处存好、收回去只剩标题。
+    title.title = "点一下直接改原文；点别处就存好收起";
     title.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (bmOpenBodies.has(record.id)) bmOpenBodies.delete(record.id);
-      else bmOpenBodies.add(record.id);
-      bmRenderCurrent();
+      bmOpenBodies.add(record.id);
+      void bmBeginEdit(record.id);
     });
     body.appendChild(title);
     item.classList.add("titled");
@@ -979,6 +1015,7 @@ function bmBuildTask(record, groupKey, order) {
         event.preventDefault();
         if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
         bmEditingId = null;
+        bmOpenBodies.delete(record.id);
         bmRenderCurrent();
       }
     });
@@ -1014,13 +1051,13 @@ function bmBuildTask(record, groupKey, order) {
   // 展开态记进 bmOpenDetails：自动存档/改派触发重画后还原，别把点开的手气洗掉。
   if (record.detail && bmEditingId === record.id && bmEditingField === "detail") {
     body.appendChild(bmBuildDetailEditor(record));
-  } else if (record.detail && titled) {
-    // 有小标题：详情跟原文一起收着，点小标题一起展开，不要「详情」按钮（2026-10-13 用户）。
+  } else if (record.detail && groupKey !== BM_INBOX_KEY) {
+    // 有小标题：详情跟原文一起收着，点小标题一起展开，不要「详情」按钮（2026-10-13 用户）。正在改原文时详情露在下面。
     // 单击就改（2026-10-13 用户：点了没光标、一按就成拖动；短按＝改字，按住挪＝拖）。
     const detail = document.createElement("div");
     detail.className = "task-detail";
     detail.textContent = record.detail;
-    detail.hidden = !bodyOpen;
+    detail.hidden = titled ? !bodyOpen : false;
     detail.title = "单击改详情";
     detail.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1145,6 +1182,7 @@ function bmBuildHandoffZone(records) {
 
   const mark = document.createElement("span");
   mark.className = "handoff-badge handoff-zone-mark";
+  mark.title = "交接单专区：AI 窗口快满时留下的半截活，拖到哪个组头就派给谁";
   mark.innerHTML = bmIcon("handoff");
   head.appendChild(mark);
 
@@ -1809,10 +1847,19 @@ function bmBuildDetailEditor(record) {
       event.preventDefault();
       if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
       bmEditingId = null;
+      bmOpenBodies.delete(record.id);
       bmRenderCurrent();
     }
   });
   return input;
+}
+
+/** 改完字收回去只剩标题（2026-10-15 看板 Claude 01）：稍等一下再收——人可能是从原文点到了详情接着改，那就不收。 */
+function bmCollapseSoon(id) {
+  window.setTimeout(() => {
+    if (bmEditingId === id) return;
+    if (bmOpenBodies.delete(id)) bmRenderCurrent();
+  }, 250);
 }
 
 async function bmDetailCommit(id, input, close) {
@@ -1830,8 +1877,10 @@ async function bmDetailCommit(id, input, close) {
     return;
   }
   if (close) {
-    if (bmEditingId === id) bmEditingId = null;
+    // 只收自己：存的这一下人可能已经点去改原文了，那边的改字框别给关掉
+    if (bmEditingId === id && bmEditingField === "detail") bmEditingId = null;
     await bmRefresh();
+    bmCollapseSoon(id);
     return;
   }
   await bmRefresh();
@@ -1874,8 +1923,10 @@ async function bmEditCommit(id, input, close) {
     return;
   }
   if (close || !text) {
-    if (bmEditingId === id) bmEditingId = null;
+    // 只收自己：存的这一下人可能已经点去改详情了，那边的改字框别给关掉
+    if (bmEditingId === id && bmEditingField === "text") bmEditingId = null;
     await bmRefresh();
+    bmCollapseSoon(id);
     return;
   }
   await bmRefresh();
@@ -1893,7 +1944,9 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   menu.textContent = "";
 
   // 左边六个点管「交给 AI 干活」（2026-09-24 用户拍板）：只在 agent 组里出现；待定是还在商量，不启动。
-  const copyOptions = bmAgents.includes(groupKey) ? bmLaunchOptions(record.id, groupKey) : [];
+  // 派活单（设定23）换成「一键启动」：同批没人领的一次开完，各开在自己所在的组。
+  const copyOptions = !bmAgents.includes(groupKey) ? []
+    : record.kind === "dispatch" ? bmBatchLaunchOptions(record) : bmLaunchOptions(record.id, groupKey);
   for (const el of copyOptions) menu.appendChild(el);
   if (record.claimedBy) menu.appendChild(bmReleaseItem(record));
   if (copyOptions.length || record.claimedBy) {
@@ -2005,6 +2058,61 @@ function bmLaunchOptions(target, groupKey) {
   });
 }
 
+// ── 派活单一键启动（设定23，2026-10-15）────────────────────
+// 强模型一次写 1～3 张派活单（同一个批号）。点其中任一张的「一键启动」：同批还没人领的一个接一个开，
+// 每张开在它自己所在组的软件里（拖到 Claude 的开 Claude，留在 Pi 的开 Pi）。删掉一张，剩几张开几张。
+// 两张单子「只许动」写了同一份文件就一个都不开。🚨 照旧只贴不按回车。
+
+/** 同批还没人领、没交报告的派活单（看板从上往下的顺序，最多三张；跟主进程 dispatchLaunchable 同一个算法）。 */
+function bmDispatchLaunchable(record) {
+  const mates = record.batchId ? bmDispatchRecords.filter((r) => r.kind === "dispatch" && r.batchId === record.batchId) : [record];
+  return mates.filter((r) => !r.claimedBy && !r.report).slice(0, 3);
+}
+
+function bmBatchLaunchOptions(record) {
+  const n = bmDispatchLaunchable(record).length;
+  if (!n) {
+    const none = document.createElement("div");
+    none.className = "ctx-none";
+    none.textContent = "这一批都有人领了";
+    return [none];
+  }
+  return [
+    { label: `一键启动 ${n} 个 · 带编程`, coding: true },
+    { label: `一键启动 ${n} 个 · 普通`, coding: false },
+  ].map((opt) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "ctx-item";
+    item.textContent = opt.label;
+    item.addEventListener("click", async () => {
+      bmHideCtxMenu();
+      bmToast(n > 1 ? `一个接一个开 ${n} 个窗口，每个贴好再开下一个：这半分钟别点别的窗口` : "正在开窗口：别点别的窗口", 8000);
+      try {
+        const res = await window.bookmark.launchBatch(record.id, opt.coding);
+        bmToast(bmBatchLaunchText(res), 12000);
+      } catch (error) {
+        bmShowError(bmErrorText(error));
+      }
+      void bmRefresh();
+    });
+    return item;
+  });
+}
+
+/** 一键启动的结果说成一句话。 */
+function bmBatchLaunchText(res) {
+  if (res.conflicts.length) {
+    const what = res.conflicts.map((c) => `${c.a} 和 ${c.b} 都要动 ${c.files.join("、")}`).join("；");
+    return `一个都没开：${what}。改一下单子的「只许动」，或者把这两张合成一张再启动`;
+  }
+  const parts = [];
+  if (res.launched.length) parts.push(`开了 ${res.launched.map((l) => `${l.label}（${l.name}）`).join("、")}，启动句贴进去了，你每个看一眼再按回车`);
+  if (res.skipped.length) parts.push(`没开：${res.skipped.map((s) => `${s.name}（${s.reason}）`).join("、")}`);
+  if (res.missing.length) parts.push(`${res.missing.join("、")} 没写「只许动」，没法查撞没撞文件`);
+  return parts.join("。") || "这一批都有人领了，没开新窗口";
+}
+
 function bmReleaseItem(record) {
   const item = document.createElement("button");
   item.type = "button";
@@ -2028,6 +2136,7 @@ function bmBuildBundleHead(bundleId, members, groupKey, bundleNo) {
   head.className = "bundle-head";
   head.dataset.bundle = bundleId;
   if (bmClip && bmClip.bundleId === bundleId) head.classList.add("clip-cut");
+  if (bmPickedBundleId === bundleId) head.classList.add("task-picked");
   bmBindBundleDrag(head, bundleId, groupKey);
   const handle = document.createElement("button");
   handle.type = "button";
@@ -2874,7 +2983,12 @@ function bmInitClipboard() {
     bmMouse = { x: event.clientX, y: event.clientY };
     if (bmCarry) bmCarryPaint();
   }, true);
-  window.addEventListener("pointerup", () => { bmPressedTaskId = null; bmPressedBundleId = null; });
+  // 点在条目、捆标题外面（空白处、组名、页签）＝不选了；菜单里点不算。
+  window.addEventListener("pointerdown", (event) => {
+    const t = event.target;
+    if (!(t instanceof Element) || t.closest(".task, .bundle-head, #ctx-menu")) return;
+    if (bmPickedTaskId || bmPickedBundleId) bmPickTask(null);
+  }, true);
   window.addEventListener("keydown", (event) => {
     if (bmCarry && event.key === "Escape") {
       event.preventDefault();
@@ -2886,6 +3000,10 @@ function bmInitClipboard() {
       document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
       return;
     }
+    if (event.key === "Escape" && !bmTyping() && (bmPickedTaskId || bmPickedBundleId)) {
+      bmPickTask(null);
+      return;
+    }
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const k = String(event.key || "").toLowerCase();
     // Ctrl+Z 撤回看板上最近一步（2026-10-13 用户：拖错了、改错了能退回去）；在框里打字时还是框自己的撤销。
@@ -2895,22 +3013,29 @@ function bmInitClipboard() {
       return;
     }
     if (k !== "x" && k !== "v") return;
-    if (bmTyping()) return;
+    // 点了标题正在改字、但没选中字时按 Ctrl+X＝剪这一整条（2026-10-15 看板 Claude 01：点一下再 Ctrl+X 就剪）。
+    // 选中了一段字就还是普通的剪字。先把改字框收起存好，再剪。
+    const active = document.activeElement;
+    const editing = k === "x" && active && active.matches && active.matches(".task-edit") && active.selectionStart === active.selectionEnd
+      ? active.closest(".task[data-id]")
+      : null;
+    if (editing) active.blur();
+    else if (bmTyping()) return;
     if (k === "v") {
       if (!bmClip || bmCarry) return;
       event.preventDefault();
       bmStartCarry();
       return;
     }
-    const id = bmPressedTaskId || bmHoverTaskId;
+    // 认谁：正在改的那条 → 点一下选中的那条 / 那捆 → 鼠标停着的那条 / 那捆
+    const pickedEl = bmPickedTaskId ? document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`) : null;
+    const pickedHead = !pickedEl && bmPickedBundleId ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bmPickedBundleId)}"]`) : null;
+    const id = editing ? editing.dataset.id : pickedEl ? bmPickedTaskId : pickedHead ? null : bmHoverTaskId;
     const el = id ? document.querySelector(`.task[data-id="${CSS.escape(id)}"]`) : null;
-    const bundleId = el ? null : bmPressedBundleId || bmHoverBundleId;
+    const bundleId = el ? null : pickedHead ? bmPickedBundleId : bmHoverBundleId;
     const head = bundleId ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"]`) : null;
     if (!el && !head) return;
     event.preventDefault();
-    if (bmPressedTaskId || bmPressedBundleId) window.dispatchEvent(new PointerEvent("pointercancel")); // 按住时剪：这次拖动作废，改成拿着走
-    bmPressedTaskId = null;
-    bmPressedBundleId = null;
     bmClip = el ? { id } : { bundleId };
     document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
     if (el) el.classList.add("clip-cut");
@@ -3017,6 +3142,7 @@ function bmEndCarry(commit) {
   bmDragActive = false;
   bmRefreshPending = false;
   bmClip = null; // 放下或不要了，都算用完
+  bmPickTask(null); // 选中也一起用完，免得下次 Ctrl+X 又剪到它
   document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
   const hit = commit ? c.hit : null;
   void (async () => {

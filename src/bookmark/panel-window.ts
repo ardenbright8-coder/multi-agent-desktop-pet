@@ -23,6 +23,7 @@ import { BookmarkStore, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "./inbox";
 import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
 import { formatClaimMessage, startBookmarkCliServer, type CliRecord } from "./cli-server";
+import { indexBoard } from "./board-index";
 import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
@@ -31,6 +32,8 @@ import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listPro
 import { composeForAgent, listTemplates } from "./templates";
 import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
+import { imagesForAgent } from "./inline-images";
+import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
   activeModel, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
@@ -306,6 +309,9 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   if (store) return;
   store = new BookmarkStore();
   roster = new AgentRoster();
+  // 一条一份小文件（设定24）：每次存盘后对齐一次，开机先对齐一次。
+  store.onSaved = scheduleItemFileSync;
+  scheduleItemFileSync();
   liveRestart = Boolean(options?.liveRestart);
   // 启动 Agent 真打开桌面快捷方式只在真机。验证脚本不带自测开关（照样常驻），但都用隔离数据夹 AGENT_PET_HUB_HOME，
   // 真机入口从不设它（同 pet/focus-agent 的判法）。2026-09-24 踩过：只看常驻，验证脚本跑一次开一个真 Claude 窗口。
@@ -353,6 +359,9 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
         remove: (id) => bookmarkCliRemove(id),
         // 领活三件套（设定15）：跟看板同一个 store，AI 领了/干完看板马上刷新。
         claimNext: (target, by) => requireStore().claimNext(target, by),
+        // 派活单（设定23）：强模型一次写 1～3 张；没说组默认 Pi 组（2026-10-15 用户：派我主要就是让它干这个）。
+        addDispatchBatch: (cards) => requireStore().addDispatchBatch(cards.map((c) => ({ ...c, assignee: resolveGroup(c.assignee) }))),
+        itemFile: (id) => itemFileFor(id),
         done: (id, by, userOk) => {
           const record = requireStore().done(id, by, userOk);
           log.记(`${by} 干完删掉「${record.text.slice(0, 30)}」（用户原话：${userOk.slice(0, 60)}）`, "cli");
@@ -375,7 +384,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           const bundleNames: Record<string, string> = {};
           for (const [id, meta] of Object.entries(requireStore().bundleMeta())) if (meta.name) bundleNames[id] = meta.name;
           for (const b of requireStore().taskBundles()) if (b.coordinator) bundleNames[b.id] = `派工捆 · ${b.name}`;
-          return { agents: requireRoster().list(), titles, bundleNames };
+          return { agents: requireRoster().list(), titles, bundleNames, itemFile: (id: string) => itemFileFor(id) };
         },
         mode: () => readBoardMode(),
         template: () => listTemplates(templatesDirectory()).find((t) => t.name === CODING_TEMPLATE)?.text ?? null,
@@ -981,6 +990,47 @@ function registerIpc(): void {
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
     return { line, label, ...(await openAgentShortcut(group, line, label)) };
   });
+  // 一键启动（设定23，2026-10-15）：这张派活单同批、还没人领的（最多三张），各开在自己所在组的软件里。
+  // 一个接一个开：等上一个贴好再开下一个（同时开会贴串）。开之前查两张单子「只许动」有没有撞文件，撞了一个都不开。
+  // 🚨 照旧只贴不按回车，回车用户自己按。
+  ipcMain.handle("bookmark:launch-batch", async (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { id?: unknown; coding?: unknown };
+    const cards = requireStore().dispatchLaunchable(String(raw.id ?? ""));
+    const rows = boardRows();
+    const listed = cards.map((card) => ({ card, name: rowName(rows, card), files: parseAllowedFiles(`${card.text}\n${card.detail ?? ""}`) }));
+    const missing = listed.filter((c) => c.files === null).map((c) => c.name);
+    const conflicts = findFileConflicts(listed.map((c) => ({ name: c.name, files: c.files ?? [] })));
+    const launched: { name: string; label: string; opened: string; pasting: boolean }[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+    if (conflicts.length) return { launched, conflicts, missing, skipped };
+    for (const { card, name } of listed) {
+      const group = card.assignee ?? "";
+      if (!agentShortcutFor(group)) {
+        skipped.push({ name, reason: "认不出这个组该开哪个软件" });
+        continue;
+      }
+      const label = nextWindowLabel(group);
+      const line = `领看板的活：node "${bookmarkCliScriptPath()}" next ${card.id} --by ${label}${raw.coding ? " --coding" : ""}`;
+      clipboard.writeText(line);
+      log.记(`一键启动：${label} ← ${card.id}${raw.coding ? "（带编程）" : ""}`, "cli");
+      const res = await openAgentShortcut(group, line, label, true);
+      if (!res.opened) {
+        skipped.push({ name, reason: res.problem ?? "没打开" });
+        continue;
+      }
+      launched.push({ name, label, opened: res.opened, pasting: res.pasting });
+    }
+    return { launched, conflicts, missing, skipped };
+  });
+  // 点号码（设定24）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
+  ipcMain.handle("bookmark:item-file", (_event, id: unknown) => {
+    const record = requireStore().list().find((r) => r.id === String(id ?? ""));
+    if (!record) throw new Error("这条已经不在了");
+    const path = itemFileFor(record.id);
+    const line = `看板 ${rowName(boardRows(), record)} 这一条的单独文件（只读这一份，别翻整组）：${path}`;
+    clipboard.writeText(line);
+    return { path, line };
+  });
   // 两档仅决定领活后的报告流程；执行窗口一律由用户自己开，不挂自动开窗计时器。
   ipcMain.handle("bookmark:mode:get", () => readBoardMode());
   ipcMain.handle("bookmark:mode:set", (_event, value: unknown) => {
@@ -1131,6 +1181,83 @@ function readBoardMode(): BoardMode {
   } catch {
     return "day";
   }
+}
+
+// ── 一条一份小文件（设定24，看板 Claude 01）：每条在数据夹里一份 md，条目删了跟着删 ──
+
+const itemFileCache = new Map<string, string>();
+let itemFileTimer: ReturnType<typeof setTimeout> | null = null;
+
+function itemFilesDirectory(): string {
+  return join(bookmarkDataDirectory(), ITEM_FILES_DIR);
+}
+
+/** 条目在看板上哪个组（屏幕上的叫法）。 */
+function groupLabelOf(record: BookmarkRecord): string {
+  if (record.assignee) return record.assignee;
+  return record.kind === "handoff" ? "交接单专区" : "待定";
+}
+
+function syncItemFilesNow(): void {
+  if (!store) return;
+  if (itemFileTimer) {
+    clearTimeout(itemFileTimer);
+    itemFileTimer = null;
+  }
+  let titles: NoteBook = {};
+  try {
+    titles = readNoteBook();
+  } catch {
+    /* 没小标题就用原文开头 */
+  }
+  syncItemFiles(
+    itemFilesDirectory(),
+    store.list(),
+    (r) => formatItemFile(r, { group: groupLabelOf(r), title: titles[r.id]?.title ?? null, images: (t) => imagesForAgent(t) }),
+    itemFileCache,
+  );
+}
+
+function scheduleItemFileSync(): void {
+  if (itemFileTimer) clearTimeout(itemFileTimer);
+  itemFileTimer = setTimeout(syncItemFilesNow, 300);
+  itemFileTimer.unref?.();
+}
+
+/** 这条那份小文件的完整路径（先对齐一次，保证是最新的）。 */
+function itemFileFor(id: string): string {
+  syncItemFilesNow();
+  const path = itemFilePath(itemFilesDirectory(), id);
+  if (!existsSync(path)) throw new Error("这条已经不在了");
+  return path;
+}
+
+/** 条目 id → 屏幕上的组名和号码（跟看板、show 同一个数法）。 */
+function boardRows(): Map<string, { group: string; no: number }> {
+  const out = new Map<string, { group: string; no: number }>();
+  for (const g of indexBoard(requireStore().list(), requireRoster().list())) for (const row of g.rows) out.set(row.record.id, { group: g.name, no: row.no });
+  return out;
+}
+
+function rowName(rows: Map<string, { group: string; no: number }>, record: BookmarkRecord): string {
+  const row = rows.get(record.id);
+  return row ? `${row.group} ${String(row.no).padStart(2, "0")}` : groupLabelOf(record);
+}
+
+/** 派活单派给哪个组：写了就认（大小写不管、只写开头也认），没写默认 Pi 组。 */
+function resolveGroup(name: string | null | undefined): string {
+  const agents = requireRoster().list();
+  const want = String(name ?? "").trim().toLowerCase();
+  if (want) {
+    const exact = agents.find((a) => a.toLowerCase() === want);
+    const prefix = agents.filter((a) => a.toLowerCase().startsWith(want));
+    const hit = exact ?? (prefix.length === 1 ? prefix[0] : null);
+    if (!hit) throw new Error(`看板上没有「${name}」这个组（现有：${agents.join("、")}）`);
+    return hit;
+  }
+  const pi = agents.find((a) => /^pi(\s|$)/i.test(a));
+  if (!pi) throw new Error("没说派给哪个组，默认的 Pi 组也不在看板上：用 --to 写组名");
+  return pi;
 }
 
 /** 窗口名：组名去空格 + 递增号（Claude-3、PiAgent-7）。号存在 launch-seq.json，重启接着数，免得跟还开着的旧窗口撞名。 */
@@ -1509,6 +1636,7 @@ function startOrganizerTimer(firstMs = 30_000): void {
 
 /** 整理开始（text 空）、整理完都发一声：设置窗口刷新记录、看板刷新小橙点。 */
 function notifyOrganized(text: string): void {
+  if (text) scheduleItemFileSync(); // 小标题可能换了，小文件第一行跟着换
   try {
     if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:organized", text);
   } catch {

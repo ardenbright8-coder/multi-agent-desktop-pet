@@ -16,6 +16,14 @@ const log = createLogger("bookmark");
 /** 正文里的贴图标记，起捆名时去掉。 */
 const IMAGE_MARK = /\[图片:[^\]]*\]/g;
 
+/** 条目类型：note 普通记录 / handoff 交接单（窗口快满留下的半截活）/ dispatch 派活单（2026-10-15 设定23：强模型拆好的活，同批一键启动）。 */
+export type BookmarkKind = "note" | "handoff" | "dispatch";
+export function normalizeKind(value: unknown): BookmarkKind {
+  return value === "handoff" || value === "dispatch" ? value : "note";
+}
+/** 派活单一批最多几张（2026-10-15 用户：一键最多开三个，多了以后再设计）。 */
+export const MAX_DISPATCH_BATCH = 3;
+
 export interface BookmarkInput {
   text: string;
   url?: string | null;
@@ -24,8 +32,10 @@ export interface BookmarkInput {
   dedupeKey?: string | null;
   /** 详情（交接单等长内容用）：看板上收起，点条目展开。缺省 null。 */
   detail?: string | null;
-  /** 条目类型：note 普通记录（默认）/ handoff AI 交接单（看板显眼标记）。 */
-  kind?: "note" | "handoff";
+  /** 条目类型：note 普通记录（默认）/ handoff AI 交接单 / dispatch 派活单（看板显眼标记）。 */
+  kind?: BookmarkKind;
+  /** 派活单的批号：同一次写的几张同一个号，一键启动按它找同批。 */
+  batchId?: string | null;
   /** 贴图文件名（不含路径）；真文件在 attachments\。创建时传入就按原样落盘，不拷贝。 */
   attachments?: string[];
 }
@@ -38,8 +48,10 @@ export interface BookmarkRecord {
   dedupeKey: string | null;
   /** 详情（交接单等长内容）：板上收起，点条目展开；没有就是 null。 */
   detail: string | null;
-  /** note 普通记录 / handoff AI 交接单（显眼标记）。旧库无此字段读入时回落 note。 */
-  kind: "note" | "handoff";
+  /** note 普通记录 / handoff AI 交接单 / dispatch 派活单（显眼标记）。旧库无此字段读入时回落 note。 */
+  kind: BookmarkKind;
+  /** 派活单批号（设定23）：同批的几张不管拖到哪个组，一键启动都一起开。不是派活单就是 null。 */
+  batchId: string | null;
   /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
   attachments: string[];
   /** 捆号（2026-09-24 设定15）：同组里挨着的几条捆成一捆，一捆交给一个 AI 窗口。null = 没捆。 */
@@ -265,7 +277,7 @@ export class BookmarkStore {
 
   /** AI 能动的条目：散着、用户没动过、没人在干、没报告。 */
   aiMovable(record: BookmarkRecord | undefined): record is BookmarkRecord {
-    return Boolean(record && !record.bundleId && !record.userPinned && !record.claimedBy && !record.report);
+    return Boolean(record && record.kind !== "dispatch" && !record.bundleId && !record.userPinned && !record.claimedBy && !record.report);
   }
 
   /** AI 能往里加条目的捆：还在、不是多人派工捆、里面没人在干、没报告。 */
@@ -450,7 +462,8 @@ export class BookmarkStore {
       assignee: input.assignee ? String(input.assignee) : null,
       dedupeKey,
       detail: input.detail ? String(input.detail) : null,
-      kind: input.kind === "handoff" ? "handoff" : "note",
+      kind: normalizeKind(input.kind),
+      batchId: normalizeKind(input.kind) === "dispatch" && input.batchId ? String(input.batchId) : null,
       attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
@@ -467,6 +480,51 @@ export class BookmarkStore {
     return record;
   }
 
+  /** 派活单一批（设定23）：强模型一次写 1～3 张，同一个批号，按写的顺序从上往下排在各自组的最上面。 */
+  addDispatchBatch(cards: { text: string; detail?: string | null; assignee: string }[]): BookmarkRecord[] {
+    this.ensureLoaded();
+    if (!cards.length) throw new Error("派活单一张都没有");
+    if (cards.length > MAX_DISPATCH_BATCH) throw new Error(`一批最多 ${MAX_DISPATCH_BATCH} 张（一键最多开 ${MAX_DISPATCH_BATCH} 个窗口），多的拆成下一批`);
+    for (const [i, c] of cards.entries()) {
+      if (!String(c.text ?? "").trim()) throw new Error(`第 ${i + 1} 张没写标题`);
+      if (!String(c.assignee ?? "").trim()) throw new Error(`第 ${i + 1} 张没说派给哪个组`);
+    }
+    const batchId = `pb-${Date.now().toString(36)}-${randomUUID().slice(0, 4)}`;
+    const now = new Date().toISOString();
+    const made = cards.map((c, i): BookmarkRecord => ({
+      id: `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`,
+      text: String(c.text).trim(),
+      url: null,
+      assignee: String(c.assignee).trim(),
+      dedupeKey: null,
+      detail: c.detail && String(c.detail).trim() ? String(c.detail).trim() : null,
+      kind: "dispatch",
+      batchId,
+      attachments: [],
+      bundleId: null,
+      claimedBy: null,
+      claimedAt: null,
+      report: null,
+      reportedBy: null,
+      reportedAt: null,
+      createdAt: new Date(Date.parse(now) + i).toISOString(),
+      sortedAt: null,
+      userPinned: false, // AI 整理不碰派活单：aiMovable 按 kind 挡掉
+    }));
+    this.records.unshift(...made);
+    this.save();
+    return made;
+  }
+
+  /** 一键启动要开的（设定23）：跟这张同批、还没人领、没交报告的派活单，按看板上从上往下的顺序，最多三张。 */
+  dispatchLaunchable(id: string): BookmarkRecord[] {
+    this.ensureLoaded();
+    const self = this.records.find((r) => r.id === id);
+    if (!self || self.kind !== "dispatch") return [];
+    const mates = self.batchId ? this.records.filter((r) => r.kind === "dispatch" && r.batchId === self.batchId) : [self];
+    return mates.filter((r) => !r.claimedBy && !r.report).slice(0, MAX_DISPATCH_BATCH);
+  }
+
   /** 插在某条的上面或下面。锚点没有就放到最前。右键白条上半/下半用这个，不总是堆到顶上。 */
   insertBeside(anchorId: string | null, place: "above" | "below", input: BookmarkInput): BookmarkRecord {
     this.ensureLoaded();
@@ -479,7 +537,8 @@ export class BookmarkStore {
       assignee: input.assignee ? String(input.assignee) : null,
       dedupeKey: input.dedupeKey ? String(input.dedupeKey) : null,
       detail: input.detail ? String(input.detail) : null,
-      kind: input.kind === "handoff" ? "handoff" : "note",
+      kind: normalizeKind(input.kind),
+      batchId: normalizeKind(input.kind) === "dispatch" && input.batchId ? String(input.batchId) : null,
       attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
@@ -868,7 +927,8 @@ export class BookmarkStore {
         .map((record) => ({
           ...record,
           detail: typeof record.detail === "string" ? record.detail : null,
-          kind: record.kind === "handoff" ? "handoff" : "note",
+          kind: normalizeKind(record.kind),
+          batchId: record.kind === "dispatch" && typeof record.batchId === "string" ? record.batchId : null,
           attachments: reconcileImages(normalizeAttachmentNames(record.attachments), "", record.text),
           bundleId: typeof record.bundleId === "string" ? record.bundleId : null,
           claimedBy: typeof record.claimedBy === "string" ? record.claimedBy : null,
@@ -892,9 +952,17 @@ export class BookmarkStore {
     }
   }
 
+  /** 每次存盘后叫一声（panel-window 拿它同步「一条一份」小文件）。出错只吞掉，不拦存盘。 */
+  onSaved: (() => void) | null = null;
+
   private save(): void {
     writeJsonAtomic(this.path, this.records);
     this.pruneMeta();
+    try {
+      this.onSaved?.();
+    } catch (error) {
+      log.出事("存盘后的回调出错（数据已存好）", error, "store");
+    }
   }
 
   // ── 捆名（设定21）：存 bookmarks.json.bundle-meta.json，坏档当空的，不拦看板 ──

@@ -279,8 +279,8 @@ try {
     await bmRefresh();
     return r.id;
   });
-  // 2026-10-13 起各组条目原文收着，点标题展开再看原文和链接
-  await page.locator(`.task[data-id="${linkId}"] .task-title`).click();
+  // 2026-10-13 起各组条目原文收着；2026-10-15 起点标题直接进改字，这里直接把原文摊开看字和链接
+  await page.evaluate(async (id) => { bmOpenBodies.add(id); await bmRefresh(); }, linkId);
   assert.match(await page.locator(`.task[data-id="${linkId}"] .task-text`).innerText(), /思考了 1m 17s \.\.\. 结论先说/);
   assert.equal(await page.locator(`.task[data-id="${linkId}"] .task-url`).innerText(), '链接 · huggingface.co/kohya-ss/x.safetensors');
 

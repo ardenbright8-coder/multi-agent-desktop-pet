@@ -24,6 +24,14 @@ export interface BoardGroup {
 export interface BoardNames {
   titles: Record<string, string>;
   bundleNames: Record<string, string>;
+  /** 条目 id → 它那份「一条一份」小文件的完整路径（设定24）；没接就不写这一行。 */
+  itemFile?: (id: string) => string;
+}
+
+/** 条目类型在列表里的小尾巴：交接单专区里的交接单不用再说一遍。 */
+function kindTag(r: CliRecord, group: string): string {
+  if (r.kind === "dispatch") return "（派活单）";
+  return r.kind === "handoff" && group !== HANDOFF_GROUP ? "（交接单）" : "";
 }
 
 /** 按看板的样子分组编号：各 Agent 组（照组名单顺序）→ 交接单专区 → 待定区。 */
@@ -127,7 +135,7 @@ export function formatBrief(groups: BoardGroup[], names: BoardNames, only?: stri
       }
       lastBundle = r.bundleId ?? null;
       const status = rowStatus(r);
-      const kind = r.kind === "handoff" && g.name !== HANDOFF_GROUP ? "（交接单）" : "";
+      const kind = kindTag(r, g.name);
       out.push(`${r.bundleId ? "  " : ""}${pad(row.no)} ${kind}${rowTitle(r, names)}${status ? `  ${status}` : ""}`);
     }
   }
@@ -172,7 +180,14 @@ export function formatShow(groups: BoardGroup[], names: BoardNames, groupName: s
 function showRow(g: BoardGroup, row: BoardRow, names: BoardNames, expandImages: (text: string) => string): string[] {
   const r = row.record;
   const where = row.bundleNo ? ` · 捆${row.bundleNo}` : "";
-  const lines = [`━━ ${g.name} ${pad(row.no)}${where}${r.kind === "handoff" ? " · 交接单" : ""} · id ${r.id}`, `标题：${rowTitle(r, names)}`];
+  const lines = [`━━ ${g.name} ${pad(row.no)}${where}${r.kind === "handoff" ? " · 交接单" : r.kind === "dispatch" ? " · 派活单" : ""} · id ${r.id}`, `标题：${rowTitle(r, names)}`];
+  if (names.itemFile) {
+    try {
+      lines.push(`单独文件：${names.itemFile(r.id)}`);
+    } catch {
+      /* 小文件还没写出来就不报这一行 */
+    }
+  }
   const status = rowStatus(r);
   if (status) lines.push(`状态：${status}`);
   lines.push("原文：", expandImages(r.text).trim());

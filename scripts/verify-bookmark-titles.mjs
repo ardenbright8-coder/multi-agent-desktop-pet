@@ -1,4 +1,4 @@
-// 隔离看板回归（2026-10-13）：小标题在第一行、原文收起点小标题展开；复制钮钉在右上角跟第一行齐平；
+// 隔离看板回归（2026-10-13；2026-10-15 改：点小标题直接改原文、点别处存好收起，点一下＝选中）：小标题在第一行、原文收起；复制钮钉在右上角跟第一行齐平；
 // 右键菜单在外面一按下（点到条目文字、右键别处）就收起。官方 Playwright 后台驱动，截图在 .runtime/titles/。
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -54,21 +54,43 @@ try {
   const [copy, title] = [await box(`${T} .t-copy`), await box(`${T} .task-title`)];
   check('② 复制钮钉在右上角、跟小标题第一行齐平', Math.abs(copy.y - title.y) <= 6, `复制钮 y=${Math.round(copy.y)} 小标题 y=${Math.round(title.y)}`);
   await page.screenshot({ path: join(out, '小标题收起.png') });
+  // ③ 2026-10-15 看板 Claude 01：点小标题＝直接改原文（光标就在框里），点别处存好、收回去只剩标题
   await page.locator(`${T} .task-title`).click();
-  check('③ 点小标题：原文展开', await vis(`${T} .task-text`));
-  check('③ 展开后复制钮还在原位', Math.abs((await box(`${T} .t-copy`)).y - (await box(`${T} .task-title`)).y) <= 6);
-  await page.screenshot({ path: join(out, '点开原文.png') });
-  await page.locator(`${T} .task-title`).click();
-  check('③ 再点收起', !(await vis(`${T} .task-text`)));
+  const editing = await page.evaluate((id) => {
+    const a = document.activeElement;
+    return Boolean(a && a.matches('.task-edit') && a.closest(`.task[data-id="${id}"]`) && a.value.startsWith('然后'));
+  }, titled.id);
+  check('③ 点小标题：直接进改字框，光标在框里，框里是整段原文', editing);
+  check('③ 改字时复制钮还在原位', Math.abs((await box(`${T} .t-copy`)).y - (await box(`${T} .task-edit`)).y) <= 8);
+  await page.screenshot({ path: join(out, '点标题直接改.png') });
+  await page.keyboard.type('（补一句）');
+  await page.mouse.click(260, 760);
+  await page.waitForTimeout(700);
+  check('③ 点别处：存好了，收回去只剩标题', !(await vis(`${T} .task-edit`)) && !(await vis(`${T} .task-text`)) && (await vis(`${T} .task-title`)));
+  const saved = await page.evaluate(async (id) => (await window.bookmark.list()).find((r) => r.id === id).text, titled.id);
+  check('③ 改的字真存进去了', saved.endsWith('（补一句）'));
 
-  // ⑤ 交接单跟普通条目一样：小标题在第一行、原文和详情收着、没有「详情」按钮，点小标题一起展开
+  // ⑤ 交接单：小标题在第一行、原文和详情收着、没有「详情」按钮；点小标题改原文，详情露在下面，点详情接着改详情
   const H = `.task[data-id="${hand.id}"]`;
   check('⑤ 交接单：第一行小标题，原文和详情收着，没有「详情」按钮', (await vis(`${H} .task-title`)) && !(await vis(`${H} .task-text`)) && !(await vis(`${H} .task-detail`)) && (await page.locator(`${H} .detail-fold`).count()) === 0);
-  check('⑤ 交接单的小标还在序号下面', await vis(`${H} .num-col .handoff-badge`));
+  check('⑤ 交接单的小标还在序号下面，碰到有说明', (await vis(`${H} .num-col .handoff-badge`)) && Boolean(await page.locator(`${H} .num-col .handoff-badge`).getAttribute('title')));
   await page.locator(`${H} .task-title`).click();
-  check('⑤ 点交接单小标题：原文和详情一起展开', (await vis(`${H} .task-text`)) && (await vis(`${H} .task-detail`)));
-  await page.screenshot({ path: join(out, '交接单展开.png') });
-  await page.locator(`${H} .task-title`).click();
+  check('⑤ 点交接单小标题：进改字框，详情露在下面', (await vis(`${H} .task-edit`)) && (await vis(`${H} .task-detail`)) && (await page.locator(`${H} .detail-fold`).count()) === 0);
+  await page.screenshot({ path: join(out, '交接单改字.png') });
+  await page.locator(`${H} .task-detail`).click();
+  await page.waitForTimeout(500);
+  check('⑤ 改原文时点详情：接着改详情，不收起', await vis(`${H} .task-detail-edit`));
+  await page.mouse.click(260, 760);
+  await page.waitForTimeout(700);
+  check('⑤ 点别处：收回去只剩标题', !(await vis(`${H} .task-edit`)) && !(await vis(`${H} .task-detail`)));
+
+  // ⑥ 点一下＝选中（一圈实线），点空白不选了
+  await page.locator(`${P}`).click({ position: { x: 200, y: 4 } });
+  await page.waitForTimeout(200);
+  check('⑥ 点一下条目：选中（一圈实线）', await page.locator(`${P}.task-picked`).count() === 1);
+  await page.keyboard.press('Escape');
+  await page.mouse.click(260, 760);
+  check('⑥ 点空白：不选了', await page.locator('.task-picked').count() === 0);
 
   // ④ 右键菜单：点到别条文字（会进改字、截走 click）也要收起
   await page.locator(`${T} .handle`).click();

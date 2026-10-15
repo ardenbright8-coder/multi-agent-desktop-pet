@@ -1016,3 +1016,11 @@ body {
 .bundle-ghost-count { flex: none; font-size: 11.5px; color: rgba(47, 62, 44, 0.55); padding-right: 4px; }
 /* 拿着走的时候：整页都是「拿着」的手势 */
 body.carrying, body.carrying * { cursor: grabbing !important; }
+
+/* 点一下选中（2026-10-15 看板 Claude 01）：选中的那条（或捆标题）一圈实线，Ctrl+X 剪的就是它；剪下以后虚线那套盖过它 */
+.task.task-picked:not(.clip-cut), .bundle-head.task-picked:not(.clip-cut) { outline: 1.5px solid rgba(122, 156, 94, 0.85); outline-offset: -1px; }
+/* 点号码＝复制这条单独小文件的路径：碰到号码变深一点、手指形 */
+.task .num { cursor: pointer; border-radius: 4px; }
+.task .num:hover { color: rgba(47, 62, 44, 0.85); background: rgba(122, 156, 94, 0.14); }
+/* 派活单小标（设定23）：跟交接小标同一个圆角小方块，换成青绿色，一眼分得出 */
+.handoff-badge.dispatch-badge { color: #2f6f6a; background: rgba(76, 160, 150, 0.16); border-color: rgba(76, 160, 150, 0.5); }

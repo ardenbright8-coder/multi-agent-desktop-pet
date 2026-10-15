@@ -130,11 +130,13 @@ try {
     return { hidden: detail?.hidden ?? null, text: detail?.textContent?.includes("手机端待拍板") ?? false };
   });
   check("③ 点条目展开详情看到详情文本", detailShown.hidden === false && detailShown.text, JSON.stringify(detailShown));
-  await panel.locator(".group.handoff-zone .task .task-title").first().click(); // 2026-10-13 起点标题展开原文和详情，没有「详情」按钮
+  // 2026-10-15 起点标题＝直接改原文（详情露在下面），点别处存好收起
+  await panel.keyboard.press("Escape");
+  await panel.waitForTimeout(500);
   const detailHiddenAgain = await panel.evaluate(() => {
     return document.querySelector(".group.handoff-zone .task .task-detail")?.hidden ?? null;
   });
-  check("③ 再点收起", detailHiddenAgain === true);
+  check("③ 不改了（Esc）就收起", detailHiddenAgain === true);
 
   // ④ CLI 带 --to 的交接单（assignee=Claude）直接进组、不进专区。
   await panel.evaluate(() => window.bookmark.add({ text: "指定收件人的交接单", kind: "handoff", assignee: "Claude" }));

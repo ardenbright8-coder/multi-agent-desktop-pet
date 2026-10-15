@@ -26,7 +26,9 @@ export interface CliRecord {
   assignee: string | null;
   dedupeKey: string | null;
   detail: string | null;
-  kind: "note" | "handoff";
+  kind: "note" | "handoff" | "dispatch";
+  /** 派活单批号（设定23）；老适配器可以不给。 */
+  batchId?: string | null;
   /** list 出口会把文件名展开成 attachmentsRoot 下的完整路径。 */
   attachments: string[];
   createdAt: string;
@@ -67,6 +69,10 @@ export interface CliStoreAdapter {
   template?(name: "coding"): string | null;
   dispatch?(input: DispatchInput): unknown;
   bundleInfo?(id: string | null | undefined): { id: string; coordinator: string } | undefined;
+  /** 派活单（设定23）：一批 1～3 张，assignee 空＝默认 Pi 组（适配器里认组名）。 */
+  addDispatchBatch?(cards: { text: string; detail: string | null; assignee: string }[]): CliRecord[];
+  /** 一条一份小文件（设定24）：条目 id → 完整路径；没有就抛错。 */
+  itemFile?(id: string): string;
   /** 按号码读（2026-10-13）：组名单（跟看板同序）、AI 写的小标题、捆名。没接就只能 list --json。 */
   boardNames?(): BoardNames & { agents: string[] };
 }
@@ -84,7 +90,9 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch" | "show";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch" | "show" | "paihuo";
+  /** paihuo 的单子文件路径（JSON，CLI 脚本自己读）。 */
+  file?: string;
   /** show 的组名和号码（屏幕上看到的号：7、7-9、捆2）。 */
   group?: string;
   spec?: string[];
@@ -113,12 +121,25 @@ const CLI_USAGE =
   + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
   + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id> | '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
-  + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名';
+  + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名 | '
+  + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）';
 
 /** 解析命令行参数。add/handoff 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
 export function parseCliArgs(argv: string[]): CliArgs {
   const command = argv[0];
   if (command === 'dispatch') return { command, payload: parseDispatchArgs(argv), json: argv.includes('--json'), attach: [] };
+  if (command === "paihuo") {
+    let file: string | undefined;
+    let to: string | undefined;
+    for (let i = 1; i < argv.length; i++) {
+      const flag = argv[i];
+      if (flag === "--file") file = argv[++i];
+      else if (flag === "--to") to = argv[++i];
+      else if (flag !== "--json") throw new Error(`不认识的参数 ${flag}。写法：paihuo --file 单子.json [--to 组名]`);
+    }
+    if (!file) throw new Error("paihuo 缺 --file 单子.json（一批 1～3 张，格式见 AGENT_INTEGRATION.md 的派活单节）");
+    return { command, file, to, json: argv.includes("--json"), attach: [] };
+  }
   if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
   if (command === "show") {
     const rest = argv.slice(1).filter((a) => a !== "--json");
@@ -246,9 +267,34 @@ function parseClaimArgs(command: "next" | "done" | "release" | "report", argv: s
   return args;
 }
 
+/** 派活单文件（设定23）：JSON，一个数组或 { cards: [...] }，每张 { text 标题, detail 完整单子, to 组名 }（也认 标题/详情/组）。
+ *  每张必须写一行「只许动：文件a；文件b」（不改文件写「只许动：无」），一键启动前靠它查两张单子撞没撞文件。 */
+export function parsePaihuoCards(raw: string, defaultTo?: string): { text: string; detail: string | null; assignee: string }[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw.replace(/^﻿/, ""));
+  } catch (error) {
+    throw new Error(`单子文件不是合法 JSON：${error instanceof Error ? error.message : String(error)}`);
+  }
+  const list = Array.isArray(data) ? data : (data as { cards?: unknown })?.cards;
+  if (!Array.isArray(list) || !list.length) throw new Error("单子文件里没有单子：写成 [ {...}, {...} ] 或 { \"cards\": [ ... ] }");
+  if (list.length > 3) throw new Error(`一批最多 3 张（一键最多开 3 个窗口），这里有 ${list.length} 张：多的拆成下一批`);
+  return list.map((item, i) => {
+    const c = (item ?? {}) as Record<string, unknown>;
+    const text = String(c.text ?? c["标题"] ?? "").trim();
+    const detail = String(c.detail ?? c["详情"] ?? "").trim();
+    const to = String(c.to ?? c["组"] ?? defaultTo ?? "").trim();
+    if (!text) throw new Error(`第 ${i + 1} 张没写 text（标题：一句话说清这张干啥）`);
+    if (!/(^|\n)\s*[-*]?\s*只许动\s*[:：]/.test(`${text}\n${detail}`)) {
+      throw new Error(`第 ${i + 1} 张没写「只许动：文件a；文件b」那一行（不改文件写「只许动：无」）——一键启动前靠它查撞没撞文件`);
+    }
+    return { text, detail: detail || null, assignee: to };
+  });
+}
+
 /** 领到活以后给 AI 看的整段话。🚨 所有 AI（Claude/Codex/Pi/Hermes）看到的都是这一份，规矩只在这里写一次。 */
 export function formatClaimMessage(
-  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep"; cooperation?: boolean; bundleId?: string; coordinator?: string },
+  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep"; cooperation?: boolean; bundleId?: string; coordinator?: string; itemFile?: string | null },
   ctx: { cli: string; target?: string; group?: string; by: string; coding: boolean },
 ): string {
   const run = (rest: string) => `node "${ctx.cli}" ${rest}`;
@@ -274,6 +320,26 @@ export function formatClaimMessage(
       : `【看板领活】${what} 没有可领的了。${busy}跟用户说一声这边的活领完了就行。`;
   }
   const id = reply.item.id;
+  const fileLine = reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "";
+  // 派活单（设定23）：强模型拆好的活，同批几张同时开在不同窗口。两档一个样：干完交报告就停，调度审、用户测。
+  if (reply.item.kind === "dispatch") {
+    return [
+      `【看板派活单】你是 ${ctx.by}。领到一张派活单，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
+      fileLine,
+      "",
+      reply.prompt ?? "",
+      "",
+      "—— 派活单规矩（所有 AI 都一样）——",
+      "1. 只干这一张。只动单子里「只许动」写的文件，别的一行不碰——同一批还有别的窗口在干别的单子，碰了会互相覆盖。",
+      "2. 自己干完：不开子 agent、不叫别的模型、不去领别的活。",
+      "3. 干完先照单子里的验收标准自测；测过了用大白话交报告（改了哪些文件、跑了什么、结果、还有啥没弄完），敲：",
+      `   ${run(`report ${id} --by ${ctx.by} --text "改了哪些文件；跑了什么；结果；剩余问题"`)}`,
+      "   这张会标成「干完待审」，等派活的强模型审、用户测；别自己 done、别删。交完报告就停。",
+      "4. 卡住两次还过不去、或者要动单子外的文件：别硬干，写进报告交上去，让调度定。",
+      "5. 干不下去、要换人：",
+      `   ${run(`release ${id} --by ${ctx.by}`)}`,
+    ].filter((line, i) => i !== 1 || line).join(String.fromCharCode(10));
+  }
   // 睡觉档一律按组往下领（这组干完为止）；日常档用什么领的就接着用什么领。
   const group = ctx.group ?? (sleep ? reply.item.assignee ?? "" : "");
   const nextCmd = group ? `next --to "${group}" --by ${ctx.by}` : `next ${ctx.target} --by ${ctx.by}`;
@@ -284,6 +350,7 @@ export function formatClaimMessage(
   if (sleep) {
     return [
       `【看板领活 · 🌙 睡觉档】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
+      ...(fileLine ? [fileLine] : []),
       "",
       reply.prompt ?? "",
       "",
@@ -303,6 +370,7 @@ export function formatClaimMessage(
   }
   return [
     `【看板领活】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
+    ...(fileLine ? [fileLine] : []),
     "",
     reply.prompt ?? "",
     "",
@@ -414,6 +482,26 @@ export function handleCliRequest(
     }
     return { status: 200, body: { ok: true, id: record.id, kind: record.kind } };
   }
+  // 派活单（设定23）：强模型一次写 1～3 张，同一个批号；用户点其中一张的「一键启动」就一起开。
+  if (method === "POST" && path === "/paihuo") {
+    if (!ctx.store.addDispatchBatch) return { status: 501, body: { ok: false, error: "看板还没接上派活单（重开桌宠试试）" } };
+    const raw = (body ?? {}) as { cards?: unknown };
+    const cards = Array.isArray(raw.cards) ? raw.cards : [];
+    try {
+      const made = ctx.store.addDispatchBatch(cards.map((c) => {
+        const card = (c ?? {}) as Record<string, unknown>;
+        return { text: String(card.text ?? ""), detail: card.detail ? String(card.detail) : null, assignee: String(card.assignee ?? "") };
+      }));
+      try {
+        ctx.onChanged?.();
+      } catch {
+        /* 刷新失败无所谓 */
+      }
+      return { status: 200, body: { ok: true, batchId: made[0]?.batchId ?? null, items: made.map((r) => ({ id: r.id, assignee: r.assignee })) } };
+    } catch (error) {
+      return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+    }
+  }
   if (method === "POST" && path === "/remove") {
     const raw = (body ?? {}) as Record<string, unknown>;
     const id = String(raw.id ?? "").trim();
@@ -459,7 +547,7 @@ export function handleCliRequest(
   if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report")) {
     return handleClaimRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
-  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /remove | /next | /done | /release | /report | GET /list | /view）" } };
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /remove | /next | /done | /release | /report | GET /list | /view）" } };
 }
 
 /** 领活三件套。store 抛的错（不是你领的、缺用户原话、找不到）原样回给 AI，400。 */
@@ -499,6 +587,7 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
           cooperation: Boolean(got.bundleId),
           bundleId: got.bundleId,
           coordinator: got.coordinator,
+          itemFile: got.record ? safeItemFile(store, got.record.id) : null,
         },
       };
     }
@@ -532,6 +621,14 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
     return { status: 200, body: { ok: true } };
   } catch (error) {
     return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
+function safeItemFile(store: CliStoreAdapter, id: string): string | null {
+  try {
+    return store.itemFile?.(id) ?? null;
+  } catch {
+    return null;
   }
 }
 

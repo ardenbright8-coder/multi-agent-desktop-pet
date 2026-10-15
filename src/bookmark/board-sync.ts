@@ -14,7 +14,7 @@ export interface BoardRow {
   text: string;
   url: string | null;
   assignee: string | null;
-  kind: "note" | "handoff";
+  kind: "note" | "handoff" | "dispatch";
   detail: string | null;
   bundleId: string | null;
   claimedBy: string | null;
@@ -126,7 +126,7 @@ export function buildBoardSnapshot(
       id: r.id,
       text: r.text,
       assignee: r.assignee,
-      kind: r.kind,
+      kind: r.kind === "handoff" ? "handoff" : "note", // 手机端只认这两种，派活单按普通条目显示
       detail: r.detail,
       bundleId: r.bundleId,
       claimedBy: r.claimedBy,

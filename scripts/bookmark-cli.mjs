@@ -32,6 +32,17 @@ try {
   die(`参数不对：${error?.message ?? error}`, 2);
 }
 
+// 1b. 派活单（设定23）：先读单子文件、查格式，写错了不用连看板就报
+let paihuoCards = null;
+if (args.command === "paihuo") {
+  if (!existsSync(args.file)) die(`单子文件找不到：${args.file}`, 2);
+  try {
+    paihuoCards = cli.parsePaihuoCards(readFileSync(args.file, "utf8"), args.to);
+  } catch (error) {
+    die(`单子不对：${error?.message ?? error}`, 2);
+  }
+}
+
 // 2. 端口发现：桌宠没运行就短退出
 if (!existsSync(portFile)) die("看板没开（桌宠没运行）。先把桌宠跑起来再用 CLI。");
 let cfg;
@@ -63,6 +74,13 @@ try {
       if (pending.notices?.length || Date.now() >= end) break;
       await new Promise(resolve => setTimeout(resolve, Math.min(2000, Math.max(0, end - Date.now()))));
     } while (true);
+  } else if (args.command === "paihuo") {
+    res = await fetch(`${base}/paihuo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ cards: paihuoCards }),
+      signal: AbortSignal.timeout(5_000),
+    });
   } else if (args.command === "add") {
     res = await fetch(`${base}/add`, {
       method: "POST",
@@ -134,6 +152,9 @@ if (args.command === 'dispatch') {
     const self = fileURLToPath(import.meta.url).split(String.fromCharCode(92)).join('/');
     console.log(cli.formatClaimMessage(data, { cli: self, by: args.payload.by, coding: false }));
   } else console.log(JSON.stringify(data, null, 2));
+} else if (args.command === "paihuo") {
+  const where = [...new Set(data.items.map((i) => i.assignee))].join("、");
+  console.log(args.json ? JSON.stringify(data) : `派活单已写进看板：${data.items.length} 张同一批（${where} 组）。用户点其中任一张左边六个点「一键启动」，会把这批没人领的一起开出去；每张交了报告你再审。`);
 } else if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `✅ 已进看板（${data.id}）`);
 } else if (args.command === "handoff") {

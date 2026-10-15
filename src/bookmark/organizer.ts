@@ -195,6 +195,7 @@ export function cleanText(record: BookmarkRecord, limit = 300): string {
   let t = record.text.replace(/\[图片:[^\]]*\]/g, "[图]").replace(/\s+/g, " ").trim();
   if (t.length > limit) t = `${t.slice(0, limit)}…`;
   if (record.kind === "handoff") t = `（交接单）${t}`;
+  if (record.kind === "dispatch") t = `（派活单）${t}`;
   if (record.detail) {
     const d = record.detail.replace(/\s+/g, " ").trim();
     t += ` ｜详情开头：${d.length > 200 ? `${d.slice(0, 200)}…` : d}`;
@@ -327,7 +328,7 @@ export function buildItemTask(r: BookmarkRecord, attachmentsDir?: string, projec
   }
   let body = r.text.replace(/\[图片:([^\]]*)\]/g, (_m, name: string) => (order.has(name) ? `[图${order.get(name)}]` : "[图]")).trim();
   if (body.length > 4000) body = `${body.slice(0, 4000)}…`;
-  const lines = [r.kind === "handoff" ? "这条是交接单（上一个 AI 窗口没干完留下的活）：" : "这条：", body];
+  const lines = [r.kind === "handoff" ? "这条是交接单（上一个 AI 窗口没干完留下的活）：" : r.kind === "dispatch" ? "这条是派活单（强模型拆好、等别的 AI 窗口领的活）：" : "这条：", body];
   if (r.detail) {
     const d = r.detail.trim();
     lines.push("", "详情：", d.length > 2500 ? `${d.slice(0, 2500)}…` : d);
@@ -356,7 +357,7 @@ export function recordsNeedingNotes(records: BookmarkRecord[], agents: string[],
 function lineOf(r: BookmarkRecord, notes: NoteBook | undefined, limit: number): string {
   const n = freshNote(r, notes);
   if (!n) return cleanText(r, limit);
-  return `${r.kind === "handoff" ? "（交接单）" : ""}【${n.project}】${n.title}｜${n.summary}`;
+  return `${r.kind === "handoff" ? "（交接单）" : r.kind === "dispatch" ? "（派活单）" : ""}【${n.project}】${n.title}｜${n.summary}`;
 }
 
 export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupTask | null {
