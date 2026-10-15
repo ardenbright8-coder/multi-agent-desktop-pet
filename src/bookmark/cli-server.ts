@@ -299,12 +299,15 @@ export function formatClaimMessage(
   reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep"; cooperation?: boolean; bundleId?: string; coordinator?: string; itemFile?: string | null },
   ctx: { cli: string; target?: string; group?: string; by: string; coding: boolean },
 ): string {
-  const run = (rest: string) => `node "${ctx.cli}" ${rest}`;
+  // 长路径只给一次（2026-10-15 省字模板：原来同一条路径每段重复 4 遍），下面命令都写「看板 …」
+  const run = (rest: string) => `看板 ${rest}`;
+  const alias = `「看板」＝ node "${ctx.cli}"，下面的命令照抄时把「看板」换成这一串。`;
   const sleep = reply.mode === "sleep";
   if (reply.cooperation) {
     if (!reply.item) return `【看板派工】本捆没有待做条目，已报告的条目仍待审核；其他窗口在干：${reply.busy.join('、') || '无'}。停止，不删除记录、不自行打开其他助手。`;
     return [
       `【看板派工】${ctx.by} 已占住整捆 ${reply.bundleId}，一次只做当前第 ${reply.position}/${reply.total} 条。`,
+      alias,
       reply.prompt ?? '',
       `先读看板派工技能正本：${ctx.cli.replace(/scripts[\\/]bookmark-cli\.mjs$/, 'skills（AI用看板的说明书）/Agent看板/看板派工.md')}。也可通过 dispatch skill 看板派工 查询。`,
       '执行窗口由用户自己开。不要启动子助手、其他模型进程或后台工兵。只改任务单指定范围，先自测再交报告；不修改原始需求，不伪造用户同意。',
@@ -328,6 +331,7 @@ export function formatClaimMessage(
     return [
       `【看板派活单】你是 ${ctx.by}。领到一张派活单，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
       fileLine,
+      alias,
       "",
       reply.prompt ?? "",
       "",
@@ -346,6 +350,7 @@ export function formatClaimMessage(
   const group = ctx.group ?? (sleep ? reply.item.assignee ?? "" : "");
   const nextCmd = group ? `next --to "${group}" --by ${ctx.by}` : `next ${ctx.target} --by ${ctx.by}`;
   const coding = ctx.coding ? " --coding" : "";
+  const hasNext = Boolean(group) || reply.remaining > 0;
   const where = group
     ? `${group} 组的第 ${reply.position}/${reply.total} 条`
     : reply.total > 1 ? `这一捆的第 ${reply.position}/${reply.total} 条` : "这一条";
@@ -353,6 +358,7 @@ export function formatClaimMessage(
     return [
       `【看板领活 · 🌙 睡觉档】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
       ...(fileLine ? [fileLine] : []),
+      alias,
       "",
       reply.prompt ?? "",
       "",
@@ -373,17 +379,20 @@ export function formatClaimMessage(
   return [
     `【看板领活】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
     ...(fileLine ? [fileLine] : []),
+    alias,
     "",
     reply.prompt ?? "",
     "",
     "—— 干活规矩（所有 AI 都一样）——",
-    `1. 一次只干这一条，${group ? "这组" : "这一捆"}里别的条先别碰。`,
+    `1. 一次只干这一条${group ? "，这组里别的条先别碰" : reply.total > 1 ? "，这一捆里别的条先别碰" : ""}。`,
     "2. 干完先别删：把做了什么、改了哪些、怎么验，讲给用户听，请他自己验一下。",
     "3. 用户亲口说「可以」以后，把他的原话放进 --ok，敲：",
     `   ${run(`done ${id} --by ${ctx.by} --ok "他的原话"`)}`,
-    `4. 删完接着领下一条（${group ? `${group} 组` : "这一捆"}还剩 ${reply.remaining} 条没人领）：`,
-    `   ${run(`${nextCmd}${coding}`)}`,
-    "5. 干不下去、要换人：",
+    // 单独领一条、后面没有了，就不给「接着领下一条」（2026-10-15：原来会叫 AI 再 next 同一条）
+    ...(hasNext
+      ? [`4. 删完接着领下一条（${group ? `${group} 组` : "这一捆"}还剩 ${reply.remaining} 条没人领）：`, `   ${run(`${nextCmd}${coding}`)}`]
+      : []),
+    `${hasNext ? 5 : 4}. 干不下去、要换人：`,
     `   ${run(`release ${id} --by ${ctx.by}`)}`,
   ].join("\n");
 }

@@ -97,6 +97,17 @@ try {
     });
   } else if (args.command === "next" || args.command === "done" || args.command === "release" || args.command === "report") {
     // 领活几件套（设定15、18）：next 领下一条（--to 按组领）/ done 用户说可以才删 / report 睡觉档写报告 / release 放回去
+    // next 直接认屏幕上的号码（2026-10-15）：先按号码查出 id，省掉「先 show 再 next」那一趟
+    if (args.command === "next" && /^\d+$/.test(args.target ?? "")) {
+      const r = await fetch(`${base}/view?mode=show&group=&spec=${args.target}`, {
+        headers: { Authorization: `Bearer ${cfg.token}` },
+        signal: AbortSignal.timeout(5_000),
+      });
+      const v = await r.json().catch(() => ({}));
+      const id = /· id (\S+)/.exec(v?.text ?? "")?.[1];
+      if (!id) die(`看板上找不到第 ${args.target} 条：${v?.error ?? "号码不对"}`);
+      args.target = id;
+    }
     const payload = args.command === "next"
       ? { target: args.target ?? null, group: args.to ?? null, by: args.by, coding: args.coding }
       : { id: args.target, by: args.by, ok: args.ok ?? "", text: args.text ?? "" };

@@ -163,10 +163,10 @@ test("formatClaimMessage 睡觉档：不等用户说可以、写大白话 report
   );
   assert.match(msg, /睡觉档/);
   assert.match(msg, /不用等他说「可以」/);
-  assert.match(msg, /node "X:\/bookmark-cli\.mjs" report id-9 --by PiAgent-3 --text "/);
+  assert.match(msg, /看板 report id-9 --by PiAgent-3 --text "/);
   assert.match(msg, /大白话/);
-  assert.match(msg, /node "X:\/bookmark-cli\.mjs" next --to "Pi Agent" --by PiAgent-3/);
-  assert.match(msg, /node "X:\/bookmark-cli\.mjs" handoff ".*" --to "Pi Agent" --detail "/);
+  assert.match(msg, /看板 next --to "Pi Agent" --by PiAgent-3/);
+  assert.match(msg, /看板 handoff ".*" --to "Pi Agent" --detail "/);
   assert.match(msg, /release id-9 --by PiAgent-3/);
   assert.match(msg, /删东西|动系统/);
   assert.doesNotMatch(msg, / done /, "睡觉档不许 done");

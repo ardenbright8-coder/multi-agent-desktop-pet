@@ -295,8 +295,15 @@ test("formatClaimMessage：所有 AI 看到同一套规矩——一次一条、�
   assert.match(msg, /搜索框看不见/);
   assert.match(msg, /一次只干这一条/);
   assert.match(msg, /用户.*说「可以」/);
-  assert.match(msg, /node "X:\/bookmark-cli\.mjs" done id-9 --by Claude-3 --ok "/);
-  assert.match(msg, /node "X:\/bookmark-cli\.mjs" next b-1 --by Claude-3 --coding/);
+  assert.match(msg, /看板 done id-9 --by Claude-3 --ok "/);
+  assert.match(msg, /看板 next b-1 --by Claude-3 --coding/);
+  assert.equal(msg.split("X:/bookmark-cli.mjs").length - 1, 1, "长路径只给一次，命令都写「看板 …」");
+  const single = formatClaimMessage(
+    { item: { id: "id-1" } as CliRecord, prompt: "单独一条", position: 1, total: 1, remaining: 0, busy: [] },
+    { cli: "X:/bookmark-cli.mjs", target: "id-1", by: "Claude-3", coding: false },
+  );
+  assert.doesNotMatch(single, /看板 next/, "单独领一条、后面没有了，不叫 AI 接着领");
+  assert.match(single, /4\. 干不下去/);
   assert.match(msg, /release id-9 --by Claude-3/);
   const none = formatClaimMessage(
     { item: null, prompt: null, position: 0, total: 2, remaining: 0, busy: ["Claude-1"] },
