@@ -56,8 +56,10 @@ shared（谁都不依赖）
 | `npm run build` | 编译产物 | `dist/` | 每次 `clean.mjs` 清空重建 |
 | `npm run pack:local` | 免安装打包盒 | `release-<版本号>/` | **代码夹里只留最新一个**，旧的挪项目根 `_old（改之前的旧版·回滚用）/旧打包版（…）/` |
 | `npm run dist` / `pack` | 安装包、绿色版 | `release/` | 拷到项目根 `安装包/`、`绿色版（…）/` 再给人用 |
-| `npm test`、`smoke`、`controls` 等 | 隔离数据、截图、报告 | `.runtime/test-runs/<模式>-<时间>/` | 随时可整夹删 |
-| `scripts/verify-*.mjs` | 截图、临时数据 | `.runtime/<名字>/` 或系统临时夹 | 同上 |
+| `npm test`、`smoke`、`controls` 等 | 隔离数据、截图、报告 | `.runtime/test-runs/<模式>-<时间>/` | 每次编译自动清一小时前的（`scripts/sweep-test-temp.mjs`） |
+| `scripts/verify-*.mjs` | 截图、临时数据 | 截图 `.runtime/<名字>/`；临时数据系统临时夹 `bm-<名字>-` 开头 | 临时数据同上自动清，截图每次覆盖 |
+
+🚨 新写测试要建临时数据夹：系统临时夹用 `mkdtemp(join(tmpdir(), "bm-<名字>-"))`（或 `agent-pet-` 开头），或放进 `.runtime/test-runs/`——起成别的名字，编译时就清不到，又会攒成上千个。
 
 以上全部在 `.gitignore` 里，不进 git。
 

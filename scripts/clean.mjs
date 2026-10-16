@@ -1,9 +1,12 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { sweepTestTemp } from "./sweep-test-temp.mjs";
 
 warnIfLivePetRunning();
 rmSync(resolve("dist"), { recursive: true, force: true });
+// 顺手清测试留下的临时夹（一小时前的），规则在 sweep-test-temp.mjs
+sweepTestTemp();
 
 // 桌面图标跑的就是这个 dist/。用户的桌宠开着时清空重建，等于在它脚底下换地板：
 // 半路懒加载的文件（小人图、看板窗口）可能读不到，重建完界面和后台还可能一新一旧。
