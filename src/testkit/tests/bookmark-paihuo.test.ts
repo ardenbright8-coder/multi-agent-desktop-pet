@@ -75,6 +75,16 @@ test("只许动：拆文件清单，没写是 null、写无是空", () => {
   assert.deepEqual(parseAllowedFiles("- 只许动: `src/a.ts`, 「src/c.ts」"), ["src/a.ts", "src/c.ts"]);
   assert.deepEqual(parseAllowedFiles("只许动：无（查资料）"), []);
   assert.equal(parseAllowedFiles("目标：x\n没写那一行"), null);
+  // 2026-10-16 真单子：夹后面括号里的备注带顿号，以前切出「stderr」「报告.md）。」，两张不同夹的单子被判撞车一个都没开
+  assert.deepEqual(parseAllowedFiles("只许动：C:/tmp/建技能前3题/（仅考试jsonl、stderr、报告.md）。"), ["C:/tmp/建技能前3题/"]);
+  assert.deepEqual(parseAllowedFiles("只许动：E:/库/app（Electron本体·带git）/src/a.ts、docs/ (只改标题)"), ["E:/库/app（Electron本体·带git）/src/a.ts", "docs/"]);
+  assert.deepEqual(
+    findFileConflicts([
+      { name: "Pi Agent 01", files: parseAllowedFiles("只许动：C:/tmp/建技能前3题/（仅考试jsonl、stderr、报告.md）。") ?? [] },
+      { name: "Pi Agent 02", files: parseAllowedFiles("只许动：C:/tmp/写规矩3题/（仅考试jsonl、stderr、报告.md）。") ?? [] },
+    ]),
+    [],
+  );
 });
 
 test("撞文件：同一份、一个是另一个所在的夹都算；斜杠方向和大小写不管", () => {

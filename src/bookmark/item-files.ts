@@ -94,10 +94,35 @@ export function parseAllowedFiles(text: string): string[] | null {
   if (line == null) return null;
   const rest = line.replace(/^\s*[-*]?\s*只许动\s*[:：]/, "").trim();
   if (!rest || /^(无|没有|不改文件)/.test(rest)) return [];
-  return rest
-    .split(/[；;，,、]/)
-    .map((s) => s.trim().replace(/^[`「『"']+|[`」』"']+$/g, "").trim())
+  return splitOutsideBrackets(rest)
+    .map((s) =>
+      s
+        .trim()
+        .replace(/[。．]+$/, "")
+        // 「夹/（仅 jsonl、报告.md）」这种跟在斜杠或空格后面的括号是备注，不是路径；夹名自带的「app（本体）」不动
+        .replace(/(^|[\/\\\s])[（(][^（）()]*[）)]$/, "$1")
+        .trim()
+        .replace(/^[`「『"']+|[`」』"']+$/g, "")
+        .trim(),
+    )
     .filter(Boolean);
+}
+
+/** 按「；;，,、」切，括号里的不切（括号里多半是备注，切开会切出「stderr」这种光秃秃的名字，两张单子一比就误判撞车）。 */
+function splitOutsideBrackets(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if ("（(「『".includes(ch)) depth++;
+    else if ("）)」』".includes(ch)) depth = Math.max(0, depth - 1);
+    if (depth === 0 && "；;，,、".includes(ch)) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
 }
 
 function normPath(p: string): string {
