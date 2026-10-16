@@ -754,6 +754,12 @@ function registerIpc(): void {
     return act("搬整捆", () => requireStore().moveBundle(String(raw.bundleId ?? ""), assignee, anchorId, raw.place === "below" ? "below" : "above"));
   });
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => act("删掉一条", () => requireStore().remove(String(id))));
+  // 大标题右键「删除这一捆」（2026-10-16）：整捆在一步里删，Ctrl+Z 一步全回来
+  ipcMain.handle("bookmark:remove-bundle", (_event, bundleId: unknown) => act("删掉一捆", () => {
+    const ids = requireStore().list().filter((r) => r.bundleId === String(bundleId ?? "")).map((r) => r.id);
+    for (const id of ids) requireStore().remove(id);
+    return ids.length;
+  }));
   ipcMain.handle(
     "bookmark:set-assignee",
     (_event, payload: unknown) => {

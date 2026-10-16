@@ -2187,7 +2187,7 @@ function bmBuildBundleHead(bundleId, members, groupKey, bundleNo) {
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "handle";
-  handle.title = "这一捆：启动 Agent / 拆开";
+  handle.title = "这一捆：启动 Agent / 拆开 / 删除";
   handle.textContent = "⠿";
   const openMenu = (event) => {
     event.preventDefault();
@@ -2251,6 +2251,22 @@ function bmShowBundleMenu(bundleId, groupKey, anchor) {
     await bmRefresh();
   });
   menu.appendChild(split);
+  // 删除这一捆（2026-10-16 用户）：小标题右键删一条，大标题右键删一捆；一步删完，Ctrl+Z 一步全回来
+  const drop = document.createElement("button");
+  drop.type = "button";
+  drop.className = "ctx-item danger";
+  drop.textContent = "删除这一捆";
+  drop.addEventListener("click", async () => {
+    bmHideCtxMenu();
+    try {
+      const n = await window.bookmark.removeBundle(bundleId);
+      bmToast(`删了这一捆 ${n} 条（小文件也删了）；删错了按 Ctrl+Z`, 3500);
+    } catch (error) {
+      bmShowError("删失败了： " + bmErrorText(error));
+    }
+    await bmRefresh();
+  });
+  menu.appendChild(drop);
   menu.hidden = false;
   const panelRect = document.getElementById("app").getBoundingClientRect();
   const rect = anchor.getBoundingClientRect();
@@ -3052,12 +3068,16 @@ function bmInitClipboard() {
       bmPickTask(null);
       return;
     }
-    // 选中一条按 Delete＝删掉（2026-10-15 用户）；它那份小文件跟着删，Ctrl+Z 能撤回。捆不整捆删，免得误删一片。
-    if (event.key === "Delete" && !bmTyping() && !bmCarry && bmPickedTaskId) {
-      const el = document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`);
+    // 按 Delete＝删掉一条，跟 Ctrl+X 一个认法：点过选中的那条优先，没选中就删鼠标指着的那条，不用先点
+    // （2026-10-16 用户：点了常点进字里改字）。它那份小文件跟着删，Ctrl+Z 能撤回。整捆删走大标题右键「删除这一捆」。
+    const pickedLive = bmPickedTaskId && document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`) ? bmPickedTaskId : null;
+    const delId = pickedLive || bmHoverTaskId;
+    if (event.key === "Delete" && !bmTyping() && !bmCarry && delId) {
+      const el = document.querySelector(`.task[data-id="${CSS.escape(delId)}"]`);
       if (!el) return;
       event.preventDefault();
-      const id = bmPickedTaskId;
+      const id = delId;
+      bmHoverTaskId = null;
       bmPickTask(null);
       void bmRemove(id).then((ok) => { if (ok) bmToast("删了这条（它的小文件也删了）；删错了按 Ctrl+Z", 3500); });
       return;

@@ -7,7 +7,7 @@
 //   ⑥ 点号码：复制这条单独文件的路径，文件里就是这条；删了这条，文件跟着没了
 //   ⑦ 点标题进了改字、没选中字时按 Ctrl+X：剪的是这一整条
 //   ⑧ 号码全板统一：分组页一路往下没有重号；show 不写组名也读得到
-//   ⑨ 选中按 Delete 删掉、小文件跟着没；Ctrl+Z 都回来
+//   ⑨ 选中按 Delete 删掉、小文件跟着没；Ctrl+Z 都回来；⑨b 不用点，鼠标指着按 Delete 删指着的那条；⑨c 大标题右键删除这一捆、Ctrl+Z 全回来
 //   ⑩ 挑 Pi 模型（2026-10-16）：菜单列出 Pi 能挑的、默认选上次的；挑了一键启动＝替他按 Ctrl+E（假设置文件里换了、思考档 max）；
 //      命令行 launch <id> --model 跟六个点同一份
 // 用法：npm run build 之后 node scripts/verify-bookmark-paihuo.mjs
@@ -206,6 +206,50 @@ try {
   check("⑨ 它的小文件跟着没了", Boolean(await waitFor(() => !existsSync(dPath), 4000)));
   await page.keyboard.press("Control+z");
   check("⑨ Ctrl+Z：条目和小文件都回来了", Boolean(await waitFor(async () => (await page.evaluate(async (id) => (await window.bookmark.list()).some((r) => r.id === id), D.id)) && existsSync(dPath), 4000)));
+
+  // ⑨b 不用点：没选中时鼠标指着哪条按 Delete 就删哪条，跟 Ctrl+X 一个认法（2026-10-16 用户）
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => bmRefresh());
+  const listNow = await page.evaluate(() => window.bookmark.list());
+  const P = listNow.find((r) => r.text === "撞乙");
+  const H = listNow.find((r) => r.text === "撞甲");
+  await page.locator(`${T(H)} .num-col`).hover();
+  await page.keyboard.press("Delete");
+  const hoverGone = await waitFor(async () => {
+    const ids = (await page.evaluate(() => window.bookmark.list())).map((r) => r.id);
+    return !ids.includes(H.id) && ids.includes(P.id);
+  });
+  check("⑨b 没点、鼠标指着按 Delete：删的是指着的那条，别的还在", Boolean(hoverGone));
+  await page.keyboard.press("Control+z");
+  check("⑨b Ctrl+Z：指着删的那条回来了", Boolean(await waitFor(async () => (await page.evaluate(async (id) => (await window.bookmark.list()).some((r) => r.id === id), H.id)), 4000)));
+  await page.keyboard.press("Escape");
+  await page.locator("#tab-groups").hover();
+  const before = (await page.evaluate(() => window.bookmark.list())).length;
+  await page.keyboard.press("Delete");
+  await new Promise((r) => setTimeout(r, 600));
+  check("⑨b 鼠标不在条目上、也没选中：按 Delete 什么都不删", (await page.evaluate(() => window.bookmark.list())).length === before);
+
+  // ⑨c 大标题右键「删除这一捆」：整捆删掉，Ctrl+Z 一步全回来
+  const b1 = await page.evaluate(() => window.bookmark.add({ text: "捆删甲", assignee: "Claude" }));
+  const b2 = await page.evaluate(() => window.bookmark.add({ text: "捆删乙", assignee: "Claude" }));
+  await page.evaluate(([a, b]) => window.bookmark.bundle(a, b), [b2.id, b1.id]);
+  await page.evaluate(() => bmRefresh());
+  const bid = (await page.evaluate(() => window.bookmark.list())).find((r) => r.id === b1.id)?.bundleId;
+  await page.locator(`.bundle-head[data-bundle="${bid}"]`).click({ button: "right" });
+  const bMenu = await page.locator("#ctx-menu").innerText();
+  await page.locator("#ctx-menu .ctx-item", { hasText: "删除这一捆" }).click();
+  const bothGone = await waitFor(async () => {
+    const ids = (await page.evaluate(() => window.bookmark.list())).map((r) => r.id);
+    return !ids.includes(b1.id) && !ids.includes(b2.id);
+  });
+  check("⑨c 大标题右键有「删除这一捆」，点了整捆删掉", Boolean(bid) && /删除这一捆/.test(bMenu) && Boolean(bothGone), bMenu.replace(/\s+/g, " "));
+  await page.keyboard.press("Control+z");
+  check("⑨c Ctrl+Z：一捆两条一步全回来、还是一捆", Boolean(await waitFor(async () => {
+    const l = await page.evaluate(() => window.bookmark.list());
+    const x = l.find((r) => r.id === b1.id);
+    const y = l.find((r) => r.id === b2.id);
+    return x && y && x.bundleId && x.bundleId === y.bundleId;
+  }, 4000)));
   await page.screenshot({ path: join(out, "结束.png") });
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {

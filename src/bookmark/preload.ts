@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("bookmark", {
   /** into：捆号＝放进这捆，null＝单独放（从捆里拆出来），不传＝按两边邻居推断（老办法）。 */
   move: (id: string, anchorId: string, place: "above" | "below", into?: string | null) => ipcRenderer.invoke("bookmark:move", { id, anchorId, place, into }),
   remove: (id: string) => ipcRenderer.invoke("bookmark:remove", id),
+  removeBundle: (bundleId: string) => ipcRenderer.invoke("bookmark:remove-bundle", bundleId) as Promise<number>,
   /** 跨组一步到位：改派到 assignee（null＝交接单专区／待定）再挪到锚点旁边。 */
   relocate: (id: string, assignee: string | null, anchorId: string | null, place: "above" | "below", into?: string | null) =>
     ipcRenderer.invoke("bookmark:relocate", { id, assignee, anchorId, place, into }),
