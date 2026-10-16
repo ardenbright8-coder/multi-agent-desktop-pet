@@ -562,6 +562,21 @@ body {
 
 .ctx-none { font-size: 12.5px; color: rgba(47, 62, 44, 0.45); padding: 2px 8px 4px; }
 
+/* 一键启动挑 Pi 模型（2026-10-16）：一排小钮，选中的变绿 */
+.ctx-models { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 4px 6px; max-width: 260px; }
+.ctx-models .ctx-title { flex-basis: 100%; padding: 2px 4px 2px; }
+.ctx-model {
+  border: 1px solid rgba(111, 143, 95, 0.35);
+  background: transparent;
+  color: #31402f;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ctx-model:hover { background: rgba(111, 143, 95, 0.14); }
+.ctx-model.on { background: rgba(111, 143, 95, 0.85); border-color: transparent; color: #fff; }
+
 ::-webkit-scrollbar { width: 8px; }
 
 ::-webkit-scrollbar-thumb { background: rgba(47, 62, 44, 0.22); border-radius: 4px; }

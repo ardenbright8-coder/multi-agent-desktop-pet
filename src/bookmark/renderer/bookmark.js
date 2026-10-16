@@ -2081,15 +2081,47 @@ function bmDispatchLaunchable(record) {
   return mates.filter((r) => !r.claimedBy && !r.report).slice(0, 3);
 }
 
+/** 这批里有 Pi 的单子：列 Pi 能挑的模型，默认选上次挑的（Pi 自己记着的那个）。挑了＝开窗前替用户在 Pi 里按一次 Ctrl+E。 */
+function bmPiModelPicker(state) {
+  const box = document.createElement("div");
+  box.className = "ctx-models";
+  const title = document.createElement("div");
+  title.className = "ctx-title";
+  title.textContent = "Pi 用哪个模型（思考档开最高）";
+  box.append(title);
+  void window.bookmark.piModels().then(({ models, current }) => {
+    state.model = current;
+    for (const m of models) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "ctx-model";
+      chip.dataset.model = m;
+      chip.textContent = m.slice(m.lastIndexOf("/") + 1);
+      chip.title = m;
+      chip.classList.toggle("on", m === current);
+      chip.addEventListener("click", (event) => {
+        event.stopPropagation();
+        state.model = m;
+        for (const c of box.querySelectorAll(".ctx-model")) c.classList.toggle("on", c === chip);
+      });
+      box.append(chip);
+    }
+  }).catch(() => undefined);
+  return box;
+}
+
 function bmBatchLaunchOptions(record) {
-  const n = bmDispatchLaunchable(record).length;
+  const cards = bmDispatchLaunchable(record);
+  const n = cards.length;
   if (!n) {
     const none = document.createElement("div");
     none.className = "ctx-none";
     none.textContent = "这一批都有人领了";
     return [none];
   }
-  return [
+  const state = { model: null };
+  const hasPi = cards.some((c) => (c.assignee ?? "").replace(/\s+/g, "").toLowerCase() === "piagent");
+  const buttons = [
     { label: `一键启动 ${n} 个 · 带编程`, coding: true },
     { label: `一键启动 ${n} 个 · 普通`, coding: false },
   ].map((opt) => {
@@ -2101,7 +2133,7 @@ function bmBatchLaunchOptions(record) {
       bmHideCtxMenu();
       bmToast(n > 1 ? `一个接一个开 ${n} 个窗口，每个贴好再开下一个：这半分钟别点别的窗口` : "正在开窗口：别点别的窗口", 8000);
       try {
-        const res = await window.bookmark.launchBatch(record.id, opt.coding);
+        const res = await window.bookmark.launchBatch(record.id, opt.coding, hasPi ? state.model : null);
         bmToast(bmBatchLaunchText(res), 12000);
       } catch (error) {
         bmShowError(bmErrorText(error));
@@ -2110,6 +2142,7 @@ function bmBatchLaunchOptions(record) {
     });
     return item;
   });
+  return hasPi ? [bmPiModelPicker(state), ...buttons] : buttons;
 }
 
 /** 一键启动的结果说成一句话。 */
@@ -2119,6 +2152,7 @@ function bmBatchLaunchText(res) {
     return `一个都没开：${what}。改一下单子的「只许动」，或者把这两张合成一张再启动`;
   }
   const parts = [];
+  if (res.model) parts.push(`Pi 换成 ${res.model.slice(res.model.lastIndexOf("/") + 1)}（思考档最高）`);
   if (res.launched.length) parts.push(`开了 ${res.launched.map((l) => `${l.label}（${l.name}）`).join("、")}，启动句贴进去了，你每个看一眼再按回车`);
   if (res.skipped.length) parts.push(`没开：${res.skipped.map((s) => `${s.name}（${s.reason}）`).join("、")}`);
   if (res.missing.length) parts.push(`${res.missing.join("、")} 没写「只许动」，没法查撞没撞文件`);

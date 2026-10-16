@@ -81,6 +81,24 @@ try {
       body: JSON.stringify({ cards: paihuoCards }),
       signal: AbortSignal.timeout(5_000),
     });
+  } else if (args.command === "launch") {
+    // 替用户点一键启动（2026-10-16）：号码先换成 id；一个个开要等贴完，最多给 3 分钟
+    if (/^\d+$/.test(args.target)) {
+      const r = await fetch(`${base}/view?mode=show&group=&spec=${args.target}`, {
+        headers: { Authorization: `Bearer ${cfg.token}` },
+        signal: AbortSignal.timeout(5_000),
+      });
+      const v = await r.json().catch(() => ({}));
+      const id = /· id (\S+)/.exec(v?.text ?? "")?.[1];
+      if (!id) die(`看板上找不到第 ${args.target} 条：${v?.error ?? "号码不对"}`);
+      args.target = id;
+    }
+    res = await fetch(`${base}/launch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ id: args.target, model: args.model ?? null, coding: args.coding }),
+      signal: AbortSignal.timeout(180_000),
+    });
   } else if (args.command === "add") {
     res = await fetch(`${base}/add`, {
       method: "POST",
@@ -166,6 +184,8 @@ if (args.command === 'dispatch') {
 } else if (args.command === "paihuo") {
   const where = [...new Set(data.items.map((i) => i.assignee))].join("、");
   console.log(args.json ? JSON.stringify(data) : `派活单已写进看板：${data.items.length} 张同一批（${where} 组）。用户点其中任一张左边六个点「一键启动」，会把这批没人领的一起开出去；每张交了报告你再审。`);
+} else if (args.command === "launch") {
+  console.log(args.json ? JSON.stringify(data) : cli.formatLaunchResult(data));
 } else if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `✅ 已进看板（${data.id}）`);
 } else if (args.command === "handoff") {

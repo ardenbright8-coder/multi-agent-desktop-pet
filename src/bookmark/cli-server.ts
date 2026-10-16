@@ -73,6 +73,16 @@ export interface CliStoreAdapter {
   addDispatchBatch?(cards: { text: string; detail: string | null; assignee: string }[]): CliRecord[];
   /** 一条一份小文件（设定24）：条目 id → 完整路径；没有就抛错。 */
   itemFile?(id: string): string;
+  /** 命令行 launch（2026-10-16）：替用户点这批的「一键启动」；model＝开窗前替他在 Pi 里换成哪个。 */
+  launchBatch?(id: string, coding: boolean, model: string | null): Promise<{
+    launched: { name: string; label: string }[];
+    conflicts: { a: string; b: string; files: string[] }[];
+    missing: string[];
+    skipped: { name: string; reason: string }[];
+    model: string | null;
+  }>;
+  /** Pi 能挑的模型和上次挑的那个。 */
+  piModels?(): { models: string[]; current: string | null };
   /** 按号码读（2026-10-13）：组名单（跟看板同序）、AI 写的小标题、捆名。没接就只能 list --json。 */
   boardNames?(): BoardNames & { agents: string[] };
 }
@@ -90,7 +100,9 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch" | "show" | "paihuo";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch" | "show" | "paihuo" | "launch";
+  /** launch 的 Pi 模型（「供应商/模型」，不写就用 Pi 上次记的）。 */
+  model?: string;
   /** paihuo 的单子文件路径（JSON，CLI 脚本自己读）。 */
   file?: string;
   /** show 的组名和号码（屏幕上看到的号：7、7-9、捆2）。 */
@@ -122,7 +134,8 @@ const CLI_USAGE =
   + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id> | '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
   + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名 | '
-  + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）';
+  + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）| '
+  + 'launch <号码> [--model 供应商/模型] [--coding]（替用户点这批的一键启动；他说「直接开」才用）';
 
 /** 解析命令行参数。add/handoff 的位置参数拼接为内容；--to 省略 = 进待定区。参数不对抛错（消息是给 agent 看的用法）。 */
 export function parseCliArgs(argv: string[]): CliArgs {
@@ -139,6 +152,24 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
     if (!file) throw new Error("paihuo 缺 --file 单子.json（一批 1～3 张，格式见 AGENT_INTEGRATION.md 的派活单节）");
     return { command, file, to, json: argv.includes("--json"), attach: [] };
+  }
+  if (command === "launch") {
+    let target: string | undefined;
+    let model: string | undefined;
+    let coding = false;
+    for (let i = 1; i < argv.length; i++) {
+      const flag = argv[i];
+      if (flag === "--model") {
+        model = argv[++i];
+        if (!model) throw new Error("--model 后面要跟模型（Pi 里 Ctrl+E 能挑的那几个，写法 供应商/模型）");
+      } else if (flag === "--coding") coding = true;
+      else if (flag === "--json") continue;
+      else if (flag.startsWith("--")) throw new Error(`不认识的参数 ${flag}。写法：launch <号码> [--model 供应商/模型] [--coding]`);
+      else if (target == null) target = flag;
+      else throw new Error(`多了一个参数 ${flag}。写法：launch <号码> [--model 供应商/模型] [--coding]`);
+    }
+    if (!target) throw new Error("launch 后面要跟这批里任一张的号码（或条目 id）：launch 18 --model openai-codex/gpt-6.1-sol");
+    return { command, target, model, coding, json: argv.includes("--json"), attach: [] };
   }
   if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
   if (command === "show") {
@@ -558,7 +589,46 @@ export function handleCliRequest(
   if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report")) {
     return handleClaimRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
-  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /remove | /next | /done | /release | /report | GET /list | /view）" } };
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /launch | /remove | /next | /done | /release | /report | GET /list | /view）" } };
+}
+
+/** 命令行 launch（2026-10-16）：开窗要等一个个贴完，是异步的，单独一个口子；token 照样查。 */
+export async function handleCliLaunch(body: unknown, authHeader: string | undefined, ctx: CliRequestContext): Promise<CliReply> {
+  if (authHeader !== `Bearer ${ctx.token}`) return { status: 403, body: { ok: false, error: "token 不对（CLI 会自动读 cli-port.json，别手拼）" } };
+  if (!ctx.store.launchBatch) return { status: 501, body: { ok: false, error: "看板还没接上 launch（看板里按 Ctrl+R 换新版）" } };
+  const raw = (body ?? {}) as Record<string, unknown>;
+  const id = String(raw.id ?? "").trim();
+  if (!id) return { status: 400, body: { ok: false, error: "缺条目 id" } };
+  try {
+    const res = await ctx.store.launchBatch(id, Boolean(raw.coding), raw.model ? String(raw.model) : null);
+    try {
+      ctx.onChanged?.();
+    } catch {
+      /* 刷新失败无所谓 */
+    }
+    return { status: 200, body: { ok: true, ...res } };
+  } catch (error) {
+    return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
+/** launch 的结果说成一句给调度看的话（跟看板弹的那句同一个意思）。 */
+export function formatLaunchResult(res: {
+  launched: { name: string; label: string }[];
+  conflicts: { a: string; b: string; files: string[] }[];
+  missing: string[];
+  skipped: { name: string; reason: string }[];
+  model: string | null;
+}): string {
+  if (res.conflicts.length) {
+    return `一个都没开：${res.conflicts.map((c) => `${c.a} 和 ${c.b} 都要动 ${c.files.join("、")}`).join("；")}。改单子的「只许动」或合成一张再开`;
+  }
+  const parts: string[] = [];
+  if (res.model) parts.push(`Pi 换成 ${res.model}（思考档最高）`);
+  if (res.launched.length) parts.push(`开了 ${res.launched.map((l) => `${l.label}（${l.name}）`).join("、")}，启动句已贴、没按回车：跟用户说每个窗口看一眼再按回车`);
+  if (res.skipped.length) parts.push(`没开：${res.skipped.map((s) => `${s.name}（${s.reason}）`).join("、")}`);
+  if (res.missing.length) parts.push(`${res.missing.join("、")} 没写「只许动」，没法查撞没撞文件`);
+  return parts.join("。") || "这一批都有人领了，没开新窗口";
 }
 
 /** 领活三件套。store 抛的错（不是你领的、缺用户原话、找不到）原样回给 AI，400。 */
@@ -683,7 +753,7 @@ export function startBookmarkCliServer(deps: BookmarkCliDeps): BookmarkCliServer
       req.on("data", (chunk) => {
         raw += chunk;
       });
-      req.on("end", () => {
+      req.on("end", async () => {
         try {
           let body: unknown = undefined;
           if (raw) {
@@ -695,7 +765,10 @@ export function startBookmarkCliServer(deps: BookmarkCliDeps): BookmarkCliServer
               return;
             }
           }
-          const reply = handleCliRequest(req.method ?? "GET", req.url ?? "/", body, req.headers.authorization, ctx);
+          const isLaunch = req.method === "POST" && (req.url ?? "").split("?")[0] === "/launch";
+          const reply = isLaunch
+            ? await handleCliLaunch(body, req.headers.authorization, ctx)
+            : handleCliRequest(req.method ?? "GET", req.url ?? "/", body, req.headers.authorization, ctx);
           res.writeHead(reply.status, { "Content-Type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(reply.body));
         } catch (error) {

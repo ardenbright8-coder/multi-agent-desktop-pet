@@ -6,8 +6,63 @@ import { join } from "node:path";
 import test from "node:test";
 import { BookmarkStore } from "../../bookmark/store";
 import { findFileConflicts, formatItemFile, itemFilePath, parseAllowedFiles, syncItemFiles } from "../../bookmark/item-files";
-import { formatClaimMessage, handleCliRequest, parseCliArgs, parsePaihuoCards } from "../../bookmark/cli-server";
+import { formatClaimMessage, formatLaunchResult, handleCliLaunch, handleCliRequest, parseCliArgs, parsePaihuoCards } from "../../bookmark/cli-server";
 import { formatBrief, indexBoard } from "../../bookmark/board-index";
+import { readPiModels, setPiModel } from "../../bookmark/pi-model";
+
+// 2026-10-16：一键启动挑 Pi 模型＝替用户按一次 Ctrl+E；调度说「直接开」用命令行 launch
+test("挑 Pi 模型：记成上次用的、思考档开最高、别的设置原样留、名单外的拒收", () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-pet-pimodel-"));
+  try {
+    const path = join(root, "settings.json");
+    writeFileSync(path, JSON.stringify({
+      theme: "dark",
+      defaultProvider: "openai-codex",
+      defaultModel: "gpt-6.1-sol",
+      defaultThinkingLevel: "xhigh",
+      enabledModels: ["commandcode/z-ai/glm-5.3-flash", "openai-codex/gpt-6.1-sol"],
+      modelThinkingLevels: { "commandcode/z-ai/glm-5.3-flash": "low" },
+    }));
+    assert.deepEqual(readPiModels(path), { models: ["commandcode/z-ai/glm-5.3-flash", "openai-codex/gpt-6.1-sol"], current: "openai-codex/gpt-6.1-sol" });
+    setPiModel("commandcode/z-ai/glm-5.3-flash", path);
+    const s = JSON.parse(readFileSync(path, "utf8"));
+    assert.equal(s.defaultProvider, "commandcode");
+    assert.equal(s.defaultModel, "z-ai/glm-5.3-flash");
+    assert.equal(s.defaultThinkingLevel, "max");
+    assert.equal(s.modelThinkingLevels["commandcode/z-ai/glm-5.3-flash"], "max");
+    assert.equal(s.theme, "dark");
+    assert.equal(readPiModels(path).current, "commandcode/z-ai/glm-5.3-flash");
+    assert.throws(() => setPiModel("xai/没这个", path), /没有「xai\/没这个」/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("命令行 launch：参数、token、结果说成一句话", async () => {
+  assert.deepEqual(parseCliArgs(["launch", "18", "--model", "xai/grok-4.6"]), { command: "launch", target: "18", model: "xai/grok-4.6", coding: false, json: false, attach: [] });
+  assert.equal(parseCliArgs(["launch", "18", "--coding"]).coding, true);
+  assert.throws(() => parseCliArgs(["launch"]), /号码/);
+  assert.throws(() => parseCliArgs(["launch", "18", "--model"]), /--model/);
+  const calls: unknown[] = [];
+  const store = {
+    add: () => { throw new Error("不该调"); },
+    list: () => [],
+    remove: () => false,
+    launchBatch: async (id: string, coding: boolean, model: string | null) => {
+      calls.push([id, coding, model]);
+      return { launched: [{ name: "第 18 条（Pi Agent）", label: "PiAgent-1" }], conflicts: [], missing: [], skipped: [], model };
+    },
+  };
+  const ctx = { token: "t", store };
+  assert.equal((await handleCliLaunch({ id: "x" }, "Bearer 错", ctx)).status, 403);
+  const ok = await handleCliLaunch({ id: "x", model: "xai/grok-4.6" }, "Bearer t", ctx);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(calls, [["x", false, "xai/grok-4.6"]]);
+  const text = formatLaunchResult(ok.body as Parameters<typeof formatLaunchResult>[0]);
+  assert.match(text, /Pi 换成 xai\/grok-4\.6/);
+  assert.match(text, /开了 PiAgent-1/);
+  assert.match(text, /没按回车/);
+});
 
 function tempStore(): { store: BookmarkStore; root: string } {
   const root = mkdtempSync(join(tmpdir(), "agent-pet-paihuo-"));

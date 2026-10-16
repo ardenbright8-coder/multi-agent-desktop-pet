@@ -8,8 +8,11 @@
 //   ⑦ 点标题进了改字、没选中字时按 Ctrl+X：剪的是这一整条
 //   ⑧ 号码全板统一：分组页一路往下没有重号；show 不写组名也读得到
 //   ⑨ 选中按 Delete 删掉、小文件跟着没；Ctrl+Z 都回来
+//   ⑩ 挑 Pi 模型（2026-10-16）：菜单列出 Pi 能挑的、默认选上次的；挑了一键启动＝替他按 Ctrl+E（假设置文件里换了、思考档 max）；
+//      命令行 launch <id> --model 跟六个点同一份
 // 用法：npm run build 之后 node scripts/verify-bookmark-paihuo.mjs
-// 注意：独立 AGENT_PET_HUB_HOME 起实例（不真开任何 AI 窗口）；会动系统剪贴板，开头存、结尾还原。
+// 注意：独立 AGENT_PET_HUB_HOME 起实例（不真开任何 AI 窗口）；Pi 设置用 BOOKMARK_PI_SETTINGS 指到假文件，不碰真的；
+//      会动系统剪贴板，开头存、结尾还原。
 
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,6 +28,14 @@ const cliScript = join(root, "scripts", "bookmark-cli.mjs");
 const home = mkdtempSync(join(tmpdir(), "bm-paihuo-"));
 const out = join(root, ".runtime", "paihuo");
 mkdirSync(out, { recursive: true });
+const piSettings = join(home, "pi-settings.json");
+writeFileSync(piSettings, JSON.stringify({
+  defaultProvider: "openai-codex",
+  defaultModel: "gpt-6.1-sol",
+  defaultThinkingLevel: "xhigh",
+  enabledModels: ["commandcode/z-ai/glm-5.3-flash", "openai-codex/gpt-6.1-sol"],
+}), "utf8");
+const piNow = () => JSON.parse(readFileSync(piSettings, "utf8"));
 
 let failed = 0;
 function check(name, ok, detail = "") {
@@ -32,7 +43,7 @@ function check(name, ok, detail = "") {
   if (!ok) failed += 1;
 }
 function runCli(args) {
-  const r = spawnSync(process.execPath, [cliScript, ...args], { encoding: "utf8", env: { ...process.env, AGENT_PET_HUB_HOME: home } });
+  const r = spawnSync(process.execPath, [cliScript, ...args], { encoding: "utf8", env: { ...process.env, AGENT_PET_HUB_HOME: home, BOOKMARK_PI_SETTINGS: piSettings } });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 function writeCards(name, cards) {
@@ -54,7 +65,7 @@ async function waitFor(fn, ms = 8000) {
 let app;
 let saved = null;
 try {
-  app = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(root, "dist/app.js")], env: { ...process.env, AGENT_PET_HUB_HOME: home } });
+  app = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(root, "dist/app.js")], env: { ...process.env, AGENT_PET_HUB_HOME: home, BOOKMARK_PI_SETTINGS: piSettings } });
   let page;
   const end = Date.now() + 15000;
   while (!page && Date.now() < end) {
@@ -99,6 +110,14 @@ try {
   const menu = await page.locator("#ctx-menu").innerText();
   check("② 六个点里是「一键启动 3 个 · 带编程 / 普通」，没有单开的「启动 Agent」", /一键启动 3 个 · 带编程/.test(menu) && /一键启动 3 个 · 普通/.test(menu) && !/启动 Agent/.test(menu), menu.replace(/\s+/g, " "));
 
+  // ⑩ 挑 Pi 模型：默认选上次的；挑另一个再一键启动
+  const chips = page.locator("#ctx-menu .ctx-model");
+  await waitFor(async () => (await chips.count()) === 2);
+  check("⑩ 菜单列出 Pi 能挑的模型、默认选上次那个",
+    /Pi 用哪个模型/.test(await page.locator("#ctx-menu").innerText()) && (await page.locator('#ctx-menu .ctx-model.on').getAttribute("data-model")) === "openai-codex/gpt-6.1-sol");
+  await page.locator('#ctx-menu .ctx-model[data-model="commandcode/z-ai/glm-5.3-flash"]').click();
+  check("⑩ 点一个模型：菜单不收起、它变成选中", await page.locator("#ctx-menu").isVisible() && (await page.locator('#ctx-menu .ctx-model.on').getAttribute("data-model")) === "commandcode/z-ai/glm-5.3-flash");
+
   // ③ 一键启动（测试实例不真开）
   await page.locator("#ctx-menu .ctx-item", { hasText: "一键启动 3 个 · 普通" }).click();
   const toast = await waitFor(async () => {
@@ -108,6 +127,19 @@ try {
   // 号码全板统一：Claude 组在前，丙是第 01 条；Pi 组的甲乙接着是 02、03
   check("③ 一键启动：报出三张各在自己的组（第 01 条 Claude，第 02、03 条 Pi Agent）",
     /第 01 条（Claude）/.test(toast) && /第 02 条（Pi Agent）/.test(toast) && /第 03 条（Pi Agent）/.test(toast), toast);
+  const pi1 = piNow();
+  check("⑩ 一键启动替他换了 Pi 模型、思考档最高（假设置文件）",
+    /Pi 换成 glm-5\.3-flash/.test(toast) && pi1.defaultProvider === "commandcode" && pi1.defaultModel === "z-ai/glm-5.3-flash" && pi1.defaultThinkingLevel === "max", JSON.stringify(pi1).slice(0, 120));
+
+  // ⑩ 命令行 launch：跟六个点同一份
+  runCli(["paihuo", "--file", writeCards("命令行开.json", [{ text: "命令行开甲", detail: "只许动：docs/z" }])]);
+  const Z = (await page.evaluate(() => window.bookmark.list())).find((r) => r.text === "命令行开甲");
+  const viaCli = runCli(["launch", Z.id, "--model", "openai-codex/gpt-6.1-sol"]);
+  check("⑩ 命令行 launch --model：开了、换了模型、提醒没按回车",
+    viaCli.code === 0 && /Pi 换成 openai-codex\/gpt-6\.1-sol/.test(viaCli.out) && /开了/.test(viaCli.out) && /没按回车/.test(viaCli.out) && piNow().defaultModel === "gpt-6.1-sol", viaCli.out.trim());
+  const wrong = runCli(["launch", Z.id, "--model", "xai/没这个"]);
+  check("⑩ 命令行 launch 写错模型：报能挑哪几个、不开", wrong.code !== 0 && /能挑的/.test(wrong.out), wrong.out.trim());
+  await page.evaluate(() => bmRefresh());
 
   // ④ 撞文件
   runCli(["paihuo", "--file", writeCards("撞了.json", [

@@ -65,13 +65,16 @@ contextBridge.exposeInMainWorld("bookmark", {
   launchLine: (target: string, group: string, coding: boolean) =>
     ipcRenderer.invoke("bookmark:launch-line", { target, group, coding }) as Promise<{ line: string; label: string; opened: string | null; freshWindow: boolean; pasting: boolean; problem: string | null }>,
   // 派活单一键启动（设定23）：同批没人领的一个接一个开，撞文件就一个不开。
-  launchBatch: (id: string, coding: boolean) =>
-    ipcRenderer.invoke("bookmark:launch-batch", { id, coding }) as Promise<{
+  // model：这批有 Pi 的单子时，开窗前替用户在 Pi 里换成它（2026-10-16）。
+  launchBatch: (id: string, coding: boolean, model: string | null = null) =>
+    ipcRenderer.invoke("bookmark:launch-batch", { id, coding, model }) as Promise<{
       launched: { name: string; label: string; opened: string; pasting: boolean }[];
       conflicts: { a: string; b: string; files: string[] }[];
       missing: string[];
       skipped: { name: string; reason: string }[];
+      model: string | null;
     }>,
+  piModels: () => ipcRenderer.invoke("bookmark:pi-models") as Promise<{ models: string[]; current: string | null }>,
   // 点号码：复制这条那份单独小文件的路径（设定24）。
   itemFile: (id: string) => ipcRenderer.invoke("bookmark:item-file", id) as Promise<{ path: string; line: string }>,
   // 启动 Agent 替用户贴完启动句（或没贴成）的结果。

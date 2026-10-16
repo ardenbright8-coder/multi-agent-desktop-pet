@@ -34,6 +34,7 @@ import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./laun
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { imagesForAgent } from "./inline-images";
 import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
+import { readPiModels, setPiModel } from "./pi-model";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
   activeModel, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
@@ -362,6 +363,9 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
         // 派活单（设定23）：强模型一次写 1～3 张；没说组默认 Pi 组（2026-10-15 用户：派我主要就是让它干这个）。
         addDispatchBatch: (cards) => requireStore().addDispatchBatch(cards.map((c) => ({ ...c, assignee: resolveGroup(c.assignee) }))),
         itemFile: (id) => itemFileFor(id),
+        // 命令行 launch（2026-10-16）：调度说「直接开」时替用户点一键启动，跟六个点同一份
+        launchBatch: (id, coding, model) => launchDispatchBatch(id, coding, model),
+        piModels: () => readPiModels(),
         done: (id, by, userOk) => {
           const record = requireStore().done(id, by, userOk);
           log.记(`${by} 干完删掉「${record.text.slice(0, 30)}」（用户原话：${userOk.slice(0, 60)}）`, "cli");
@@ -994,33 +998,16 @@ function registerIpc(): void {
   // 一个接一个开：等上一个贴好再开下一个（同时开会贴串）。开之前查两张单子「只许动」有没有撞文件，撞了一个都不开。
   // 🚨 照旧只贴不按回车，回车用户自己按。
   ipcMain.handle("bookmark:launch-batch", async (_event, payload: unknown) => {
-    const raw = (payload ?? {}) as { id?: unknown; coding?: unknown };
-    const cards = requireStore().dispatchLaunchable(String(raw.id ?? ""));
-    const rows = boardRows();
-    const listed = cards.map((card) => ({ card, name: rowName(rows, card), files: parseAllowedFiles(`${card.text}\n${card.detail ?? ""}`) }));
-    const missing = listed.filter((c) => c.files === null).map((c) => c.name);
-    const conflicts = findFileConflicts(listed.map((c) => ({ name: c.name, files: c.files ?? [] })));
-    const launched: { name: string; label: string; opened: string; pasting: boolean }[] = [];
-    const skipped: { name: string; reason: string }[] = [];
-    if (conflicts.length) return { launched, conflicts, missing, skipped };
-    for (const { card, name } of listed) {
-      const group = card.assignee ?? "";
-      if (!agentShortcutFor(group)) {
-        skipped.push({ name, reason: "认不出这个组该开哪个软件" });
-        continue;
-      }
-      const label = nextWindowLabel(group);
-      const line = `${LAUNCH_HEAD}node "${bookmarkCliScriptPath()}" next ${card.id} --by ${label}${raw.coding ? " --coding" : ""}`;
-      clipboard.writeText(line);
-      log.记(`一键启动：${label} ← ${card.id}${raw.coding ? "（带编程）" : ""}`, "cli");
-      const res = await openAgentShortcut(group, line, label, true);
-      if (!res.opened) {
-        skipped.push({ name, reason: res.problem ?? "没打开" });
-        continue;
-      }
-      launched.push({ name, label, opened: res.opened, pasting: res.pasting });
+    const raw = (payload ?? {}) as { id?: unknown; coding?: unknown; model?: unknown };
+    return launchDispatchBatch(String(raw.id ?? ""), Boolean(raw.coding), raw.model ? String(raw.model) : null);
+  });
+  // 一键启动菜单列 Pi 能挑的模型、默认选上次挑的那个（2026-10-16）
+  ipcMain.handle("bookmark:pi-models", () => {
+    try {
+      return readPiModels();
+    } catch {
+      return { models: [], current: null };
     }
-    return { launched, conflicts, missing, skipped };
   });
   // 点号码（设定24）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
   ipcMain.handle("bookmark:item-file", (_event, id: unknown) => {
@@ -1088,6 +1075,56 @@ function bookmarkCliScriptPath(): string {
 const LAUNCH_PASTE_TIMING = { pollMs: 200, appearTimeoutMs: 15_000, settleMs: 4_000 };
 /** 桌面程序：冷启动慢，最多等 30 秒跑到前面，再等 5 秒启动好；Ctrl+N 后等 1.5 秒新对话出来再贴。 */
 const APP_PASTE_TIMING = { pollMs: 200, appearTimeoutMs: 30_000, settleMs: 5_000, newChatMs: 1_500 };
+
+export interface BatchLaunchResult {
+  launched: { name: string; label: string; opened: string; pasting: boolean }[];
+  conflicts: { a: string; b: string; files: string[] }[];
+  missing: string[];
+  skipped: { name: string; reason: string }[];
+  /** 这次替用户在 Pi 里换成的模型（没挑、这批没有 Pi 的单子就是 null）。 */
+  model: string | null;
+}
+
+/**
+ * 派活单一键启动（设定23）：同批没人领的一个接一个开，撞文件一个不开。看板六个点和命令行 launch 走的都是这一份。
+ * model：这批里有 Pi 的单子才用——开窗前先替用户在 Pi 里「按一次 Ctrl+E」（pi-model.ts），三个窗口一起生效。
+ */
+async function launchDispatchBatch(id: string, coding: boolean, model: string | null): Promise<BatchLaunchResult> {
+  const cards = requireStore().dispatchLaunchable(id);
+  const rows = boardRows();
+  const listed = cards.map((card) => ({ card, name: rowName(rows, card), files: parseAllowedFiles(`${card.text}\n${card.detail ?? ""}`) }));
+  const missing = listed.filter((c) => c.files === null).map((c) => c.name);
+  const conflicts = findFileConflicts(listed.map((c) => ({ name: c.name, files: c.files ?? [] })));
+  const launched: BatchLaunchResult["launched"] = [];
+  const skipped: BatchLaunchResult["skipped"] = [];
+  if (conflicts.length) return { launched, conflicts, missing, skipped, model: null };
+  const hasPi = listed.some(({ card }) => agentShortcutFor(card.assignee ?? "") === agentShortcutFor("Pi Agent"));
+  let usedModel: string | null = null;
+  if (model && hasPi) {
+    // 测试实例（不真开窗）不碰真的 Pi 设置；验证脚本给了假设置文件才写
+    if (openAgents || process.env.BOOKMARK_PI_SETTINGS) setPiModel(model);
+    usedModel = model;
+    log.记(`一键启动：Pi 换成 ${model}（思考档开最高）`, "cli");
+  }
+  for (const { card, name } of listed) {
+    const group = card.assignee ?? "";
+    if (!agentShortcutFor(group)) {
+      skipped.push({ name, reason: "认不出这个组该开哪个软件" });
+      continue;
+    }
+    const label = nextWindowLabel(group);
+    const line = `${LAUNCH_HEAD}node "${bookmarkCliScriptPath()}" next ${card.id} --by ${label}${coding ? " --coding" : ""}`;
+    clipboard.writeText(line);
+    log.记(`一键启动：${label} ← ${card.id}${coding ? "（带编程）" : ""}`, "cli");
+    const res = await openAgentShortcut(group, line, label, true);
+    if (!res.opened) {
+      skipped.push({ name, reason: res.problem ?? "没打开" });
+      continue;
+    }
+    launched.push({ name, label, opened: res.opened, pasting: res.pasting });
+  }
+  return { launched, conflicts, missing, skipped, model: usedModel };
+}
 
 interface LaunchOpenResult {
   opened: string | null;
