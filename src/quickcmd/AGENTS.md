@@ -7,6 +7,7 @@
 |---|---|
 | `layout.ts` | 纯函数：读按钮名单、认「打开文件」按钮（`openPathOf`）、拖动插入（`moveButton`）、量输入框那条线、算窗口摆哪。测试 `testkit/tests/quickcmd-layout.test.ts` |
 | `quickcmd-window.ts` | 主进程：Ctrl+Q 只在终端最前面时注册、截屏当毛玻璃底、点按钮替用户按 F13～F24、打开文件、存顺序 `quickcmd-order.json` |
+| `sheet-window.ts` / `sheet-preload.ts` | 说明面板：「打开文件」按钮指的是网页时，在按钮那列的位置弹一块透明玻璃小窗口装这个网页（网页本体在 E 盘 `12_使用说明（…）`）。preload 只给网页 `window.guideHost`：`onBackground` 收背后截图、`close` 关 |
 | `win32.ts` | 按键、看最前面窗口、看鼠标这些 Windows 调用 |
 | `renderer/` | 界面：画按钮、拖动插入 |
 
@@ -16,5 +17,8 @@
 - 🚨 **挪和松手挂在 `window` 上，不挂在按钮上**：按钮丢了指针捕获时松手收不到，拖动会卡在半空
 - 拖动是「插入」不是「交换」（2026-10-17 用户嫌交换不丝滑）：别的按钮实时让一格，位置夹在第一个到最后一个之间，鼠标拖出窗口也贴边
 - 「打开文件」按钮＝终端里打 `! explorer "路径"` 的那个：窗口认出来自己用 `shell.openPath` 开，不按键。替用户按键会把字接在输入框原有的字后面一起发出去（2026-10-17 实机踩过）。终端自带的 Ctrl+Q 备胎弹框（桌宠没开时）还是打字，管不了
+- 说明面板的玻璃底用的是按 Ctrl+Q 那一刻截的屏（`lastView`），收按钮那列时扔掉；所以只能从按钮那列点进去，没截图就不弹面板、交给系统默认程序开
+- 说明面板每次打开都重新加载网页（用户改了内容文件下次就是新的），F5 / Ctrl+R 重新加载，失焦就收，不许跳到别的网址
+- 截图测说明面板：窗口开 `offscreen: true` 再 `capturePage`；普通隐藏窗口或挪到屏幕外截图会报 UnknownVizError 卡死
 - 窗口尺寸跟 `renderer/quickcmd.css` 对上（`PANEL` 常数），改一边要改另一边
 - 拖动的真鼠标测法：隐藏 Electron 窗口照真尺寸开（无边框 166×高度），注入假的 `window.quickcmd`，用 `webContents.sendInputEvent` 按下、挪、松开，看顺序和收到的调用。鼠标拖出窗口外这种情况模拟不出来，只能实机试

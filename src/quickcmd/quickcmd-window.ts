@@ -13,7 +13,8 @@
 //   （2026-10-12 实机：Windows 自带的 acrylic 在不抢焦点的窗口上是一块暗灰、圆角外还露黑，用户否了）
 // - 开着的时候：每秒重量一次那条线，输入框打字变高了窗口跟着往上挪；鼠标在窗口外面按下就收（用户要的：点终端别处也收）
 // - 按钮能拖：拖起来别的按钮实时让位，松手插到那个位置（2026-10-17 从「交换」改的），顺序记在 quickcmd-order.json
-// - 「打开文件」按钮（终端里打 `! explorer "路径"` 的）窗口自己开文件，不往终端打字（2026-10-17：输入框有字时会接在后面一起发出去）
+// - 「打开文件」按钮（终端里打 `! explorer "路径"` 的）窗口自己开文件，不往终端打字（2026-10-17：输入框有字时会接在后面一起发出去）。
+//   是网页就在原位置弹说明面板（sheet-window.ts），不开浏览器；别的文件交给系统默认程序
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,9 +22,11 @@ import { BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, shell,
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { appDataRoot } from "../shared/paths";
+import { closeSheet, openSheet } from "./sheet-window";
 import {
   applyOrder,
   computePanelBounds,
+  computeSheetBounds,
   findInputTopLine,
   isTerminalProcess,
   moveButton,
@@ -79,6 +82,8 @@ let following = false;
 /** 上一次看鼠标时是不是按着；按下那一刻在窗口里（比如正在拖按钮），拖出窗口也不收。 */
 let mouseWasDown = false;
 let pressStartedInside = false;
+/** 按 Ctrl+Q 那一刻截的屏和量到的位置：点了网页按钮，说明面板拿它当玻璃底、定位置。收窗口时扔掉。 */
+let lastView: { shot: NativeImage | null; scale: number; origin: { x: number; y: number }; terminal: Rect; lineY: number | null } | null = null;
 /** 最前面窗口 → 是不是终端，问过的记住（每 200 毫秒问一次程序路径太浪费）。 */
 const terminalCache = new Map<bigint, boolean>();
 
@@ -111,6 +116,7 @@ export function closeQuickCmd(): void {
     setHotkey(false);
     panel?.destroy();
     panel = null;
+    closeSheet();
   } catch (error) {
     log.出事("Agent命令快捷窗口退出清理失败", error, "close");
   }
@@ -194,17 +200,8 @@ async function toggle(): Promise<void> {
     if (shot && lineY === null) log.记("截图里没找到输入框那条线，先放在终端靠下的位置", "toggle");
     const terminal = screen.screenToDipRect(null, physical);
     const bounds = computePanelBounds(terminal, buttons.length, lineY);
-    // 窗口身后那一块剪下来当底。
-    let background = "";
-    if (shot) {
-      const behind = shot.crop({
-        x: Math.round(bounds.x * scale - origin.x),
-        y: Math.round(bounds.y * scale - origin.y),
-        width: Math.round(bounds.width * scale),
-        height: Math.round(bounds.height * scale),
-      });
-      background = behind.toDataURL();
-    }
+    lastView = { shot, scale, origin, terminal, lineY };
+    const background = behindOf(bounds);
     const win = ensurePanel();
     win.setBounds(bounds);
     const payload = { labels: buttons.map((button) => button.label), background };
@@ -215,6 +212,18 @@ async function toggle(): Promise<void> {
   } finally {
     opening = false;
   }
+}
+
+/** 窗口身后那一块（按 Ctrl+Q 时截的屏里剪下来），给界面当玻璃底；没截到给空串。 */
+function behindOf(bounds: Rect): string {
+  if (!lastView?.shot) return "";
+  const { shot, scale, origin } = lastView;
+  return shot.crop({
+    x: Math.round(bounds.x * scale - origin.x),
+    y: Math.round(bounds.y * scale - origin.y),
+    width: Math.round(bounds.width * scale),
+    height: Math.round(bounds.height * scale),
+  }).toDataURL();
 }
 
 /** 截终端所在那块屏幕，物理像素原大。截不到返回 null（窗口照弹，只是没毛玻璃底、位置用估的）。 */
@@ -256,6 +265,7 @@ function reveal(payload: { labels: string[]; background: string }): void {
 
 function hide(): void {
   stopWatching();
+  lastView = null;
   try {
     if (panel && !panel.isDestroyed()) panel.hide();
   } catch (error) {
@@ -338,6 +348,13 @@ function press(index: number): void {
     if (!button) return;
     if (button.openPath) {
       const path = button.openPath;
+      if (/\.html?$/i.test(path) && lastView) {
+        const bounds = computeSheetBounds(lastView.terminal, lastView.lineY);
+        openSheet(path, bounds, behindOf(bounds));
+        log.记(`弹说明面板 ${path}（${button.label}）`, "press");
+        hide();
+        return;
+      }
       hide();
       void shell.openPath(path).then((problem) => {
         if (problem) log.出事(`打不开 ${path}：${problem}`, undefined, "press");

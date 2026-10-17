@@ -204,10 +204,21 @@ export function panelHeight(count: number): number {
  * 终端太矮放不下就顶到终端最上面，不出终端。
  */
 export function computePanelBounds(terminal: Rect, count: number, lineY: number | null): Rect {
-  const height = panelHeight(count);
+  return anchorAboveInput(terminal, lineY, PANEL.width, panelHeight(count));
+}
+
+/** 说明面板（点「打开文件」按钮弹出的那块玻璃）的尺寸。 */
+export const SHEET = { width: 340, height: 470 };
+
+/** 说明面板摆哪：跟按钮那列同一个位置（贴终端右边、底边在输入框那条线上），只是更大；终端太矮就压到终端那么高。 */
+export function computeSheetBounds(terminal: Rect, lineY: number | null): Rect {
+  return anchorAboveInput(terminal, lineY, SHEET.width, Math.min(SHEET.height, Math.max(200, terminal.height - 20)));
+}
+
+function anchorAboveInput(terminal: Rect, lineY: number | null, width: number, height: number): Rect {
   const inset = 10; // 别压在终端右边的滚动条上
-  const x = terminal.x + terminal.width - PANEL.width - inset;
+  const x = terminal.x + terminal.width - width - inset;
   const bottom = lineY !== null ? lineY - 3 : terminal.y + terminal.height * (5 / 6);
   const y = Math.max(terminal.y, bottom - height);
-  return { x: Math.round(x), y: Math.round(y), width: PANEL.width, height };
+  return { x: Math.round(x), y: Math.round(y), width, height: Math.round(height) };
 }

@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   applyOrder,
   computePanelBounds,
+  computeSheetBounds,
+  SHEET,
   parseOrder,
   moveButton,
   openPathOf,
@@ -152,6 +154,18 @@ test("摆放：量不到那条线，放在终端从上往下 5/6 处", () => {
 test("摆放：终端太矮放不下，顶到终端最上面，不跑出终端", () => {
   const bounds = computePanelBounds({ x: 0, y: 500, width: 800, height: 200 }, 5, 650);
   assert.equal(bounds.y, 500);
+});
+
+test("说明面板：跟按钮那列同一个右边、底边在那条线上；终端矮就压低，不出终端", () => {
+  const terminal = { x: 100, y: 50, width: 1200, height: 900 };
+  const sheet = computeSheetBounds(terminal, 800);
+  const panel = computePanelBounds(terminal, 7, 800);
+  assert.equal(sheet.x + sheet.width, panel.x + panel.width);
+  assert.equal(sheet.y + sheet.height, 800 - 3);
+  assert.deepEqual([sheet.width, sheet.height], [SHEET.width, SHEET.height]);
+  const short = computeSheetBounds({ x: 0, y: 0, width: 800, height: 300 }, 280);
+  assert.equal(short.height, 280);
+  assert.ok(short.y >= 0);
 });
 
 // 造一张假终端截图：浅绿底，几行零散的字，底部两条 2 像素粗的灰横线（输入框上下两条）。
