@@ -12,6 +12,6 @@ contextBridge.exposeInMainWorld("quickcmd", {
     });
   },
   press: (index: number) => ipcRenderer.send("quickcmd:press", index),
-  // 拖按钮换位置：第 from 个跟第 to 个交换。
-  swap: (from: number, to: number) => ipcRenderer.send("quickcmd:swap", from, to),
+  // 拖按钮换位置：第 from 个插到第 to 个的位置。
+  move: (from: number, to: number) => ipcRenderer.send("quickcmd:move", from, to),
 });

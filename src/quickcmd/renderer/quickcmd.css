@@ -148,7 +148,8 @@ body {
 }
 .glass:active { transform: scale(.97); transition-duration: .15s; }
 
-/* 拖着换位置：拿起来的那个浮在最上面跟着鼠标走，经过的那个亮一下（松手就跟它交换） */
+/* 拖着换位置：拿起来的那个浮在最上面跟着鼠标走，别的按钮滑开让位，松手滑进空位 */
+.sorting .glass { transition: transform .2s cubic-bezier(.2, .8, .2, 1); }
 .glass.dragging {
   z-index: 5;
   transition: none;
@@ -158,11 +159,7 @@ body {
     inset 0 0 0 1.5px rgba(255,255,255,.14),
     0 12px 20px -8px rgba(30,100,85,.55);
 }
-.glass.swap-target {
-  background:
-    radial-gradient(46% 70% at 50% 108%, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 100%),
-    radial-gradient(95% 125% at 50% 45%, rgba(220,255,240,.55) 0%, rgba(180,240,220,.2) 100%);
-}
+.glass.dragging.settling { transition: transform .16s cubic-bezier(.2, .8, .2, 1); }
 /* 换完位置重画时不重播浮上来的动画 */
 .no-anim .glass { opacity: 1; animation: none; }
 

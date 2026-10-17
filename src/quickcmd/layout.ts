@@ -9,9 +9,21 @@ export interface QuickButton {
   key: string;
   /** 对应的虚拟键码（F13＝0x7C，往后依次加一）。 */
   vk: number;
+  /** 「打开文件」按钮要打开的文件（终端里打的是 `! explorer "路径"`）；普通按钮是 null。 */
+  openPath: string | null;
 }
 
 const VK_F13 = 0x7c;
+
+/**
+ * 按钮打的字是 `! explorer "路径"`（回车可有可无）→ 这是个「打开文件」按钮，返回路径；别的返回 null。
+ * 2026-10-17：替用户按键打这行字，输入框里原本有字就会接在后面一起发出去，所以窗口认出来自己开，不往终端打字。
+ */
+export function openPathOf(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const match = /^!\s*explorer\s+"([^"]+)"\s*$/.exec(input);
+  return match ? match[1] : null;
+}
 
 /** 键名 f13～f24 → 虚拟键码；别的键一律不认（只认这一段，真键盘上没有，不会跟谁撞）。 */
 export function vkForKey(key: string): number | null {
@@ -77,13 +89,13 @@ export function parseTerminalButtons(settingsText: string): QuickButton[] {
     if (action.command?.action !== "sendInput" || typeof action.name !== "string") continue;
     const key = keyOf.get(action.id);
     const vk = key ? vkForKey(key) : null;
-    if (key && vk !== null) buttons.push({ id: action.id, label: action.name, key, vk });
+    if (key && vk !== null) buttons.push({ id: action.id, label: action.name, key, vk, openPath: openPathOf(action.command.input) });
   }
   return buttons;
 }
 
 /**
- * 按用户拖出来的顺序排（2026-10-12 用户要的：拖到别的按钮上就交换位置，功能跟着按钮走）。
+ * 按用户拖出来的顺序排（功能跟着按钮走）。
  * 存的是 id 列表；存档里没有的按钮（新加的）排在最后，存档里有但终端里已经删了的直接忽略。
  */
 export function applyOrder(buttons: QuickButton[], savedIds: readonly string[]): QuickButton[] {
@@ -94,11 +106,15 @@ export function applyOrder(buttons: QuickButton[], savedIds: readonly string[]):
     .map((item) => item.button);
 }
 
-/** 第 from 个和第 to 个交换位置，返回新数组；序号不对就原样返回。 */
-export function swapButtons<T>(list: readonly T[], from: number, to: number): T[] {
+/**
+ * 把第 from 个拿出来插到第 to 个的位置，中间的依次让一格，返回新数组；序号不对就原样返回。
+ * 2026-10-17 从「交换」改成「插入」：交换要正好松在另一个按钮上，拖到最上面、缝里都落不下（用户嫌不丝滑）。
+ */
+export function moveButton<T>(list: readonly T[], from: number, to: number): T[] {
   const next = list.slice();
   if (from === to || !(from in next) || !(to in next)) return next;
-  [next[from], next[to]] = [next[to], next[from]];
+  const [moving] = next.splice(from, 1);
+  next.splice(to, 0, moving);
   return next;
 }
 

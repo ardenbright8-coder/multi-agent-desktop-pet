@@ -12,11 +12,12 @@
 // - 弹出前先截一张屏：在终端那块里找输入框上面那条横线定位置；再把窗口身后那一小块剪下来给界面当底，模糊一下就是毛玻璃
 //   （2026-10-12 实机：Windows 自带的 acrylic 在不抢焦点的窗口上是一块暗灰、圆角外还露黑，用户否了）
 // - 开着的时候：每秒重量一次那条线，输入框打字变高了窗口跟着往上挪；鼠标在窗口外面按下就收（用户要的：点终端别处也收）
-// - 按钮能拖：拖到别的按钮上松手就交换位置，顺序记在 quickcmd-order.json
+// - 按钮能拖：拖起来别的按钮实时让位，松手插到那个位置（2026-10-17 从「交换」改的），顺序记在 quickcmd-order.json
+// - 「打开文件」按钮（终端里打 `! explorer "路径"` 的）窗口自己开文件，不往终端打字（2026-10-17：输入框有字时会接在后面一起发出去）
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, type NativeImage } from "electron";
+import { BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, shell, type NativeImage } from "electron";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { appDataRoot } from "../shared/paths";
@@ -25,9 +26,9 @@ import {
   computePanelBounds,
   findInputTopLine,
   isTerminalProcess,
+  moveButton,
   parseOrder,
   parseTerminalButtons,
-  swapButtons,
   type QuickButton,
   type Rect,
 } from "./layout";
@@ -89,8 +90,8 @@ export function initQuickCmd(): void {
     ipcMain.on("quickcmd:press", (_event, index: unknown) => {
       if (typeof index === "number") press(index);
     });
-    ipcMain.on("quickcmd:swap", (_event, from: unknown, to: unknown) => {
-      if (typeof from === "number" && typeof to === "number") swap(from, to);
+    ipcMain.on("quickcmd:move", (_event, from: unknown, to: unknown) => {
+      if (typeof from === "number" && typeof to === "number") move(from, to);
     });
     pollTimer = setInterval(tick, POLL_MS);
     pollTimer.unref();
@@ -318,23 +319,32 @@ async function followLine(): Promise<void> {
   }
 }
 
-/** 拖按钮换位置：第 from 个跟第 to 个交换，顺序记下来，下次弹出还是这个顺序。功能跟着按钮走。 */
-function swap(from: number, to: number): void {
+/** 拖按钮换位置：第 from 个插到第 to 个的位置，顺序记下来，下次弹出还是这个顺序。功能跟着按钮走。 */
+function move(from: number, to: number): void {
   try {
-    buttons = swapButtons(buttons, from, to);
+    buttons = moveButton(buttons, from, to);
     writeJsonAtomic(orderPath(), buttons.map((button) => button.id));
-    log.记(`按钮换位置：${from + 1} ↔ ${to + 1}`, "swap");
+    log.记(`按钮换位置：第 ${from + 1} 个插到第 ${to + 1} 个`, "move");
   } catch (error) {
-    log.出事("记按钮顺序失败（这次换了，下次弹出可能回到原样）", error, "swap");
+    log.出事("记按钮顺序失败（这次换了，下次弹出可能回到原样）", error, "move");
   }
 }
 
-/** 点了第 index 个按钮：终端还在最前面，就替用户按一下它绑的那个键，然后收。 */
+/** 点了第 index 个按钮：打开文件的自己开；别的趁终端还在最前面，替用户按一下它绑的那个键。然后收。 */
 function press(index: number): void {
   if (!win32) return;
   try {
     const button = buttons[index];
     if (!button) return;
+    if (button.openPath) {
+      const path = button.openPath;
+      hide();
+      void shell.openPath(path).then((problem) => {
+        if (problem) log.出事(`打不开 ${path}：${problem}`, undefined, "press");
+        else log.记(`打开了 ${path}（${button.label}）`, "press");
+      });
+      return;
+    }
     if (win32.foreground() !== target) {
       log.记("点按钮时最前面已经不是那个终端了，不按", "press");
       hide();

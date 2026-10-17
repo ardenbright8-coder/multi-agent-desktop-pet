@@ -23,7 +23,7 @@
 ```
 shared（谁都不依赖）
   → interaction → events → channel / pet
-  → integrations、bookmark（都只认 shared）
+  → integrations、bookmark、quickcmd（都只认 shared）
   → testkit、src/app.ts（装配，可以调所有人，没人许调它们）
 ```
 
@@ -43,6 +43,7 @@ shared（谁都不依赖）
 | 询问／权限面板的内容和回传 | `src/interaction/` |
 | 管道、preload 暴露的接口 | `src/channel/` |
 | 看板的任何东西 | `src/bookmark/`（函数名用 `bm` 前缀，防跟桌宠界面全局撞名） |
+| 终端里 Ctrl+Q 弹出的命令按钮窗口 | `src/quickcmd/`（改之前读它自己的 `AGENTS.md`） |
 | 四家 Agent 的插件／钩子本体 | 项目根 `integrations/`（不参与编译，改协议字段要同步改这里） |
 | 跨块共用的小工具 | **三块以上真在用**才进 `src/shared/`。两块在用就放其中一块 |
 | 单元测试 | `src/testkit/tests/<名字>.test.ts`，`npm test` 自动扫 |

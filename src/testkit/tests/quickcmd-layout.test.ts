@@ -4,7 +4,8 @@ import {
   applyOrder,
   computePanelBounds,
   parseOrder,
-  swapButtons,
+  moveButton,
+  openPathOf,
   findInputTopLine,
   isTerminalProcess,
   panelHeight,
@@ -55,14 +56,36 @@ test("拖过的顺序：按存档排，存档里没有的新按钮排最后，�
   assert.deepEqual(applyOrder(buttons, []).map((b) => b.id), buttons.map((b) => b.id));
 });
 
-test("交换位置：只换这两个，别的不动；功能（键）跟着按钮走", () => {
+test("插入：最后一个拖到最上面，其余依次往下让一格；功能（键）跟着按钮走", () => {
   const buttons = parseTerminalButtons(settings);
-  const swapped = swapButtons(buttons, 0, 2);
-  assert.deepEqual(swapped.map((b) => b.label), ["帮我出点子", "调整 Claude 想多深", "压缩上下文"]);
-  assert.equal(swapped[0].key, "f15");
-  assert.equal(swapped[2].key, "f13");
-  assert.deepEqual(swapButtons(buttons, 0, 9), buttons, "序号不对就原样");
+  const moved = moveButton(buttons, 2, 0);
+  assert.deepEqual(moved.map((b) => b.label), ["帮我出点子", "压缩上下文", "调整 Claude 想多深"]);
+  assert.equal(moved[0].key, "f15");
+  assert.equal(moved[1].key, "f13");
   assert.deepEqual(buttons.map((b) => b.label)[0], "压缩上下文", "原数组不被改动");
+});
+
+test("插入：第一个拖到中间、拖到最下面都能落；序号不对就原样", () => {
+  const list = ["a", "b", "c", "d", "e"];
+  assert.deepEqual(moveButton(list, 0, 2), ["b", "c", "a", "d", "e"]);
+  assert.deepEqual(moveButton(list, 1, 4), ["a", "c", "d", "e", "b"]);
+  assert.deepEqual(moveButton(list, 3, 3), list);
+  assert.deepEqual(moveButton(list, 0, 9), list);
+});
+
+test("打开文件按钮：认出 ! explorer \"路径\"，回车可有可无；普通按钮是 null", () => {
+  const path = "E:\\个人AI资源管理\\12_使用说明（Ctrl+Q点开·看不懂就来这）\\Claude Code 各种文件放哪.html";
+  assert.equal(openPathOf(`! explorer "${path}"\r`), path);
+  assert.equal(openPathOf(`! explorer "${path}"`), path);
+  assert.equal(openPathOf("/compact"), null);
+  assert.equal(openPathOf("帮我出点子：! explorer \"x\""), null, "不在开头的不算");
+  assert.equal(openPathOf(undefined), null);
+  const withOpen = JSON.parse(settings);
+  withOpen.actions.push({ command: { action: "sendInput", input: `! explorer "${path}"\r` }, id: "User.CC.guide", name: "使用说明" });
+  withOpen.keybindings.push({ id: "User.CC.guide", keys: "f19" });
+  const buttons = parseTerminalButtons(JSON.stringify(withOpen));
+  assert.equal(buttons.find((b) => b.id === "User.CC.guide")?.openPath, path);
+  assert.equal(buttons[0].openPath, null);
 });
 
 test("顺序存档读坏了当没存过", () => {
