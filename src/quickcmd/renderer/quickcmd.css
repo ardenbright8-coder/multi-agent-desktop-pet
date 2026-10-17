@@ -1,0 +1,181 @@
+/* Agent命令快捷窗口的长相（2026-10-12 用户拍板：方案 B3 薄荷彩边，苹果式柔光玻璃）。
+   尺寸跟 layout.ts 的 PANEL 对上：上边距 7、标题行 21、按钮高 25、按钮间距 5、下边距 6、宽 166。改一边要改另一边。
+   毛玻璃底：弹出前主进程把窗口身后那块屏幕截下来发过来（.qc-bg），这里模糊 + 叠一层很淡的颜色。
+   🚫 别用 Windows 自带的 acrylic：不抢焦点的窗口上它是一块暗灰，圆角外还露黑（2026-10-12 实机，用户否了）。
+   🚨 不要白边（用户 2026-10-12）：窗口边上不描线，只在顶上留一层很淡的光，跟终端分开靠的是毛玻璃本身。 */
+
+:root {
+  --ink: #12403a;
+  --ink-soft: #4f6f67;
+  --spring: cubic-bezier(.32, .72, 0, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; background: transparent; overflow: hidden; user-select: none; }
+
+body {
+  font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  color: var(--ink);
+}
+
+/* ===== 窗口底：偏透的毛玻璃，顶上一层淡光代替白边 ===== */
+.qc-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 7px 6px 6px;
+  border-radius: 16px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.qc-bg { /* 身后那块屏幕，模糊成毛玻璃；放大一点，免得模糊后边缘发虚发暗 */
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background-size: 100% 100%;
+  filter: blur(7px) saturate(150%);
+  transform: scale(1.15);
+}
+.qc-panel::before { /* 很淡的一层颜色 + 顶上一层淡光 + 边缘往里一圈柔光（代替白边） */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 28%),
+    radial-gradient(120% 60% at 100% 100%, rgba(255,240,200,.10), rgba(255,240,200,0) 60%),
+    rgba(240, 252, 245, .24);
+  box-shadow: inset 0 0 14px rgba(255,255,255,.28);
+}
+
+.qc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 21px;
+  padding: 0 4px 5px;
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: var(--ink-soft);
+}
+.qc-head .k {
+  letter-spacing: .02em;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.42);
+  box-shadow: inset 0 0 0 .5px rgba(255,255,255,.75);
+}
+
+/* ===== 气泡：薄荷彩边玻璃（B3），轻、薄、浮 =====
+   本体：几乎透明，里面一层很淡的雾，中间亮、边上清
+   彩边：一圈细亮边，从左上的白、薄荷绿，过渡到右下的暖黄
+   厚度：边缘往里一圈柔光 + 里面再一道更细的内圈
+   水光：底部中间一小团亮，像光透进去在底下聚起来
+   顶光：顶上一层很淡的光泽，不做硬高光带
+   影子：很淡、往下拖，看着悬在上面 */
+.glass {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 25px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 13px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+  background:
+    radial-gradient(46% 70% at 50% 108%, rgba(255,255,255,.34) 0%, rgba(255,255,255,0) 100%),
+    radial-gradient(95% 125% at 50% 45%, rgba(238,255,249,.30) 0%, rgba(190,240,224,.10) 100%);
+  box-shadow:
+    inset 0 0 6px rgba(255,255,255,.5),
+    inset 0 0 0 1.5px rgba(255,255,255,.10),
+    inset 0 -1px 3px rgba(30,100,90,.07),
+    0 1px 1px rgba(30,90,80,.06),
+    0 6px 12px -8px rgba(30,100,85,.42);
+  transition: transform .5s var(--spring), box-shadow .5s var(--spring), background .4s var(--spring);
+  opacity: 0;
+  animation: qc-up .6s var(--spring) forwards;
+}
+.glass + .glass { margin-top: 5px; }
+
+.glass::before { /* 彩边 */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(118deg,
+    rgba(255,255,255,.98) 0%,
+    rgba(170,240,215,.75) 26%,
+    rgba(255,255,255,.18) 48%,
+    rgba(200,245,230,.30) 62%,
+    rgba(255,232,150,.85) 82%,
+    rgba(255,255,255,.95) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.glass::after { /* 顶光 */
+  content: "";
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  top: 1px;
+  height: 46%;
+  border-radius: 12px 12px 40% 40% / 12px 12px 100% 100%;
+  background: linear-gradient(180deg, rgba(255,255,255,.32), rgba(255,255,255,0));
+  pointer-events: none;
+}
+
+.glass:hover {
+  transform: translateY(-1px);
+  background:
+    radial-gradient(46% 70% at 50% 108%, rgba(255,255,255,.46) 0%, rgba(255,255,255,0) 100%),
+    radial-gradient(95% 125% at 50% 45%, rgba(242,255,251,.50) 0%, rgba(200,244,230,.16) 100%);
+  box-shadow:
+    inset 0 0 7px rgba(255,255,255,.62),
+    inset 0 0 0 1.5px rgba(255,255,255,.14),
+    inset 0 -1px 3px rgba(30,100,90,.07),
+    0 1px 1px rgba(30,90,80,.06),
+    0 9px 16px -8px rgba(30,100,85,.5);
+}
+.glass:active { transform: scale(.97); transition-duration: .15s; }
+
+/* 拖着换位置：拿起来的那个浮在最上面跟着鼠标走，经过的那个亮一下（松手就跟它交换） */
+.glass.dragging {
+  z-index: 5;
+  transition: none;
+  cursor: grabbing;
+  box-shadow:
+    inset 0 0 7px rgba(255,255,255,.62),
+    inset 0 0 0 1.5px rgba(255,255,255,.14),
+    0 12px 20px -8px rgba(30,100,85,.55);
+}
+.glass.swap-target {
+  background:
+    radial-gradient(46% 70% at 50% 108%, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 100%),
+    radial-gradient(95% 125% at 50% 45%, rgba(220,255,240,.55) 0%, rgba(180,240,220,.2) 100%);
+}
+/* 换完位置重画时不重播浮上来的动画 */
+.no-anim .glass { opacity: 1; animation: none; }
+
+.txt {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-shadow: 0 0 6px rgba(255,255,255,.7);
+}
+
+@keyframes qc-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}

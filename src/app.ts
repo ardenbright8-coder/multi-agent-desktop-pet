@@ -26,6 +26,7 @@ import {
 import { registerWindowIpc } from "./pet/window-ipc";
 import { createTray, createTrayActions } from "./pet/tray";
 import { closeBookmarkPanel, initBookmarkPanel, toggleBookmarkPanel } from "./bookmark/panel-window";
+import { closeQuickCmd, initQuickCmd } from "./quickcmd/quickcmd-window";
 import { controlsMode, lifecycleMode, screenshotMode, singleInstanceHostMode, smokeMode, testMode, testModeName } from "./testkit/modes";
 import { runControlsTest } from "./testkit/controls-test";
 import { runLifecycleTest } from "./testkit/lifecycle";
@@ -119,6 +120,8 @@ async function bootstrap(): Promise<void> {
   } catch (error) {
     log.出事("书签台初始化失败（不影响桌宠本体）", error, "bookmark");
   }
+  // Agent命令快捷窗口（独立板块，2026-10-12 并入）：终端里按 Ctrl+Q 弹出。自测不起，别跟真机抢 Ctrl+Q。
+  if (!testMode) initQuickCmd();
   const cleanupTimer = setInterval(() => hub.cleanup(), 10_000);
   cleanupTimer.unref();
 
@@ -160,6 +163,7 @@ async function bootstrap(): Promise<void> {
     setShuttingDown(true);
     persistWindowPosition();
     closeBookmarkPanel();
+    closeQuickCmd();
     Promise.resolve(ipcServer?.close())
       .catch(logError)
       .finally(() => {

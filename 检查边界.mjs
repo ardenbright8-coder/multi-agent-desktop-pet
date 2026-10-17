@@ -40,8 +40,10 @@ const allowed = {
   // bookmark（书签台）是 2026-09-09 并入的完全隔离大板块：只认 shared，跟桌宠本体零共享状态。
   // 托盘入口走 app.ts 注入（PetTrayActions.openBookmark），pet 块不 import 它，反向依赖不存在。
   bookmark: ["shared"],
-  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark"],
-  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "testkit"],
+  // quickcmd（Agent命令快捷窗口）2026-10-12 并入：跟 bookmark 一样只认 shared，只借程序当入口。
+  quickcmd: ["shared"],
+  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd"],
+  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "testkit"],
 };
 
 // ---------- 每块根上哪些文件是对外入口（别的块只准 import 这些）----------
@@ -54,6 +56,7 @@ const publicEntries = {
   pet: ["window.ts", "window-ipc.ts", "tray.ts"],
   integrations: ["manager.ts"],
   bookmark: ["panel-window.ts", "store.ts", "preload.ts", "dock.ts"],
+  quickcmd: ["quickcmd-window.ts"],
   testkit: ["modes.ts", "controls-test.ts", "lifecycle.ts", "screenshot.ts", "single-instance.ts", "smoke.ts", "host.ts"],
 };
 
