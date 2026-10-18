@@ -1,8 +1,8 @@
 // vivo 截图复制要用的 Windows 剪贴板能力，全走 koffi。惰性加载，加载失败只记一次日志，这块整个不启用（不连坐别的板块）。
 // 跟 quickcmd、看板那几份各写各的：几块互不 import。HWND、句柄一律 uintptr_t + BigInt（看板实测 void* + Buffer 会静默失败）。
 //
-// 为什么不用 Electron 自带的 clipboard：它一写就先把剪贴板清空，只能放字、图、网页那几样，
-// 放不回「复制了一个文件」（CF_HDROP）。网页能贴 vivo 的图靠的就是这一样，丢了网页就贴不上了。
+// 为什么写剪贴板不用 Electron 自带的 clipboard：它只能放字、图、网页那几样，放不了「复制了一个文件」（CF_HDROP）。
+// 读图用 Electron 的 clipboard.readImage 就够了（在 vivo-clip.ts）。
 
 import { createLogger } from "../shared/log";
 
@@ -18,8 +18,6 @@ export interface VivoWin32 {
   has(format: number): boolean;
   /** 起个名字换一个格式编号（「PNG」这种没有固定编号的格式要先换）。 */
   register(name: string): number;
-  /** 剪贴板里「复制了的文件」的路径。剪贴板被别人占着打不开时给 null，下次再试。 */
-  readFiles(): string[] | null;
   /** 清空剪贴板，一次放进去这几样。成功给 true。 */
   write(items: ReadonlyArray<{ format: number; data: Buffer }>): boolean;
   dispose(): void;
@@ -34,7 +32,6 @@ export function loadVivoWin32(): VivoWin32 | null {
     const koffi = require("koffi") as typeof import("koffi");
     const user32 = koffi.load("user32.dll");
     const kernel32 = koffi.load("kernel32.dll");
-    const shell32 = koffi.load("shell32.dll");
 
     const getSequence = user32.func("uint32_t __stdcall GetClipboardSequenceNumber()") as unknown as () => number;
     const isAvailable = user32.func("bool __stdcall IsClipboardFormatAvailable(uint32_t format)") as unknown as (format: number) => boolean;
@@ -42,7 +39,6 @@ export function loadVivoWin32(): VivoWin32 | null {
     const openClipboard = user32.func("bool __stdcall OpenClipboard(uintptr_t owner)") as unknown as (owner: bigint) => boolean;
     const closeClipboard = user32.func("bool __stdcall CloseClipboard()") as unknown as () => boolean;
     const emptyClipboard = user32.func("bool __stdcall EmptyClipboard()") as unknown as () => boolean;
-    const getData = user32.func("uintptr_t __stdcall GetClipboardData(uint32_t format)") as unknown as (format: number) => number | bigint;
     const setData = user32.func("uintptr_t __stdcall SetClipboardData(uint32_t format, uintptr_t memory)") as unknown as (format: number, memory: bigint) => number | bigint;
     const createWindow = user32.func(
       "uintptr_t __stdcall CreateWindowExW(uint32_t exStyle, str16 className, str16 title, uint32_t style, int x, int y, int w, int h, uintptr_t parent, uintptr_t menu, uintptr_t instance, uintptr_t param)",
@@ -53,12 +49,6 @@ export function loadVivoWin32(): VivoWin32 | null {
     const globalUnlock = kernel32.func("bool __stdcall GlobalUnlock(uintptr_t memory)") as unknown as (memory: bigint) => boolean;
     const globalFree = kernel32.func("uintptr_t __stdcall GlobalFree(uintptr_t memory)") as unknown as (memory: bigint) => number | bigint;
     const copyMemory = kernel32.func("void __stdcall RtlMoveMemory(uintptr_t dest, _In_ uint8_t *src, size_t bytes)") as unknown as (dest: bigint, src: Buffer, bytes: number) => void;
-    const dragQueryFile = shell32.func("uint32_t __stdcall DragQueryFileW(uintptr_t drop, uint32_t index, _Out_ uint16_t *name, uint32_t size)") as unknown as (
-      drop: bigint,
-      index: number,
-      name: Uint16Array | null,
-      size: number,
-    ) => number;
 
     // 放东西进剪贴板得有个「主人」窗口：开个看不见、不进任务栏、只收消息的小窗口（HWND_MESSAGE＝-3）。
     // 不开的话 Windows 文档说 SetClipboardData 会失败。
@@ -85,24 +75,6 @@ export function loadVivoWin32(): VivoWin32 | null {
       sequence: () => getSequence(),
       has: (format) => isAvailable(format),
       register: (name) => registerFormat(name),
-      readFiles: () => {
-        if (!openClipboard(owner)) return null;
-        try {
-          const drop = BigInt(getData(CF_HDROP));
-          if (!drop) return [];
-          const count = dragQueryFile(drop, 0xffffffff, null, 0);
-          const files: string[] = [];
-          for (let index = 0; index < count; index += 1) {
-            const length = dragQueryFile(drop, index, null, 0);
-            const name = new Uint16Array(length + 1);
-            dragQueryFile(drop, index, name, name.length);
-            files.push(String.fromCharCode(...name.subarray(0, length)));
-          }
-          return files;
-        } finally {
-          closeClipboard();
-        }
-      },
       write: (items) => {
         if (!openClipboard(owner)) return false;
         try {

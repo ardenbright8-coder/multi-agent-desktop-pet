@@ -1,25 +1,34 @@
-// vivo 截图复制单测：认不认 vivo 的图、拼「复制的文件」和「一张图」两种格式（往系统剪贴板放在 vivo/win32，这里不碰）。
+// vivo 截图复制单测：认不认「光秃秃一张图」、中转夹起名和留几张、拼「复制的文件」和「一张图」两种格式（往系统剪贴板放在 vivo/win32，这里不碰）。
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bgraToDib24, buildDropFiles, pickVivoImage, utf16z, vivoClipDirectory } from "../../vivo/clip-format";
+import { bgraToDib24, buildDropFiles, filesToPrune, isBareImage, transitDirectory, transitFileName, utf16z } from "../../vivo/clip-format";
 
-const DIR = "C:\\Users\\某人\\AppData\\Roaming\\vivoClipdata";
-
-test("vivoClipDirectory：默认在 APPDATA 下的 vivoClipdata，环境变量能改", () => {
-  assert.equal(vivoClipDirectory({ APPDATA: "C:\\R" }), "C:\\R\\vivoClipdata");
-  assert.equal(vivoClipDirectory({ APPDATA: "C:\\R", VIVO截图夹: "D:\\x" }), "D:\\x");
+test("transitDirectory：默认 D 盘 vivo 接收夹旁边，环境变量能改", () => {
+  assert.equal(transitDirectory({}), "D:\\Downloads\\vivo办公套件\\截图中转");
+  assert.equal(transitDirectory({ VIVO中转夹: "E:\\x" }), "E:\\x");
 });
 
-test("pickVivoImage：只认恰好一张、在 vivo 夹里的图片，大小写不敏感", () => {
-  const file = `${DIR}\\temp_file_create_1_0.jpeg`;
-  assert.equal(pickVivoImage([file], DIR), file);
-  assert.equal(pickVivoImage([`${DIR.toUpperCase()}\\A.PNG`], DIR), `${DIR.toUpperCase()}\\A.PNG`);
-  assert.equal(pickVivoImage([file, file], DIR), null, "复制了两个文件不碰");
-  assert.equal(pickVivoImage([], DIR), null);
-  assert.equal(pickVivoImage(["D:\\别处\\a.jpg"], DIR), null, "别的夹里的图不碰");
-  assert.equal(pickVivoImage([`${DIR}x\\a.jpg`], DIR), null, "名字只是开头一样的夹不算");
-  assert.equal(pickVivoImage([`${DIR}\\a.txt`], DIR), null, "不是图片不碰");
+test("isBareImage：只认有图、没文件没字没网页片段没记号的", () => {
+  const base = { image: true, files: false, text: false, html: false, marker: false };
+  assert.equal(isBareImage(base), true, "vivo 复制：只有图");
+  assert.equal(isBareImage({ ...base, files: true }), false, "PixPin 带文件，不碰");
+  assert.equal(isBareImage({ ...base, html: true }), false, "浏览器复制图片带网页片段，不碰");
+  assert.equal(isBareImage({ ...base, text: true }), false);
+  assert.equal(isBareImage({ ...base, marker: true }), false, "自己放的不再转");
+  assert.equal(isBareImage({ ...base, image: false }), false);
+});
+
+test("transitFileName：PixPin 那种起法，同一秒第二张加 _2", () => {
+  const date = new Date(2026, 9, 18, 6, 7, 5);
+  assert.equal(transitFileName(date), "截图_2026-10-18_06-07-05.jpg");
+  assert.equal(transitFileName(date, 1), "截图_2026-10-18_06-07-05_2.jpg");
+});
+
+test("filesToPrune：只删本块起名的、最旧的，留最新 keep 张", () => {
+  const names = ["截图_2026-10-18_06-00-03.jpg", "截图_2026-10-18_06-00-01.jpg", "截图_2026-10-18_06-00-02.jpg", "别人的.jpg", "截图_乱起的.jpg"];
+  assert.deepEqual(filesToPrune(names, 2), ["截图_2026-10-18_06-00-01.jpg"]);
+  assert.deepEqual(filesToPrune(names, 5), []);
 });
 
 test("utf16z：UTF-16 加一个 0 结尾", () => {

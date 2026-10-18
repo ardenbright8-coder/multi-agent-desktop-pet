@@ -210,7 +210,7 @@ function blockList(): BlockInfo[] {
     { name: "Ctrl+Q 命令窗口", what: "终端里按 Ctrl+Q 弹一列命令按钮", state: running },
     {
       name: "vivo 截图复制",
-      what: "vivo 点「复制」后补一张图和图片位置，网页、微信、命令窗口都能贴",
+      what: "vivo 点「复制」后另存成图片文件放进剪贴板，网页、微信、命令窗口（Ctrl+V 贴位置）都能贴",
       state: vivo.state,
       detail: vivo.converted ? `这次开机补了 ${vivo.converted} 张` : "这次开机还没补过",
     },

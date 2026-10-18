@@ -1,26 +1,38 @@
-// vivo 截图复制：往剪贴板里塞的那几样东西怎么拼。全是纯函数，不碰系统，测试 testkit/tests/vivo-clip-format.test.ts 盯着。
+// vivo 截图复制：中转夹里的文件怎么起名、留几张，往剪贴板里塞的那几样东西怎么拼。全是纯函数，不碰系统，
+// 测试 testkit/tests/vivo-clip-format.test.ts 盯着。
 
-import { extname, join, resolve } from "node:path";
+/** 剪贴板里「一张光秃秃的图」另存到这个夹（vivo 接收夹旁边，不占 C 盘）。环境变量能改，测试用。 */
+export function transitDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  return env.VIVO中转夹 || "D:\\Downloads\\vivo办公套件\\截图中转";
+}
 
-const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"]);
+/** 中转夹只留最新这么多张，多的从最旧的删（只删本块存的、名字对得上的）。 */
+export const KEEP_FILES = 100;
+const NAME_PATTERN = /^截图_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?\.jpg$/;
 
-/** vivo 复制、拖图时先把图存到这里（vivo 程序里写死的，设置改不了）。 */
-export function vivoClipDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.VIVO截图夹) return env.VIVO截图夹;
-  return join(env.APPDATA || "", "vivoClipdata");
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** PixPin 那种起法：截图_2026-10-18_06-17-50.jpg。同一秒第二张加 _2。 */
+export function transitFileName(date: Date, sameSecondIndex = 0): string {
+  const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
+  return `截图_${stamp}${sameSecondIndex ? `_${sameSecondIndex + 1}` : ""}.jpg`;
+}
+
+/** 该删哪些：只认本块起的名字，按名字（也就是时间）排，留最新 keep 张。 */
+export function filesToPrune(names: readonly string[], keep = KEEP_FILES): string[] {
+  const ours = names.filter((name) => NAME_PATTERN.test(name)).sort();
+  return ours.slice(0, Math.max(0, ours.length - keep));
 }
 
 /**
- * 剪贴板里那几个文件是不是「vivo 刚复制的一张截图」：只认恰好一个文件、在 vivo 那个夹里、是图片。
- * 在文件夹里复制普通文件、一次复制好几个，都不算，原样不碰。
+ * 剪贴板里是不是「一张光秃秃的图」：有图，没有文件、没有字、没有网页片段、没有本块的记号。
+ * vivo 截图弹窗点「复制」就是这样（2026-10-18 实测：只有 PNG 和位图，连主人窗口都是空的）。
+ * PixPin（带文件）、浏览器里复制图片（带网页片段）、复制文字都不算，原样不碰。
  */
-export function pickVivoImage(paths: readonly string[], directory: string): string | null {
-  if (paths.length !== 1) return null;
-  const file = paths[0];
-  const folder = resolve(directory).toLowerCase();
-  const full = resolve(file).toLowerCase();
-  if (!full.startsWith(`${folder}\\`) && !full.startsWith(`${folder}/`)) return null;
-  return IMAGE_EXTENSIONS.has(extname(full)) ? file : null;
+export function isBareImage(has: { image: boolean; files: boolean; text: boolean; html: boolean; marker: boolean }): boolean {
+  return has.image && !has.files && !has.text && !has.html && !has.marker;
 }
 
 /** 以 0 结尾的 UTF-16 字符串（Windows 剪贴板的文字格式就要这个）。 */
