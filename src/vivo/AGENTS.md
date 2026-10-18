@@ -25,6 +25,6 @@
 - 千问语音输入法每说一句会借用剪贴板（先放字、约 1 秒后放回原样），放回来时带着本块的记号或那行字，不会再转一遍
 - 补的那行位置是给命令窗口 Ctrl+V 用的。哪个程序因此多贴出一行字，把 `vivo-clip.ts` 的 `PUT_PATH_TEXT` 改 false
 - 实测（2026-10-18）：照 vivo 的写法放一张 1440×3168 的图 → 中转夹多一张 jpg（约 400KB），剪贴板里有 文件 / 图 / PNG / 位置字 / 记号，只转一次
-- 拖图不走剪贴板，这块管不了：Claude Code 靠 E 盘 `70_钩子\脚本\拖图-vivo截图换成文件.cjs`，Pi 靠 `~\.pi\agent\extensions\vivo-drag.ts`
+- 🚨 **拖图拿不到原图**：vivo 弹窗里的截图在硬盘上没有文件，只有点「复制」「保存」才存到 `%APPDATA%\pcsuite\data\Notification\`（日志 `downloadImage originPath` 那行），拖图不存、只交一串 blob 链接。别拿「夹里最新一张」顶，会拿成上一次复制的那张（2026-10-18 拿错过）。拖图那头只删链接、提示点复制：Claude Code 插件 `~\.claude\mods\vivo-drag-image`、钩子 `70_钩子\脚本\拖图-vivo截图换成文件.cjs`，Pi 插件 `~\.pi\agent\extensions\vivo-drag.ts`（它还管 Pi 输入框里的 `[Image #N]` 图片块）
 
 _2026-10-18 建（待用户过目）_
