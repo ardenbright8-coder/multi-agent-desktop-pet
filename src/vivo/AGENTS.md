@@ -1,16 +1,17 @@
 # vivo —— vivo 截图复制（在 vivo 办公套件点「复制」后，哪都能 Ctrl+V）
 
-**这块管什么**：vivo 截图弹窗点「复制」放进剪贴板的是「一张光秃秃的图」（它的代码是 Electron 的 `clipboard.writeImage`，只有 PNG 和位图）。网页认；Claude Code 在 Windows 上读剪贴板图常失灵；命令窗口 Ctrl+V 只能贴字。这块每 0.3 秒看一眼剪贴板，看到光秃秃一张图，就存成 jpg 到中转夹 `D:\Downloads\vivo办公套件\截图中转\`（只留最新 100 张），再清空重放：这个文件 + 一张图（CF_DIB、PNG）+ 文件位置那行字 + 本块的记号。Claude Code、Pi 拿到图片文件位置会自己打开，这是社区公认最稳的路。只借桌宠程序当入口，不开窗口，只认 `shared`。
+**这块管什么**：vivo 截图弹窗点「复制」放进剪贴板的是「一张光秃秃的图」（它的代码是 Electron 的 `clipboard.writeImage`，只有 PNG 和位图）。网页认；Claude Code 在 Windows 上读剪贴板图常失灵；命令窗口 Ctrl+V 只能贴字。这块每 0.3 秒看一眼剪贴板，看到光秃秃一张图，就存成 jpg 到中转夹 `D:\Downloads\vivo办公套件\截图中转\`（只留最新 100 张），再清空重放：这个文件 + 一张图（CF_DIB、PNG）+ 文件位置那行字 + 本块的记号。Claude Code、Pi 拿到图片文件位置会自己打开，这是社区公认最稳的路。只借桌宠程序当入口，不开窗口，只认 `shared`。另管一件小事：开机看 vivo 拖图补丁还在不在。
 
 | 文件 | 管什么 |
 |---|---|
 | `vivo-clip.ts` | 入口：`initVivoClip` / `closeVivoClip` / `vivoClipStatus`（给「板块与内存」显示）。轮询、认图、存中转夹、补剪贴板、清旧图 |
 | `clip-format.ts` | 纯函数：认不认「光秃秃一张图」、中转夹起名和留几张、拼「复制的文件」和「一张图」两种格式。测试 `testkit/tests/vivo-clip-format.test.ts` |
 | `win32.ts` | 剪贴板的 Windows 调用（koffi）：看有没有某种格式、一次放几样、换格式编号 |
+| `drag-patch.ts` | 开机看一眼 vivo 拖图补丁还在不在（只读程序包目录和弹窗那个小文件找记号）；被升级盖掉就弹系统通知叫他双击重装。测试 `testkit/tests/vivo-drag-patch.test.ts` |
 
 ## 对外露出什么
 
-`initVivoClip  closeVivoClip  vivoClipStatus  VivoClipStatus`
+`initVivoClip  closeVivoClip  vivoClipStatus  VivoClipStatus`（状态里带 `dragPatch`：已装 / 被升级盖掉了 / 没装 vivo / 看不出来）
 
 ## 依赖谁
 
@@ -25,6 +26,7 @@
 - 千问语音输入法每说一句会借用剪贴板（先放字、约 1 秒后放回原样），放回来时带着本块的记号或那行字，不会再转一遍
 - 补的那行位置是给命令窗口 Ctrl+V 用的。哪个程序因此多贴出一行字，把 `vivo-clip.ts` 的 `PUT_PATH_TEXT` 改 false
 - 实测（2026-10-18）：照 vivo 的写法放一张 1440×3168 的图 → 中转夹多一张 jpg（约 400KB），剪贴板里有 文件 / 图 / PNG / 位置字 / 记号，只转一次
-- 🚨 **拖图拿不到原图**：vivo 弹窗里的截图在硬盘上没有文件，只有点「复制」「保存」才存到 `%APPDATA%\pcsuite\data\Notification\`（日志 `downloadImage originPath` 那行），拖图不存、只交一串 blob 链接。别拿「夹里最新一张」顶，会拿成上一次复制的那张（2026-10-18 拿错过）。拖图那头只删链接、提示点复制：Claude Code 插件 `~\.claude\mods\vivo-drag-image`、钩子 `70_钩子\脚本\拖图-vivo截图换成文件.cjs`，Pi 插件 `~\.pi\agent\extensions\vivo-drag.ts`（它还管 Pi 输入框里的 `[Image #N]` 图片块）
+- 🚨 **拖图靠改 vivo 程序包，不靠本块**（2026-10-18 他拍板改、实测拖进 Claude Code 出 `[Image #N]`）：vivo 原版弹窗里只有一张 160 像素宽的预览图（blob 链接），原图在手机上，点「复制」「保存」才下到 `%APPDATA%\pcsuite\data\Notification\`。补丁改 vivo `app.asar` 两处：弹窗一出就后台下原图（约 0.5 秒）、拖图时主程序 `startDrag` 交原图文件、该夹只留最新 10 张。补丁、备份、装/退脚本、说明都在 `D:\Downloads\vivo办公套件\拖图补丁\`（先读那里的 `00_这夹干嘛的.md`）。本块只管开机看补丁在不在
+- 补丁没装上或原图还没下好时拖，交出去的仍是 blob 链接：Claude Code 插件 `~\.claude\mods\vivo-drag-image`、钩子 `70_钩子\脚本\拖图-vivo截图换成文件.cjs`、Pi 插件 `~\.pi\agent\extensions\vivo-drag.ts` 删链接、提示「等 1 秒再拖或点复制」。🚨 别拿「夹里最新一张」顶，会拿成上一次的图（2026-10-18 拿错过）
 
 _2026-10-18 建（待用户过目）_

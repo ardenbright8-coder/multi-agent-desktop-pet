@@ -14,9 +14,10 @@
 
 import { mkdirSync, readdirSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { clipboard } from "electron";
+import { Notification, clipboard } from "electron";
 import { createLogger } from "../shared/log";
 import { bgraToDib24, buildDropFiles, filesToPrune, isBareImage, transitDirectory, transitFileName, utf16z } from "./clip-format";
+import { PATCH_DIR, checkDragPatch, type DragPatchState } from "./drag-patch";
 import { CF_DIB, CF_HDROP, CF_UNICODETEXT, loadVivoWin32, type VivoWin32 } from "./win32";
 
 const log = createLogger("vivo");
@@ -31,6 +32,8 @@ export interface VivoClipStatus {
   converted: number;
   lastFile: string;
   lastAt: number;
+  /** vivo 拖图补丁（改 vivo 程序包，拖弹窗里的图交原图文件）还在不在，开机看一次 */
+  dragPatch: DragPatchState;
 }
 
 let win32: VivoWin32 | null = null;
@@ -40,9 +43,10 @@ let pendingSequence = -1;
 let markerFormat = 0;
 let pngFormat = 0;
 let htmlFormat = 0;
-const status: VivoClipStatus = { state: "没启用", converted: 0, lastFile: "", lastAt: 0 };
+const status: VivoClipStatus = { state: "没启用", converted: 0, lastFile: "", lastAt: 0, dragPatch: "看不出来" };
 
 export function initVivoClip(): void {
+  watchDragPatch();
   try {
     win32 = loadVivoWin32();
     if (!win32) {
@@ -75,6 +79,21 @@ export function closeVivoClip(): void {
 
 export function vivoClipStatus(): VivoClipStatus {
   return { ...status };
+}
+
+function watchDragPatch(): void {
+  try {
+    status.dragPatch = checkDragPatch();
+    log.记(`vivo 拖图补丁：${status.dragPatch}`, "patch");
+    if (status.dragPatch !== "被升级盖掉了" || !Notification.isSupported()) return;
+    new Notification({
+      title: "vivo 拖图补丁被升级盖掉了",
+      body: `拖 vivo 截图又只能拖出链接了。双击 ${PATCH_DIR}\\双击装补丁.cmd 重新装上（会弹一次管理员确认）`,
+    }).show();
+  } catch (error) {
+    status.dragPatch = "看不出来";
+    log.出事("看 vivo 拖图补丁出错（不影响复制）", error, "patch");
+  }
 }
 
 function tick(): void {
