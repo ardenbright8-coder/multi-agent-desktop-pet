@@ -1,10 +1,16 @@
 // vivo 拖图补丁还在不在（2026-10-18 用户拍板装的补丁）：补丁改的是 vivo 自己的程序包 app.asar，
 // vivo 一升级就被盖掉。这里开机看一眼：只读程序包开头的目录和弹窗那一个小文件（几十 KB），找补丁记号。
-// 补丁本体、装补丁和退回原版的脚本都在 PATCH_DIR，不在桌宠里。
+// 补丁脚本在代码夹 `vivo配套（…）\拖图补丁\`（不进桌宠程序），大文件备份在 D 盘。
 import { closeSync, existsSync, openSync, readSync } from "node:fs";
+import { join } from "node:path";
 
 export const VIVO_ASAR = "C:\\Program Files (x86)\\pcsuite\\resources\\app.asar";
-export const PATCH_DIR = process.env.VIVO拖图补丁夹 || "D:\\Downloads\\vivo办公套件\\拖图补丁";
+export const KIT_DIR_NAME = "vivo配套（拖图补丁·插件·一键装）";
+
+/** 双击重装补丁的那个文件。appRoot = 桌宠代码夹（app.getAppPath()） */
+export function patchCmd(appRoot: string): string {
+  return join(appRoot, KIT_DIR_NAME, "拖图补丁", "双击装补丁.cmd");
+}
 const MARK = "AGENTPET_VIVO_DRAG_PATCH_v1";
 const POPUP = ["dist", "electron", "174.js"];
 

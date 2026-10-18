@@ -44,7 +44,7 @@ shared（谁都不依赖）
 | 管道、preload 暴露的接口 | `src/channel/` |
 | 看板的任何东西 | `src/bookmark/`（函数名用 `bm` 前缀，防跟桌宠界面全局撞名） |
 | 终端里 Ctrl+Q 弹出的命令按钮窗口 | `src/quickcmd/`（改之前读它自己的 `AGENTS.md`） |
-| vivo 截图复制（剪贴板补图） | `src/vivo/` |
+| vivo 截图复制（剪贴板补图） | `src/vivo/`；拖图补丁、Claude Code 和 Pi 插件正本、换电脑一键装在 `vivo配套（拖图补丁·插件·一键装）/`（不参与编译） |
 | 「板块与内存」窗口 | `src/overview/`。**并入新板块**：新建 `src/<块名>/` 只认 shared → `检查边界.mjs` 登记 → app.ts 起它、往 `blockList()` 加一行 |
 | 四家 Agent 的插件／钩子本体 | 项目根 `integrations/`（不参与编译，改协议字段要同步改这里） |
 | 跨块共用的小工具 | **三块以上真在用**才进 `src/shared/`。两块在用就放其中一块 |
@@ -70,7 +70,7 @@ shared（谁都不依赖）
 
 0. **提交时自动查**：`.githooks/pre-commit` 跑边界检查和类型检查，几秒。新克隆的库先跑一次 `git config core.hooksPath .githooks` 才生效
 1. `node 检查边界.mjs` → 退出码 0
-2. `npm test` → 全过。2026-10-18 基线：234 + 4 项
+2. `npm test` → 全过。2026-10-18 基线：235 + 4 项
 3. 动了界面的，再跑 `npm run controls`、`npm run lifecycle`、`npm run smoke`。controls 基线 `buttons=14 dynamic=6 inputs=4 window=12`
 
 🚨 **`npm test` 和所有 `npm run` 测试都会先清空 `dist/` 再重建，而桌面图标跑的就是 `dist/`。** 用户的桌宠开着时跑测试，等于在它脚底下换地板。跑之前看一眼有没有 `--skip-integration-install` 那个 electron 进程在跑；在跑就提醒用户，或者跑完提醒他重开一次桌宠。

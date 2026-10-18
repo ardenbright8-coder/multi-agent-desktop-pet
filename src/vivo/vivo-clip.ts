@@ -14,10 +14,10 @@
 
 import { mkdirSync, readdirSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { Notification, clipboard } from "electron";
+import { Notification, app, clipboard } from "electron";
 import { createLogger } from "../shared/log";
 import { bgraToDib24, buildDropFiles, filesToPrune, isBareImage, transitDirectory, transitFileName, utf16z } from "./clip-format";
-import { PATCH_DIR, checkDragPatch, type DragPatchState } from "./drag-patch";
+import { checkDragPatch, patchCmd, type DragPatchState } from "./drag-patch";
 import { CF_DIB, CF_HDROP, CF_UNICODETEXT, loadVivoWin32, type VivoWin32 } from "./win32";
 
 const log = createLogger("vivo");
@@ -88,7 +88,7 @@ function watchDragPatch(): void {
     if (status.dragPatch !== "被升级盖掉了" || !Notification.isSupported()) return;
     new Notification({
       title: "vivo 拖图补丁被升级盖掉了",
-      body: `拖 vivo 截图又只能拖出链接了。双击 ${PATCH_DIR}\\双击装补丁.cmd 重新装上（会弹一次管理员确认）`,
+      body: `拖 vivo 截图又只能拖出链接了。双击 ${patchCmd(app.getAppPath())} 重新装上（会弹一次管理员确认）`,
     }).show();
   } catch (error) {
     status.dragPatch = "看不出来";

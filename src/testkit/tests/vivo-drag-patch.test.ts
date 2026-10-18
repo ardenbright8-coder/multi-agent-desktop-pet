@@ -1,11 +1,15 @@
 // vivo 拖图补丁检查单测：拿假的程序包（照 vivo app.asar 的格式拼）看认不认得出补丁记号。不碰真 vivo。
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import { checkDragPatch } from "../../vivo/drag-patch";
+import { checkDragPatch, patchCmd } from "../../vivo/drag-patch";
+
+test("patchCmd：开机提醒里让他双击的那个文件真的在（配套夹改名了这里会红）", () => {
+  assert.ok(existsSync(patchCmd(resolve(__dirname, "../../.."))));
+});
 
 function fakeAsar(popup: string): string {
   const body = Buffer.from(popup);

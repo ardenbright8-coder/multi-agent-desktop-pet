@@ -1,0 +1,1 @@
+{ "name": "vivo-drag-image", "version": "0.1.0", "description": "从 vivo 办公套件拖截图进来时删掉拿不到图的 blob 链接，提示点复制再 Ctrl+V" }
