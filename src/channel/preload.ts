@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("agentPet", {
   showWindow: (): void => ipcRenderer.send("window:show"),
   openLogs: (): void => ipcRenderer.send("window:open-logs"),
   quitApp: (): void => ipcRenderer.send("window:quit"),
+  openOverview: (): void => ipcRenderer.send("window:open-overview"),
   reportError: (info: { message: string; where?: string; stack?: string }): void => ipcRenderer.send("window:renderer-error", info),
   onNoteSide: (listener: (side: "left" | "right") => void): void => {
     ipcRenderer.on("pet:note-side", (_event, side: "left" | "right") => listener(side));

@@ -17,7 +17,12 @@ import { logRoot } from "../shared/log";
 
 const log = createLogger("window");
 
-export function registerWindowIpc(): void {
+/** app.ts 注入的别的板块入口（pet 不 import 它们，隔离规矩）。 */
+export interface WindowIpcExtras {
+  openOverview?(): void;
+}
+
+export function registerWindowIpc(extras: WindowIpcExtras = {}): void {
   // 界面只报「按下了、松开了」和按下时鼠标在窗口里的偏移，坐标一律由主进程自己读系统光标。
   // 界面给的 screenX/screenY 是物理像素，跟 setPosition 要的 DIP 差一个缩放倍数（见 window.ts）。
   ipcMain.on("window:drag-start", (_event, offset: Record<string, unknown>) => {
@@ -38,6 +43,8 @@ export function registerWindowIpc(): void {
   ipcMain.on("window:show", () => showMainWindow());
   ipcMain.on("window:open-logs", () => { void shell.openPath(logRoot()); });
   ipcMain.on("window:quit", () => { setShuttingDown(true); app.quit(); });
+  // 2026-10-18：右键菜单「板块与内存」
+  ipcMain.on("window:open-overview", () => extras.openOverview?.());
   // 界面里出的错以前谁也看不见，现在一律落到 window 那本日志里
   ipcMain.on("window:renderer-error", (_event, info: { message?: unknown; where?: unknown; stack?: unknown }) => {
     log.出事(`界面出错：${String(info?.message ?? "未知")}`, info?.stack ? String(info.stack) : undefined, String(info?.where ?? "renderer"));

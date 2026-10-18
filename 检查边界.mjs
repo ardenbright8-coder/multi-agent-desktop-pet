@@ -42,8 +42,12 @@ const allowed = {
   bookmark: ["shared"],
   // quickcmd（Agent命令快捷窗口）2026-10-12 并入：跟 bookmark 一样只认 shared，只借程序当入口。
   quickcmd: ["shared"],
-  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd"],
-  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "testkit"],
+  // vivo（vivo 截图复制）2026-10-18 并入：后台盯剪贴板，不开窗口，只认 shared。
+  vivo: ["shared"],
+  // overview（板块与内存总览）2026-10-18 并入：各板块状态由 app.ts 注入，它不 import 任何板块。
+  overview: ["shared"],
+  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "vivo", "overview"],
+  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "vivo", "overview", "testkit"],
 };
 
 // ---------- 每块根上哪些文件是对外入口（别的块只准 import 这些）----------
@@ -57,6 +61,8 @@ const publicEntries = {
   integrations: ["manager.ts"],
   bookmark: ["panel-window.ts", "store.ts", "preload.ts", "dock.ts"],
   quickcmd: ["quickcmd-window.ts"],
+  vivo: ["vivo-clip.ts"],
+  overview: ["overview-window.ts"],
   testkit: ["modes.ts", "controls-test.ts", "lifecycle.ts", "screenshot.ts", "single-instance.ts", "smoke.ts", "host.ts"],
 };
 

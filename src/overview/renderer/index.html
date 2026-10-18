@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+<title>板块与内存</title>
+<link rel="stylesheet" href="overview.css">
+</head>
+<body>
+  <section class="card">
+    <h1>装了几个板块</h1>
+    <p class="sub" id="block-count">读取中…</p>
+    <ul id="blocks" class="blocks"></ul>
+  </section>
+  <section class="card">
+    <h1>占多少内存</h1>
+    <div class="meter">
+      <div class="meter-bar"><div id="meter-fill" class="meter-fill"></div><div id="mark-yellow" class="mark"></div><div id="mark-red" class="mark"></div></div>
+      <div class="meter-text"><span id="total" class="total">—</span><span id="level" class="level"></span></div>
+    </div>
+    <p class="sub" id="room"></p>
+    <ul id="procs" class="procs"></ul>
+    <p class="note">数的是每个进程自己独占的内存，比任务管理器里那个合计准（那个把几块共用的重复算了）。这个窗口自己不算在内。</p>
+  </section>
+  <script src="overview.js"></script>
+</body>
+</html>

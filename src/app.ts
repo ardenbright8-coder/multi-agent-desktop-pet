@@ -27,6 +27,8 @@ import { registerWindowIpc } from "./pet/window-ipc";
 import { createTray, createTrayActions } from "./pet/tray";
 import { closeBookmarkPanel, initBookmarkPanel, toggleBookmarkPanel } from "./bookmark/panel-window";
 import { closeQuickCmd, initQuickCmd } from "./quickcmd/quickcmd-window";
+import { closeVivoClip, initVivoClip, vivoClipStatus } from "./vivo/vivo-clip";
+import { closeOverview, initOverview, openOverview, type BlockInfo } from "./overview/overview-window";
 import { controlsMode, lifecycleMode, screenshotMode, singleInstanceHostMode, smokeMode, testMode, testModeName } from "./testkit/modes";
 import { runControlsTest } from "./testkit/controls-test";
 import { runLifecycleTest } from "./testkit/lifecycle";
@@ -52,6 +54,7 @@ let quitCleanupStarted = false;
 let cleanupComplete = false;
 let secondInstanceCount = 0;
 let lastControlsInteractionResponse: InteractionResponseInput | null = null;
+let bookmarkState: BlockInfo["state"] = "没启用";
 
 const testHost: TestHost = {
   getTray: () => tray,
@@ -113,15 +116,21 @@ async function bootstrap(): Promise<void> {
       if (controlsMode) lastControlsInteractionResponse = response;
     },
   });
-  registerWindowIpc();
+  registerWindowIpc({ openOverview });
   // 书签台（独立板块，2026-09-09 并入）：坏了不许连坐桌宠本体，这里兠住。
   try {
     initBookmarkPanel({ hotkey: !testMode, resident: !testMode, inbox: !testMode, liveRestart: !testMode });
+    bookmarkState = "在跑";
   } catch (error) {
+    bookmarkState = "出错";
     log.出事("书签台初始化失败（不影响桌宠本体）", error, "bookmark");
   }
   // Agent命令快捷窗口（独立板块，2026-10-12 并入）：终端里按 Ctrl+Q 弹出。自测不起，别跟真机抢 Ctrl+Q。
   if (!testMode) initQuickCmd();
+  // vivo 截图复制（独立板块，2026-10-18 并入）：后台盯剪贴板。自测不起，别动真机剪贴板。
+  if (!testMode) initVivoClip();
+  // 板块与内存（2026-10-18）：右键「板块与内存」看装了几个板块、占多少内存。新并入板块记得往 blockList 里加一行。
+  initOverview(blockList);
   const cleanupTimer = setInterval(() => hub.cleanup(), 10_000);
   cleanupTimer.unref();
 
@@ -140,7 +149,7 @@ async function bootstrap(): Promise<void> {
 
   const mainWindow = createPetWindow(hub);
   watchDisplayChanges();
-  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel });
+  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel, openOverview });
   tray = createTray(hub, trayActions);
   hub.on("snapshot", (snapshot) => {
     const window = getPetWindow();
@@ -164,6 +173,8 @@ async function bootstrap(): Promise<void> {
     persistWindowPosition();
     closeBookmarkPanel();
     closeQuickCmd();
+    closeVivoClip();
+    closeOverview();
     Promise.resolve(ipcServer?.close())
       .catch(logError)
       .finally(() => {
@@ -187,6 +198,23 @@ async function bootstrap(): Promise<void> {
       getLastInteractionResponse: () => lastControlsInteractionResponse,
     });
   }
+}
+
+/** 「板块与内存」窗口里列的板块。一个板块一行，新并入的往这儿加。 */
+function blockList(): BlockInfo[] {
+  const vivo = vivoClipStatus();
+  const running: BlockInfo["state"] = testMode ? "没启用" : "在跑";
+  return [
+    { name: "桌宠本体", what: "盯各家 AI 的状态，弹询问、权限、完成；点座位切回终端", state: "在跑" },
+    { name: "Agent 看板", what: "派活、交接单、随手记", state: bookmarkState },
+    { name: "Ctrl+Q 命令窗口", what: "终端里按 Ctrl+Q 弹一列命令按钮", state: running },
+    {
+      name: "vivo 截图复制",
+      what: "vivo 点「复制」后补一张图和图片位置，网页、微信、命令窗口都能贴",
+      state: vivo.state,
+      detail: vivo.converted ? `这次开机补了 ${vivo.converted} 张` : "这次开机还没补过",
+    },
+  ];
 }
 
 function logError(error: unknown): void {

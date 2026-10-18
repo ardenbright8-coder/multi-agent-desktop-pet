@@ -58,6 +58,7 @@ petMenu.addEventListener("click", (event) => {
   else if (action === "hide") window.agentPet.hideWindow();
   else if (action === "simulate") window.agentPet.simulate();
   else if (action === "logs") window.agentPet.openLogs();
+  else if (action === "overview") window.agentPet.openOverview();
   else if (action === "quit") window.agentPet.quitApp();
 });
 // 点菜单外面收起；Esc 收起
