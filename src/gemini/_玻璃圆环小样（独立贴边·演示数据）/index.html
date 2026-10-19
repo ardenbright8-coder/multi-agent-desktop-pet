@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gemini玻璃圆环 · 界面预览（演示数据）</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <svg class="filter-defs" aria-hidden="true"><defs>
+    <filter id="orb-glass" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feImage id="orb-map" result="map" preserveAspectRatio="none"/>
+      <feDisplacementMap in="SourceGraphic" in2="map" scale="-9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="panel-glass" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feImage id="panel-map" result="map" preserveAspectRatio="none"/>
+      <feDisplacementMap in="SourceGraphic" in2="map" scale="-12" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs></svg>
+
+  <div id="orbShell" class="orb-shell">
+    <button id="orb" class="orb-button glass" data-hit aria-label="Gemini剩余额度，悬停展开，右键详情，拖动贴边">
+      <span class="glass-refract orb-refract"></span>
+      <span class="orb-tint"></span>
+      <span class="orb-specular"></span>
+      <svg id="orbRings" class="orb-rings" viewBox="0 0 64 64" aria-hidden="true"></svg>
+      <span id="orbValue" class="orb-value"><span id="orbNumber">68</span><small>%</small></span>
+    </button>
+  </div>
+
+  <main id="panel" class="glass-panel glass" data-hit aria-label="Gemini用量预览">
+    <div class="glass-refract panel-refract"></div>
+    <div class="panel-tint"></div>
+    <div class="panel-specular"></div>
+    <div class="panel-content">
+      <header class="panel-header">
+        <div class="brand">
+          <svg class="brand-symbol" width="24" height="24" viewBox="0 0 32 32" aria-hidden="true"><defs>
+            <linearGradient id="gemini-color" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#558ff5"/><stop offset="1" stop-color="#4ec6b1"/></linearGradient>
+          </defs><path fill="url(#gemini-color)" d="M16 1C14 10 10 14 1 16c9 2 13 6 15 15 2-9 6-13 15-15C22 14 18 10 16 1Z"/></svg>
+          <div><strong>Gemini</strong><span id="headerSubtitle">5 小时额度</span></div>
+        </div>
+        <button class="icon-button close-button" data-action="close" title="收起" aria-label="收起用量卡片">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+
+      <section id="summary" class="summary">
+        <div class="hero">
+          <div><div id="heroCaption" class="hero-caption">当前最低余量 · 2号</div>
+            <div class="hero-value"><span id="heroNumber">68</span><span class="percent-sign">%</span><span class="remaining-word">剩余</span></div>
+          </div>
+          <svg id="heroRings" class="hero-rings" viewBox="0 0 64 64" aria-hidden="true"></svg>
+        </div>
+        <div id="accountList" class="account-list"></div>
+      </section>
+
+      <section id="details" class="details" hidden>
+        <div id="accountTabs" class="account-tabs" role="tablist" aria-label="选择账号"></div>
+        <div class="detail-lead">
+          <span>5 小时剩余</span><strong><span id="detailNumber">68</span><small>%</small></strong>
+        </div>
+        <div class="detail-grid">
+          <div><span>5 小时重置</span><strong id="detailReset">16:05</strong></div>
+          <div><span>本周剩余</span><strong id="detailWeekly">55%</strong></div>
+          <div><span>本周重置</span><strong id="detailWeeklyReset">周六 10:00</strong></div>
+          <div><span>套餐 / 充值余额</span><strong class="not-connected">尚未接入</strong></div>
+        </div>
+        <p class="preview-note"><span class="note-dot"></span>这是界面演示，不是账号实际用量。</p>
+        <div class="demo-controls">
+          <span>演示账号数</span>
+          <div class="segment" id="countChoices" aria-label="切换演示账号数">
+            <button data-count="1">1</button><button data-count="2">2</button><button data-count="3">3</button>
+          </div>
+        </div>
+        <div class="dock-controls">
+          <span>小球吸附</span><div><button data-action="left">左侧</button><button data-action="right">右侧</button></div>
+        </div>
+      </section>
+
+      <footer class="panel-footer">
+        <span class="preview-label"><i></i>演示数据</span>
+        <button id="detailsButton" class="text-button" data-action="details">查看详情 <span>↗</span></button>
+        <div id="detailFooter" class="detail-footer" hidden>
+          <button class="text-button muted" data-action="quit">退出预览</button>
+          <button class="text-button" data-action="back">返回 <span>↶</span></button>
+        </div>
+      </footer>
+    </div>
+  </main>
+  <script src="ui.js"></script>
+</body>
+</html>
