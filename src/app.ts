@@ -29,6 +29,7 @@ import { closeBookmarkPanel, initBookmarkPanel, toggleBookmarkPanel } from "./bo
 import { closeQuickCmd, initQuickCmd } from "./quickcmd/quickcmd-window";
 import { closeVivoClip, initVivoClip, vivoClipStatus } from "./vivo/vivo-clip";
 import { closeOverview, initOverview, openOverview, type BlockInfo } from "./overview/overview-window";
+import { initGeminiQuota, closeGeminiQuota, toggleGeminiQuota, geminiQuotaStatus } from "./gemini/gemini-quota";
 import { controlsMode, lifecycleMode, screenshotMode, singleInstanceHostMode, smokeMode, testMode, testModeName } from "./testkit/modes";
 import { runControlsTest } from "./testkit/controls-test";
 import { runLifecycleTest } from "./testkit/lifecycle";
@@ -129,6 +130,8 @@ async function bootstrap(): Promise<void> {
   if (!testMode) initQuickCmd();
   // vivo 截图复制（独立板块，2026-10-18 并入）：后台盯剪贴板。自测不起，别动真机剪贴板。
   if (!testMode) initVivoClip();
+  // Gemini额度（独立第五板块）：官网只读采集，提示球不聚焦、不截鼠标，异常不连坐原有板块。
+  if (!testMode) await initGeminiQuota({ anchor: () => getPetWindow()?.getBounds() });
   // 板块与内存（2026-10-18）：右键「板块与内存」看装了几个板块、占多少内存。新并入板块记得往 blockList 里加一行。
   initOverview(blockList);
   const cleanupTimer = setInterval(() => hub.cleanup(), 10_000);
@@ -149,7 +152,7 @@ async function bootstrap(): Promise<void> {
 
   const mainWindow = createPetWindow(hub);
   watchDisplayChanges();
-  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel, openOverview });
+  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel, openOverview, openGeminiQuota: toggleGeminiQuota });
   tray = createTray(hub, trayActions);
   hub.on("snapshot", (snapshot) => {
     const window = getPetWindow();
@@ -175,7 +178,7 @@ async function bootstrap(): Promise<void> {
     closeQuickCmd();
     closeVivoClip();
     closeOverview();
-    Promise.resolve(ipcServer?.close())
+    Promise.all([ipcServer?.close(), closeGeminiQuota()])
       .catch(logError)
       .finally(() => {
         cleanupComplete = true;
@@ -203,6 +206,7 @@ async function bootstrap(): Promise<void> {
 /** 「板块与内存」窗口里列的板块。一个板块一行，新并入的往这儿加。 */
 function blockList(): BlockInfo[] {
   const vivo = vivoClipStatus();
+  const gemini = geminiQuotaStatus();
   const running: BlockInfo["state"] = testMode ? "没启用" : "在跑";
   return [
     { name: "桌宠本体", what: "盯各家 AI 的状态，弹询问、权限、完成；点座位切回终端", state: "在跑" },
@@ -214,6 +218,7 @@ function blockList(): BlockInfo[] {
       state: vivo.state,
       detail: `${vivo.converted ? `这次开机补了 ${vivo.converted} 张` : "这次开机还没补过"}｜拖图补丁：${vivo.dragPatch}`,
     },
+    { name: "Gemini 用量", what: "每账号一个小提示球，只常显5小时额度和重置时间；周额度后台保留", state: gemini.state, detail: gemini.detail },
   ];
 }
 

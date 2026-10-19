@@ -46,8 +46,10 @@ const allowed = {
   vivo: ["shared"],
   // overview（板块与内存总览）2026-10-18 并入：各板块状态由 app.ts 注入，它不 import 任何板块。
   overview: ["shared"],
-  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "vivo", "overview"],
-  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "vivo", "overview", "testkit"],
+  // Gemini用量：只读官网数据，独立存储和提示球，不混入Agent事件。
+  gemini: ["shared"],
+  testkit: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "vivo", "overview", "gemini"],
+  app: ["shared", "events", "interaction", "channel", "pet", "integrations", "bookmark", "quickcmd", "vivo", "overview", "gemini", "testkit"],
 };
 
 // ---------- 每块根上哪些文件是对外入口（别的块只准 import 这些）----------
@@ -63,6 +65,7 @@ const publicEntries = {
   quickcmd: ["quickcmd-window.ts"],
   vivo: ["vivo-clip.ts"],
   overview: ["overview-window.ts"],
+  gemini: ["gemini-quota.ts"],
   testkit: ["modes.ts", "controls-test.ts", "lifecycle.ts", "screenshot.ts", "single-instance.ts", "smoke.ts", "host.ts"],
 };
 

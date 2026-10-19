@@ -4,7 +4,7 @@
 
 ## 先去读哪份
 
-- **要改某一块的代码** → 那块夹口的 `src/<块名>/AGENTS.md`。十块全有，进那块之前先读它，然后只开那一个文件
+- **要改某一块的代码** → 那块夹口的 `src/<块名>/AGENTS.md`。各块全有，进那块之前先读它，然后只开那一个文件
 - **要动通知、权限、完成弹窗** → 项目根 `弹窗规矩（什么时候该弹·代码怎么改·所有Agent必读）.md`，什么事才配弹窗、钩子输出格式都在那
 - **想知道某块什么时候动过、为什么这么改** → 本夹 `00_组合清单（现行版·哪块什么时候动的）.md`
 - **改面板长相、文案** → `design（现行设计·表述规则）/` 和本夹 `DESIGN.md`。两份面板参考图是用户敲定的，以图为准
@@ -16,14 +16,14 @@
 
 ## 这库怎么转
 
-一个程序里住着几个互不相干的板块：**桌宠**（盯着各家 AI 的状态，弹询问／权限／完成面板）、**Agent 看板**（`src/bookmark/`）、**Ctrl+Q 命令窗口**（`src/quickcmd/`）、**vivo 截图复制**（`src/vivo/`）。各板块只共用 `shared` 底座，谁崩了都不许连坐别人。右键「板块与内存」（`src/overview/`）列出装了几个、占多少内存。
+一个程序里住着几个互不相干的板块：**桌宠**（盯着各家 AI 的状态，弹询问／权限／完成面板）、**Agent 看板**（`src/bookmark/`）、**Ctrl+Q 命令窗口**（`src/quickcmd/`）、**vivo 截图复制**（`src/vivo/`）、**Gemini 用量提示球**（`src/gemini/`）。各板块只共用 `shared` 底座，谁崩了都不许连坐别人。右键「板块与内存」（`src/overview/`）列出装了几个、占多少内存。
 
 依赖链单向，`node 检查边界.mjs` 机器卡着：
 
 ```
 shared（谁都不依赖）
   → interaction → events → channel / pet
-  → integrations、bookmark、quickcmd、vivo、overview（都只认 shared）
+  → integrations、bookmark、quickcmd、vivo、overview、gemini（都只认 shared）
   → testkit、src/app.ts（装配，可以调所有人，没人许调它们）
 ```
 
@@ -46,6 +46,7 @@ shared（谁都不依赖）
 | 终端里 Ctrl+Q 弹出的命令按钮窗口 | `src/quickcmd/`（改之前读它自己的 `AGENTS.md`） |
 | vivo 截图复制（剪贴板补图） | `src/vivo/`；拖图补丁、Claude Code 和 Pi 插件正本、换电脑一键装在 `vivo配套（拖图补丁·插件·一键装）/`（不参与编译） |
 | 「板块与内存」窗口 | `src/overview/`。**并入新板块**：新建 `src/<块名>/` 只认 shared → `检查边界.mjs` 登记 → app.ts 起它、往 `blockList()` 加一行 |
+| Gemini账号额度、重置时间、小提示球和只读采集器 | `src/gemini/`（只认shared；后台收件与账号数据独立，不混Agent事件） |
 | 四家 Agent 的插件／钩子本体 | 项目根 `integrations/`（不参与编译，改协议字段要同步改这里） |
 | 跨块共用的小工具 | **三块以上真在用**才进 `src/shared/`。两块在用就放其中一块 |
 | 单元测试 | `src/testkit/tests/<名字>.test.ts`，`npm test` 自动扫 |

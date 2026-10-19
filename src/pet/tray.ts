@@ -21,11 +21,13 @@ export interface PetTrayActions {
   openBookmark?(): void;
   /** 打开「板块与内存」窗口。app.ts 注入，pet 不认识 overview 块。 */
   openOverview?(): void;
+  /** 独立Gemini提示球显隐，由app.ts注入，不认识gemini内部。 */
+  openGeminiQuota?(): void;
 }
 
 export function createTrayActions(
   hub: AgentHub,
-  extra?: Partial<Pick<PetTrayActions, "openBookmark" | "openOverview">>,
+  extra?: Partial<Pick<PetTrayActions, "openBookmark" | "openOverview" | "openGeminiQuota">>,
 ): PetTrayActions {
   return {
     show: showMainWindow,
@@ -56,6 +58,7 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
       { label: "设置（大小与活泼程度）", click: actions.openSettings },
       { label: "书签台（随手记）", click: () => actions.openBookmark?.() },
       { label: "板块与内存", click: () => actions.openOverview?.() },
+      { label: "Gemini用量提示球（显示/收起）", click: () => actions.openGeminiQuota?.() },
       { label: "聊天框换个边", click: actions.flipNote },
       { label: `事件中心：${diagnostics.server.running ? "正常" : "异常"}`, enabled: false },
       { label: `已索引：${diagnostics.journal.count} 条`, enabled: false },
