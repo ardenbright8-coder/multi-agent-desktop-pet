@@ -231,6 +231,8 @@ function bmInit() {
   }, true);
   window.addEventListener("blur", () => bmHideCtxMenu());
   bmInitClipboard();
+  bmInitTypingHold();
+  bmInitHoverFocus();
   window.addEventListener("focus", () => { void bmRefresh(); });
   // 手机消息入库后的推送刷新（主进程收信后发 bookmark:inbox-changed）。
   window.bookmark.onInboxChanged?.(() => { void bmRefresh(); });
@@ -272,7 +274,8 @@ async function bmRefresh() {
     bmBundleMeta = meta || {};
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
     // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
-    if (bmDragActive || bmImagesBusy) {
+    // 正在框里打字、语音输入时也不重画，离开这个框再补画（bmHoldForTyping）。
+    if (bmDragActive || bmImagesBusy || bmHoldForTyping()) {
       bmRefreshPending = true;
       return;
     }
@@ -310,6 +313,80 @@ async function bmRefresh() {
   } catch (error) {
     bmShowError("看板读不出来： " + bmErrorText(error));
   }
+}
+
+// ── 打字、语音输入时不重画（2026-10-24 看板 Claude 01/02）─────────────
+// 豆包语音输入法说两句就断、字消掉：每停顿一下自动存一次，存完整张看板重画，正在说话的框被拆掉重建，
+// 输入法跟着断了；窗口一拿焦点、手机来消息也会重画。现在框里还在写（有草稿或正在改字），
+// 看板拿着焦点或输入法正在组字，就先记下「欠一次重画」，离开这个框再补。
+// 收起（回车、点别处）前会先把草稿 / bmEditingId 清掉，所以收起那一下照常重画。
+let bmComposing = false;
+
+function bmHoldForTyping() {
+  const active = bmActiveImageInput();
+  if (!active || !active.matches || !active.matches(".insert-row textarea, .task-edit")) return false;
+  if (!bmInsertDraft && !bmEditingId) return false;
+  return bmComposing || document.hasFocus();
+}
+
+function bmFlushTypingRefresh() {
+  window.setTimeout(() => {
+    if (!bmRefreshPending || bmHoldForTyping() || bmDragActive || bmImagesBusy) return;
+    bmRefreshPending = false;
+    void bmRefresh();
+  }, 0);
+}
+
+function bmInitTypingHold() {
+  document.addEventListener("compositionstart", () => { bmComposing = true; }, true);
+  document.addEventListener("compositionend", () => { bmComposing = false; }, true);
+  // 重画拔框也会触发 focusout，那时 bmRepainting 为真，不算人离开
+  document.addEventListener("focusout", () => { if (!bmRepainting) { bmComposing = false; bmFlushTypingRefresh(); } }, true);
+  window.addEventListener("blur", bmFlushTypingRefresh);
+}
+
+// ── 鼠标碰到看板就能直接按键（2026-10-24 看板 Claude 01）─────────────
+// 在别的窗口聊着，鼠标挪进看板停 250ms 就把焦点拿过来，Ctrl+X、Delete 不用先点一下看板。
+// 只碰了一下、没点没按键就移走：焦点还给原来那个窗口，不打断人家打字。
+const BM_HOVER_FOCUS_MS = 250;
+
+function bmInitHoverFocus() {
+  if (!window.bookmark.hoverFocus) return;
+  let timer = null;
+  let byHover = false; // 这次焦点是鼠标碰进来拿的，还没在看板里点过、按过键
+  let inside = false;
+  const root = document.documentElement;
+  const giveBack = () => {
+    if (!byHover) return;
+    byHover = false;
+    if (document.hasFocus()) void window.bookmark.hoverGiveBack().catch(() => undefined);
+  };
+  root.addEventListener("mouseenter", () => {
+    inside = true;
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(async () => {
+      timer = null;
+      if (document.hasFocus()) return;
+      try {
+        byHover = Boolean(await window.bookmark.hoverFocus());
+      } catch {
+        byHover = false;
+      }
+      if (!inside) giveBack(); // 拿焦点那一下鼠标已经移走了
+    }, BM_HOVER_FOCUS_MS);
+  });
+  root.addEventListener("mouseleave", () => {
+    inside = false;
+    if (timer) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+    giveBack();
+  });
+  // 点过、按过键＝真在看板里干活，鼠标移走也不还
+  window.addEventListener("pointerdown", () => { byHover = false; }, true);
+  window.addEventListener("keydown", () => { byHover = false; }, true);
+  window.addEventListener("blur", () => { byHover = false; });
 }
 
 function bmErrorText(error) {
@@ -1814,7 +1891,8 @@ async function bmInsertCommit(opts = {}) {
   await bmRefresh();
   if (!hadFocus) return;
   const input = bmFindInsertInput(draft.groupKey, !draft.anchorId);
-  if (!input) return;
+  // 打字时没重画、框还是原来那个：光标别往回挪（存档那会儿人可能又写了几个字）
+  if (!input || bmEditorHasFocus(input)) return;
   input.focus();
   const at = typeof caret === "number" ? caret : input.value.length;
   input.setSelectionRange(at, at);
@@ -1898,7 +1976,7 @@ async function bmDetailCommit(id, input, close) {
   await bmRefresh();
   if (!hadFocus) return;
   const next = document.querySelector(".task-detail-edit");
-  if (!next) return;
+  if (!next || bmEditorHasFocus(next)) return;
   next.focus();
   const at = typeof caret === "number" ? caret : next.value.length;
   next.setSelectionRange(at, at);
@@ -1944,7 +2022,7 @@ async function bmEditCommit(id, input, close) {
   await bmRefresh();
   if (!hadFocus) return;
   const next = document.querySelector(".task-edit");
-  if (!next) return;
+  if (!next || bmEditorHasFocus(next)) return;
   next.focus();
   const at = typeof caret === "number" ? caret : next.value.length;
   next.setSelectionRange(at, at);

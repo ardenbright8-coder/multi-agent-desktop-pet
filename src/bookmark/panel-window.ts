@@ -239,6 +239,99 @@ function loadLaunchWin32(): LaunchWin32 | null {
   return launchWin32;
 }
 
+// ── 鼠标碰到看板就能直接按键（2026-10-24 看板 Claude 01）──────────────
+// 用户在 Claude Code 里聊着，鼠标挪到看板上按 Ctrl+X 不灵：键盘还在原来那个窗口，得先点一下看板。
+// 现在鼠标进看板停一下（界面那边等 250ms）就把前台拿过来；只碰了一下、没点没按键就移走，前台还给原来那个窗口。
+// Windows 不许后台程序随便抢前台，所以先跟当前前台窗口的线程「挂一下」再 SetForegroundWindow。
+
+interface FocusWin32 {
+  foreground(): bigint;
+  isWindow(hwnd: bigint): boolean;
+  /** 把这个窗口拿到前台；Windows 不给就返回 false。 */
+  bringToFront(hwnd: bigint): boolean;
+}
+let focusWin32: FocusWin32 | null | undefined;
+/** 这次前台是鼠标碰进来拿的：拿之前在前台的那个窗口（还焦点用），0＝没有可还的。 */
+let hoverGaveFrom = 0n;
+/** 只在真机常驻看板上做：验证脚本、自测不许抢真机前台。 */
+let hoverFocusEnabled = false;
+
+function loadFocusWin32(): FocusWin32 | null {
+  if (focusWin32 !== undefined) return focusWin32;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const koffi = require("koffi") as typeof import("koffi");
+    const user32 = koffi.load("user32.dll");
+    const kernel32 = koffi.load("kernel32.dll");
+    const getForeground = user32.func("uintptr_t __stdcall GetForegroundWindow()") as unknown as () => number | bigint;
+    const setForeground = user32.func("bool __stdcall SetForegroundWindow(uintptr_t hwnd)") as unknown as (hwnd: bigint) => boolean;
+    const isWindow = user32.func("bool __stdcall IsWindow(uintptr_t hwnd)") as unknown as (hwnd: bigint) => boolean;
+    const threadOf = user32.func("uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hwnd, uintptr_t pid)") as unknown as (
+      hwnd: bigint,
+      pid: number,
+    ) => number;
+    const attachInput = user32.func("bool __stdcall AttachThreadInput(uint32_t from, uint32_t to, bool attach)") as unknown as (
+      from: number,
+      to: number,
+      attach: boolean,
+    ) => boolean;
+    const currentThread = kernel32.func("uint32_t __stdcall GetCurrentThreadId()") as unknown as () => number;
+    focusWin32 = {
+      foreground: () => BigInt(getForeground()),
+      isWindow: (hwnd) => hwnd !== 0n && isWindow(hwnd),
+      bringToFront: (hwnd) => {
+        const fg = BigInt(getForeground());
+        const me = currentThread();
+        const fgThread = fg ? threadOf(fg, 0) : 0;
+        const attached = fgThread !== 0 && fgThread !== me && attachInput(me, fgThread, true);
+        try {
+          return setForeground(hwnd);
+        } finally {
+          if (attached) attachInput(me, fgThread, false);
+        }
+      },
+    };
+  } catch (error) {
+    focusWin32 = null;
+    log.出事("鼠标碰到就拿焦点用的 Windows 接口加载失败（照旧点一下看板再按键）", error, "window");
+  }
+  return focusWin32;
+}
+
+function hoverFocusBoard(): boolean {
+  const win = panel;
+  if (!hoverFocusEnabled || !win || win.isDestroyed() || !win.isVisible() || win.isFocused() || pinnedTopmost) return false;
+  try {
+    const w32 = loadFocusWin32();
+    if (!w32) return false;
+    const before = w32.foreground();
+    const hwnd = win.getNativeWindowHandle().readBigUInt64LE(0);
+    if (!w32.bringToFront(hwnd)) return false;
+    win.focus(); // 让页面也知道自己拿到焦点了
+    hoverGaveFrom = before !== hwnd ? before : 0n;
+    return true;
+  } catch (error) {
+    log.出事("鼠标碰到看板拿焦点失败（照旧点一下再按键）", error, "window");
+    return false;
+  }
+}
+
+/** 只碰了一下就移走：前台还给原来那个窗口（看板失焦照旧沉底）。原窗口关了就不还。 */
+function hoverGiveBack(): boolean {
+  const back = hoverGaveFrom;
+  hoverGaveFrom = 0n;
+  const win = panel;
+  if (!back || !win || win.isDestroyed() || !win.isFocused() || pinnedTopmost) return false;
+  try {
+    const w32 = loadFocusWin32();
+    if (!w32 || !w32.isWindow(back)) return false;
+    return w32.bringToFront(back);
+  } catch (error) {
+    log.出事("鼠标移走还焦点失败（点一下原来的窗口就行）", error, "window");
+    return false;
+  }
+}
+
 /** 把面板压到 Z 序最底（HWND_BOTTOM）。失败静默——沉不了底也只是不好看，不是故障。 */
 function sinkToBottom(win: BrowserWindow): void {
   try {
@@ -317,6 +410,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   // 启动 Agent 真打开桌面快捷方式只在真机。验证脚本不带自测开关（照样常驻），但都用隔离数据夹 AGENT_PET_HUB_HOME，
   // 真机入口从不设它（同 pet/focus-agent 的判法）。2026-09-24 踩过：只看常驻，验证脚本跑一次开一个真 Claude 窗口。
   openAgents = Boolean(options?.resident) && !process.env.AGENT_PET_HUB_HOME;
+  hoverFocusEnabled = openAgents;
   registerIpc();
   if (options?.hotkey) registerHotkey();
   if (options?.inbox) {
@@ -1008,6 +1102,8 @@ function registerIpc(): void {
     return launchDispatchBatch(String(raw.id ?? ""), Boolean(raw.coding), raw.model ? String(raw.model) : null);
   });
   // 一键启动菜单列 Pi 能挑的模型、默认选上次挑的那个（2026-10-16）
+  ipcMain.handle("bookmark:hover-focus", () => hoverFocusBoard());
+  ipcMain.handle("bookmark:hover-give-back", () => hoverGiveBack());
   ipcMain.handle("bookmark:pi-models", () => {
     try {
       return readPiModels();
@@ -1148,10 +1244,14 @@ interface LaunchOpenResult {
 async function openAgentShortcut(group: string, line: string, label: string, waitPaste = false): Promise<LaunchOpenResult> {
   const spec = agentShortcutFor(group);
   if (!spec) return { opened: null, freshWindow: false, pasting: false, problem: null };
-  const name = spec.shortcut.replace(/\.lnk$/i, "");
   const fakeDir = process.env.BOOKMARK_AGENT_SHORTCUT_DIR;
-  const path = join(fakeDir || app.getPath("desktop"), spec.shortcut);
-  if (!existsSync(path)) return { opened: null, freshWindow: false, pasting: false, problem: `桌面上没找到「${name}」快捷方式` };
+  const dir = fakeDir || app.getPath("desktop");
+  // 两套系统桌面上的叫法不一样：按顺序找，有哪个开哪个
+  const found = spec.shortcuts.find((file) => existsSync(join(dir, file)));
+  const names = spec.shortcuts.map((file) => file.replace(/\.lnk$/i, ""));
+  if (!found) return { opened: null, freshWindow: false, pasting: false, problem: `桌面上没找到「${names.join("」或「")}」快捷方式` };
+  const name = found.replace(/\.lnk$/i, "");
+  const path = join(dir, found);
   if (!openAgents && !fakeDir) return { opened: name, freshWindow: spec.freshWindow, pasting: true, problem: null };
   try {
     const win32 = loadLaunchWin32();

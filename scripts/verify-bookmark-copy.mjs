@@ -145,8 +145,9 @@ try {
     `剪贴板=${JSON.stringify(line)} 提示=${toast}`);
   // 测试模式只报开哪个、不真开（app.ts 传 openAgents: !testMode），免得测一次弹一个真 Claude 窗口
   // 真开窗、真贴字另有 verify-bookmark-launch-paste.mjs（假快捷方式＋假 AI 程序）
-  check("⑤b 启动 Agent 开的是桌面「Claude Code 一」快捷方式，提示看板会替他贴、回车他自己按",
-    (toast ?? "").includes("Claude Code 一") && (toast ?? "").includes("贴进去") && (toast ?? "").includes("回车"), `提示=${toast}`);
+  // 燊一修桌面叫「Claude Code 一」，根桌面叫「Claude Code 根」（2026-10-24），哪个都算
+  check("⑤b 启动 Agent 开的是桌面「Claude Code 一」或「Claude Code 根」快捷方式，提示看板会替他贴、回车他自己按",
+    /Claude Code [一根]/.test(toast ?? "") && (toast ?? "").includes("贴进去") && (toast ?? "").includes("回车"), `提示=${toast}`);
   // 2026-09-24 踩过：测试实例把用户桌面上真的「Claude Code 一」打开了，跑一次多一个空 Claude 窗口
   await new Promise((r) => setTimeout(r, 4000));
   const strayClaude = claudePids().filter((pid) => !claudeBefore.includes(pid));

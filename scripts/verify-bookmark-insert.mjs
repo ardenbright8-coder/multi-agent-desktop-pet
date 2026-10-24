@@ -8,7 +8,7 @@
 //   ③ 写了字点别处 → 这条挪到第二格，第一格又是空的；③b 回车同样挪下去，光标留在空白框能接着写
 //   ④ 单击条目文字进改字，光标在改字框里；点别处收起
 //   ⑤ 交接单专区保留小加号，点了能手写一张交接单（带交接小标，落在专区）
-//   ⑥ 打字中途看板重画，光标还在空白框里、字不丢
+//   ⑥ 打字中途看板重画，光标还在空白框里、字不丢；⑥b 输入法组字中途要重画，框还是原来那个（不拆掉重建）
 //   ⑦ 分组页每个 agent 组第一格都是空白框、没有小加号；写进哪组落在哪组
 // 用法：npm run build 之后 node scripts/verify-bookmark-insert.mjs
 
@@ -112,6 +112,18 @@ try {
     return { inBlank: !!el && !!el.closest && !!el.closest(".blank-row"), value: el && "value" in el ? el.value : "" };
   });
   check("⑥ 打字中途看板重画，光标还在空白框里、字不丢", kept.inBlank && kept.value === "点别处", JSON.stringify(kept));
+  // ⑥b 语音输入法组字中途（2026-10-24 看板 Claude 01/02：豆包说两句就断）：要重画也先欠着，框不许拆掉重建
+  const same = await panel.evaluate(async () => {
+    const el = document.activeElement;
+    el.bmProbe = true;
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    window.dispatchEvent(new Event("focus"));
+    await new Promise((r) => setTimeout(r, 400));
+    const still = document.activeElement === el && el.isConnected && el.bmProbe === true;
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return { still, hasFocus: document.hasFocus() };
+  });
+  check("⑥b 组字中途要重画：还是原来那个框、没被拆掉重建", same.still, JSON.stringify(same));
   await panel.keyboard.type("也存");
   await clickElsewhere();
   const moved = await waitFor(async () => {

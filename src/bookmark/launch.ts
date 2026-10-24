@@ -3,8 +3,8 @@
 // 🚨 只开窗：启动句进剪贴板，用户自己 Ctrl+V、自己按回车——看板绝不替他发。
 
 export interface AgentShortcut {
-  /** 桌面上的快捷方式文件名。 */
-  shortcut: string;
+  /** 桌面上的快捷方式文件名：按顺序找，桌面上有哪个开哪个（两套系统桌面上叫法不一样，2026-10-24 根这边叫「Claude Code 根」）。 */
+  shortcuts: string[];
   /** true＝每点一次开一个新命令窗口；false＝桌面程序，已开着就只是切到前面，看板替用户 Ctrl+N 新开对话。 */
   freshWindow: boolean;
   /** 桌面程序的程序文件名（小写）：按它认「最前面是不是这个程序」，已开着的旧窗口也认。 */
@@ -14,12 +14,13 @@ export interface AgentShortcut {
 }
 
 const SHORTCUTS: Record<string, AgentShortcut> = {
-  claude: { shortcut: "Claude Code 一.lnk", freshWindow: true },
-  chatgpt: { shortcut: "Codex.lnk", freshWindow: false, app: "chatgpt.exe" }, // Codex 桌面版的程序文件叫 ChatGPT.exe
-  piagent: { shortcut: "Pi 编程智能体.lnk", freshWindow: true },
+  // 燊一修桌面叫「Claude Code 一」，根桌面叫「Claude Code 根」（2026-10-24 看板 Claude 01：根这边六个点开不了就是没认这个名字）
+  claude: { shortcuts: ["Claude Code 一.lnk", "Claude Code 根.lnk"], freshWindow: true },
+  chatgpt: { shortcuts: ["Codex.lnk"], freshWindow: false, app: "chatgpt.exe" }, // Codex 桌面版的程序文件叫 ChatGPT.exe
+  piagent: { shortcuts: ["Pi 编程智能体.lnk"], freshWindow: true },
   // 反重力命令行开窗后先登录好几秒，登录没完就贴会丢（2026-09-24 实测），多等一会儿
-  antigravity: { shortcut: "Antigravity 反重力CLI.lnk", freshWindow: true, settleMs: 12_000 },
-  hermes: { shortcut: "Hermes.lnk", freshWindow: false, app: "hermes.exe" },
+  antigravity: { shortcuts: ["Antigravity 反重力CLI.lnk"], freshWindow: true, settleMs: 12_000 },
+  hermes: { shortcuts: ["Hermes.lnk"], freshWindow: false, app: "hermes.exe" },
 };
 
 /** 组名 → 桌面快捷方式；用户自己加的组认不出是谁，返回 null（只复制不开窗）。 */

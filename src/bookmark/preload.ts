@@ -76,6 +76,9 @@ contextBridge.exposeInMainWorld("bookmark", {
       model: string | null;
     }>,
   piModels: () => ipcRenderer.invoke("bookmark:pi-models") as Promise<{ models: string[]; current: string | null }>,
+  // 鼠标碰到看板就拿焦点、只碰没动就还回去（2026-10-24 看板 Claude 01）
+  hoverFocus: () => ipcRenderer.invoke("bookmark:hover-focus") as Promise<boolean>,
+  hoverGiveBack: () => ipcRenderer.invoke("bookmark:hover-give-back") as Promise<boolean>,
   // 点号码：复制这条那份单独小文件的路径（设定24）。
   itemFile: (id: string) => ipcRenderer.invoke("bookmark:item-file", id) as Promise<{ path: string; line: string }>,
   // 启动 Agent 替用户贴完启动句（或没贴成）的结果。
