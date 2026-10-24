@@ -12,6 +12,7 @@ import {
   isTerminalProcess,
   panelHeight,
   parseTerminalButtons,
+  resolveMovedPath,
   PANEL,
   stripJsonComments,
   vkForKey,
@@ -88,6 +89,15 @@ test("打开文件按钮：认出 ! explorer \"路径\"，回车可有可无；�
   const buttons = parseTerminalButtons(JSON.stringify(withOpen));
   assert.equal(buttons.find((b) => b.id === "User.CC.guide")?.openPath, path);
   assert.equal(buttons[0].openPath, null);
+});
+
+test("打开文件按钮：指着搬家前的旧夹、新夹里有 → 开新地址；都没有 → 原样（2026-10-23 夹搬进 Claude Code装备）", () => {
+  const old = "E:\\个人AI资源管理\\20_环境运维配置（管这台机·服务器·软件设置）\\Claude Code（配置与手感调优）\\12_使用说明（Ctrl+Q点开·看不懂就来这）\\使用说明（打开这个）.html";
+  const moved = "E:\\个人AI资源管理\\60_公用资源（钩子·skill·搜索引擎·可后期扩展）\\Claude Code装备（键位·状态栏·外观·权限·两套共用）\\12_使用说明（Ctrl+Q点开·看不懂就来这）\\使用说明（打开这个）.html";
+  assert.equal(resolveMovedPath(old, (p) => p === moved), moved);
+  assert.equal(resolveMovedPath(old, () => false), old);
+  assert.equal(resolveMovedPath(moved, (p) => p === moved), moved);
+  assert.equal(resolveMovedPath("D:\\别的.html", () => false), "D:\\别的.html");
 });
 
 test("顺序存档读坏了当没存过", () => {

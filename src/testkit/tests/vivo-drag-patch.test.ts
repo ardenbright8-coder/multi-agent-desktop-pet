@@ -11,9 +11,10 @@ test("patchCmd：开机提醒里让他双击的那个文件真的在（配套夹
   assert.ok(existsSync(patchCmd(resolve(__dirname, "../../.."))));
 });
 
-function fakeAsar(popup: string): string {
+// 弹窗分块的文件名每版不同（8 月版 174.js、7.0.6 版 184.js），检查不许写死名字
+function fakeAsar(popup: string, chunk = "174.js"): string {
   const body = Buffer.from(popup);
-  const header = { files: { dist: { files: { electron: { files: { "174.js": { size: body.length, offset: "0" } } } } } } };
+  const header = { files: { dist: { files: { electron: { files: { [chunk]: { size: body.length, offset: "0" } } } } } } };
   const json = Buffer.from(JSON.stringify(header));
   const padded = Math.ceil(json.length / 4) * 4;
   const head = Buffer.alloc(16 + padded);
@@ -31,12 +32,13 @@ function fakeAsar(popup: string): string {
 test("checkDragPatch：有记号=已装，没记号=被升级盖掉了，没文件=没装 vivo", () => {
   const patched = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v1*/}");
   const plain = fakeAsar("a(){}");
+  const newer = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v1*/}", "184.js");
   try {
     assert.equal(checkDragPatch(patched), "已装");
     assert.equal(checkDragPatch(plain), "被升级盖掉了");
+    assert.equal(checkDragPatch(newer), "已装");
     assert.equal(checkDragPatch(join(tmpdir(), "没有这个文件.asar")), "没装 vivo");
   } finally {
-    rmSync(join(patched, ".."), { recursive: true, force: true });
-    rmSync(join(plain, ".."), { recursive: true, force: true });
+    for (const f of [patched, plain, newer]) rmSync(join(f, ".."), { recursive: true, force: true });
   }
 });

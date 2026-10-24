@@ -25,7 +25,7 @@ import {
 } from "./pet/window";
 import { registerWindowIpc } from "./pet/window-ipc";
 import { createTray, createTrayActions } from "./pet/tray";
-import { closeBookmarkPanel, initBookmarkPanel, toggleBookmarkPanel } from "./bookmark/panel-window";
+import { closeBookmarkPanel, initBookmarkPanel, relaunchWithNewCode, toggleBookmarkPanel } from "./bookmark/panel-window";
 import { closeQuickCmd, initQuickCmd } from "./quickcmd/quickcmd-window";
 import { closeVivoClip, initVivoClip, vivoClipStatus } from "./vivo/vivo-clip";
 import { closeOverview, initOverview, openOverview, type BlockInfo } from "./overview/overview-window";
@@ -151,6 +151,15 @@ async function bootstrap(): Promise<void> {
   }
 
   const mainWindow = createPetWindow(hub);
+  // 桌宠小窗口里按 Ctrl+R 也换新代码，跟看板同一份（2026-10-24 用户：桌宠和看板两个窗口按哪个都整个程序换新）。
+  // 只在这个窗口里认，🚨 不注册 globalShortcut，不拦其他软件的 Ctrl+R。
+  if (!testMode) {
+    mainWindow.webContents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown" || !(input.control || input.meta) || input.key.toLowerCase() !== "r") return;
+      event.preventDefault();
+      if (!input.isAutoRepeat) void relaunchWithNewCode();
+    });
+  }
   watchDisplayChanges();
   const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel, openOverview, openGeminiQuota: toggleGeminiQuota });
   tray = createTray(hub, trayActions);

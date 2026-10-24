@@ -91,7 +91,14 @@ function ensureSheet(): BrowserWindow {
   win.on("closed", () => {
     if (sheet === win) sheet = null;
   });
-  win.webContents.on("render-process-gone", (_event, details) => log.出事(`说明面板渲染进程挂了：${details.reason}`, undefined, "sheet"));
+  // 网页那半边挂了（2026-10-23 日志：killed）：窗口还在、里面是死的，直接扔掉，下次点开重建一个干净的
+  win.webContents.on("render-process-gone", (_event, details) => {
+    log.出事(`说明面板渲染进程挂了：${details.reason}（扔掉窗口，下次点开重建）`, undefined, "sheet");
+    if (sheet === win) sheet = null;
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.destroy();
+    }, 0);
+  });
   sheet = win;
   return win;
 }

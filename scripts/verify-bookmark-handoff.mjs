@@ -1,5 +1,5 @@
 // 书签看板「AI 交接单专区」后台驱动验证（Playwright·零抢鼠标）。
-// 验证点：①未派发交接单默认落 Agent分组页最底部的 📋专区（不进待定，专区垫底在＋加Agent上方）
+// 验证点：①未派发交接单默认落 Agent分组页最底部的 📋专区（不进待定，专区是最后一块；「＋组」在页签栏）
 //        ②条目显眼（序号下面的交接小标+handoff 样式），普通条目没有  ③详情默认收起、点开可展开可收起
 //        ④拖到哪个组=派给谁（组内现形+assignee 落库）；CLI 带 --to 的直接进组不进专区
 //        ⑤收回回专区 ⑥remove 自删后条目消失。
@@ -92,16 +92,16 @@ try {
         text: zone.querySelector(".task-text")?.textContent ?? "",
         zoneName: zone.querySelector(".group-name")?.textContent ?? "",
         zoneCount: zone.querySelector(".group-count")?.textContent ?? "",
-        addAgentBtnAboveZone: (() => {
-          // ＋加Agent 按钮在底栏 #board-foot 里，#board 整体在它上方；专区是 #board 最后一块 = 紧挨按钮上方。
+        // ＋加Agent 早挪进页签栏成了「＋组」（2026-10-24 脚本跟上界面）：分组页上它在、没藏就行
+        addAgentBtnShown: (() => {
           const btn = document.getElementById("add-agent-btn");
-          return !!btn && !btn.hidden && zone.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING;
+          return !!btn && !btn.hidden;
         })(),
       };
     });
   });
-  check("① Agent分组页有交接单专区且是最后一块（＋加Agent 按钮上方）",
-    !!zoneState && zoneState.isLastSection && zoneState.addAgentBtnAboveZone, JSON.stringify(zoneState));
+  check("① Agent分组页有交接单专区且是最后一块，页签栏「＋组」在",
+    !!zoneState && zoneState.isLastSection && zoneState.addAgentBtnShown, JSON.stringify(zoneState));
   check("① 交接单默认落在专区里（1 条）", zoneState?.taskCount === 1 && zoneState.text.includes("分页改完"),
     `专区名=${zoneState?.zoneName} 计数=${zoneState?.zoneCount}`);
 
@@ -193,8 +193,12 @@ try {
   const listAfterRemove = await panel.evaluate(() => window.bookmark.list());
   check("⑦ remove 后条目消失（剩普通条目+指定收件人交接单）", removed === true && listAfterRemove.length === 2,
     JSON.stringify(listAfterRemove.map((r) => r.text)));
-  const emptyHint = await panel.evaluate(() => document.querySelector(".group.handoff-zone .empty")?.textContent ?? "");
-  check("⑦ 专区空态提示在", emptyHint.includes("交接单"), emptyHint);
+  // 空态提示早拿掉了（2026-10-24 脚本跟上界面）：空了专区照样在
+  const emptyZone = await panel.evaluate(() => {
+    const zone = document.querySelector(".group.handoff-zone");
+    return { zone: !!zone, tasks: zone ? zone.querySelectorAll(".task").length : -1 };
+  });
+  check("⑦ 专区空了照样留着（不藏、不报空态）", emptyZone.zone && emptyZone.tasks === 0, JSON.stringify(emptyZone));
 } catch (error) {
   failures.push(`脚本异常：${error?.message ?? error}`);
   console.error("脚本异常：", error);

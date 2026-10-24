@@ -10,8 +10,8 @@
 // （koffi SetWindowPos HWND_TOPMOST），再按一下沉回最底层；与失焦自动沉底共存，
 // 状态标志位只有 F1 和「置顶时点了看板外面」翻转（纯函数 pinToggleSteps 在 dock.ts，单测覆盖）。
 
-import { join } from "node:path";
-import { execSync, spawnSync } from "node:child_process";
+import { basename, join } from "node:path";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
@@ -30,7 +30,10 @@ import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearan
 import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
 import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
-import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow } from "./launch";
+import {
+  agentShortcutFor, formatLaunchConfig, isAbsoluteTarget, LAUNCH_CONFIG_FILE, launchKey, parseLaunchConfig, pasteIntoAppWindow, pasteIntoNewWindow,
+  shortcutFileName, type LaunchTarget,
+} from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { imagesForAgent } from "./inline-images";
 import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
@@ -439,7 +442,11 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   if (options?.resident) {
     try {
       const win = ensurePanel();
+      // 页面还没加载完：记下「加载完就显示」。以前漏了这一笔，开机每次都干等 6 秒兜底才出来（2026-10-24 修）。
+      // 🚨 验证脚本（隔离数据夹）照旧等 6 秒兜底：一加载完就显示的话测试窗口马上沉到真桌面底下，
+      // carry、drag-bundle、titles 截图常卡死（对照实测 6 次过 3 次 vs 不改 6 次过 5 次），原因没挖到底。
       if (rendererReady) showDocked(win);
+      else if (!process.env.AGENT_PET_HUB_HOME) pendingShow = true;
       startSinkTimer();
     } catch (error) {
       log.出事("书签台常驻显示失败（不影响桌宠本体）", error, "init");
@@ -757,34 +764,68 @@ function latestSourceTime(): number {
   return latest;
 }
 
-/** 编译当前源码再整程序重开。失败不重开，把原因交回面板。 */
-function rebuildAndRelaunch(): { ok: boolean; mode: "relaunch"; error?: string } {
-  const appRoot = app.getAppPath();
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  log.记(`Ctrl+R：开始编译源码（${appRoot}）`, "reload");
-  // Windows 上直接 spawn npm.cmd 会 EINVAL，看板就报「换新失败」。走 cmd.exe。
-  const result = process.platform === "win32"
-    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm run build"], {
-        cwd: appRoot,
-        encoding: "utf8",
-        timeout: 180_000,
-        windowsHide: true,
-      })
-    : spawnSync(npmCmd, ["run", "build"], {
-        cwd: appRoot,
-        encoding: "utf8",
-        timeout: 180_000,
-        windowsHide: true,
-      });
-  if (result.status !== 0) {
-    const detail = `${result.stderr || ""}
-${result.stdout || ""}`.trim();
-    log.出事(`Ctrl+R 编译失败（status=${result.status}）`, detail || result.error, "reload");
-    return { ok: false, mode: "relaunch", error: detail.slice(0, 500) || "编译失败" };
+type RelaunchResult = { ok: boolean; mode: "relaunch"; error?: string };
+/** 正在编译的那一次：编译中再按 Ctrl+R（看板、桌宠哪个窗口按的都算）接着等这一次，不另起一遍。 */
+let rebuilding: Promise<RelaunchResult> | null = null;
+
+/**
+ * 编译当前源码再整程序重开（Ctrl+R，看板和桌宠小窗口都走这里）。失败不重开，把原因交回面板。
+ * 2026-10-24 改成后台编译：以前同步等编译，那几秒整个桌宠（看板、气泡）都卡死，按键还攒着一起来。
+ * 进度一律发到看板（bookmark:reload-progress），桌宠小窗口按的也在看板上提示。
+ */
+export function relaunchWithNewCode(): Promise<RelaunchResult> {
+  if (!liveRestart) return Promise.resolve({ ok: false, mode: "relaunch", error: "测试实例不重开" });
+  if (!rebuilding) rebuilding = rebuildAndRelaunch().finally(() => { rebuilding = null; });
+  return rebuilding;
+}
+
+function sendReloadProgress(text: string, ms: number): void {
+  try {
+    if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:reload-progress", { text, ms });
+  } catch {
+    /* 看板不在就算了 */
   }
-  const args = process.argv.slice(1).filter((item) => item !== RELAUNCH_FLAG).concat(RELAUNCH_FLAG);
+}
+
+async function rebuildAndRelaunch(): Promise<RelaunchResult> {
+  const appRoot = app.getAppPath();
+  log.记(`Ctrl+R：开始编译源码（${appRoot}）`, "reload");
+  sendReloadProgress("正在换成最新代码…（编译几秒，期间照常能用）", 30_000);
+  // Windows 上直接 spawn npm.cmd 会 EINVAL，看板就报「换新失败」。走 cmd.exe。
+  const [cmd, args] = process.platform === "win32"
+    ? [process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm run build"]]
+    : ["npm", ["run", "build"]];
+  const result = await new Promise<{ status: number | null; output: string; error?: Error }>((resolve) => {
+    let output = "";
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(cmd, args, { cwd: appRoot, windowsHide: true });
+    } catch (error) {
+      resolve({ status: null, output: "", error: error as Error });
+      return;
+    }
+    const timer = setTimeout(() => child.kill(), 180_000);
+    child.stdout?.on("data", (chunk) => { output += String(chunk); });
+    child.stderr?.on("data", (chunk) => { output += String(chunk); });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ status: null, output, error });
+    });
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, output });
+    });
+  });
+  if (result.status !== 0) {
+    const detail = result.output.trim();
+    log.出事(`Ctrl+R 编译失败（status=${result.status}）`, detail || result.error, "reload");
+    sendReloadProgress("换新失败：编译没过，还是旧代码（原因在桌宠日志 bookmark 那份）", 12_000);
+    return { ok: false, mode: "relaunch", error: detail.slice(-500) || "编译失败" };
+  }
+  const relaunchArgs = process.argv.slice(1).filter((item) => item !== RELAUNCH_FLAG).concat(RELAUNCH_FLAG);
   log.记("Ctrl+R：编译完成，整程序重开", "reload");
-  app.relaunch({ args });
+  sendReloadProgress("编译好了，马上重开…", 5_000);
+  app.relaunch({ args: relaunchArgs });
   app.quit();
   return { ok: true, mode: "relaunch" };
 }
@@ -881,7 +922,7 @@ function registerIpc(): void {
       if (panel && !panel.isDestroyed()) panel.webContents.reload();
       return { ok: true, mode: "reload" as const };
     }
-    return rebuildAndRelaunch();
+    return relaunchWithNewCode();
   });
   ipcMain.handle("bookmark:code-status", () => {
     const codeAt = latestSourceTime();
@@ -1200,7 +1241,8 @@ async function launchDispatchBatch(id: string, coding: boolean, model: string | 
   const launched: BatchLaunchResult["launched"] = [];
   const skipped: BatchLaunchResult["skipped"] = [];
   if (conflicts.length) return { launched, conflicts, missing, skipped, model: null };
-  const hasPi = listed.some(({ card }) => agentShortcutFor(card.assignee ?? "") === agentShortcutFor("Pi Agent"));
+  const hasPi = listed.some(({ card }) => launchKey(card.assignee ?? "") === launchKey("Pi Agent"));
+  const launchConfig = readLaunchConfig();
   let usedModel: string | null = null;
   if (model && hasPi) {
     // 测试实例（不真开窗）不碰真的 Pi 设置；验证脚本给了假设置文件才写
@@ -1210,7 +1252,7 @@ async function launchDispatchBatch(id: string, coding: boolean, model: string | 
   }
   for (const { card, name } of listed) {
     const group = card.assignee ?? "";
-    if (!agentShortcutFor(group)) {
+    if (!agentShortcutFor(group, launchConfig)) {
       skipped.push({ name, reason: "认不出这个组该开哪个软件" });
       continue;
     }
@@ -1228,6 +1270,24 @@ async function launchDispatchBatch(id: string, coding: boolean, model: string | 
   return { launched, conflicts, missing, skipped, model: usedModel };
 }
 
+/**
+ * 「启动哪个程序.json」（看板数据夹，两套系统共用）：六个点开哪个程序。没有就照默认写一份出来给人改；坏了回落默认。
+ * 每次开窗现读，改了不用重开看板。
+ */
+function readLaunchConfig(): Record<string, LaunchTarget[]> {
+  const path = join(bookmarkDataDirectory(), LAUNCH_CONFIG_FILE);
+  try {
+    if (!existsSync(path)) {
+      if (openAgents) writeFileSync(path, formatLaunchConfig(), "utf8"); // 测试实例不往真数据夹写
+      return parseLaunchConfig("{}");
+    }
+    return parseLaunchConfig(readFileSync(path, "utf8"));
+  } catch (error) {
+    log.出事(`读「${LAUNCH_CONFIG_FILE}」失败，用默认`, error, "cli");
+    return parseLaunchConfig("{}");
+  }
+}
+
 interface LaunchOpenResult {
   opened: string | null;
   freshWindow: boolean;
@@ -1242,16 +1302,23 @@ interface LaunchOpenResult {
  * 自测、验证脚本（隔离数据夹）只报会怎么做、不真开；设了 BOOKMARK_AGENT_SHORTCUT_DIR（放假快捷方式的夹）才真开。
  */
 async function openAgentShortcut(group: string, line: string, label: string, waitPaste = false): Promise<LaunchOpenResult> {
-  const spec = agentShortcutFor(group);
-  if (!spec) return { opened: null, freshWindow: false, pasting: false, problem: null };
+  const targets = agentShortcutFor(group, readLaunchConfig());
+  if (!targets) return { opened: null, freshWindow: false, pasting: false, problem: null };
   const fakeDir = process.env.BOOKMARK_AGENT_SHORTCUT_DIR;
   const dir = fakeDir || app.getPath("desktop");
-  // 两套系统桌面上的叫法不一样：按顺序找，有哪个开哪个
-  const found = spec.shortcuts.find((file) => existsSync(join(dir, file)));
-  const names = spec.shortcuts.map((file) => file.replace(/\.lnk$/i, ""));
-  if (!found) return { opened: null, freshWindow: false, pasting: false, problem: `桌面上没找到「${names.join("」或「")}」快捷方式` };
-  const name = found.replace(/\.lnk$/i, "");
-  const path = join(dir, found);
+  // 设置文件里按顺序找，这台电脑上有哪个开哪个（两套系统桌面不一样）。
+  // 🚨 验证脚本用假桌面时只认桌面名字、不认完整路径：完整路径指的是真启动器，测一次就开一个真 AI 窗口（2026-09-24 踩过）。
+  const resolved = targets
+    .filter((t) => !(fakeDir && isAbsoluteTarget(t.open)))
+    .map((t) => ({ spec: t, path: isAbsoluteTarget(t.open) ? t.open : join(dir, shortcutFileName(t.open)) }));
+  const hit = resolved.find((r) => existsSync(r.path));
+  if (!hit) {
+    const names = targets.map((t) => (isAbsoluteTarget(t.open) ? basename(t.open) : t.open).replace(/\.lnk$/i, ""));
+    return { opened: null, freshWindow: false, pasting: false, problem: `这台电脑上没找到「${names.join("」或「")}」（看板数据夹「${LAUNCH_CONFIG_FILE}」里改开哪个）` };
+  }
+  const spec = hit.spec;
+  const path = hit.path;
+  const name = basename(path).replace(/\.lnk$/i, "");
   if (!openAgents && !fakeDir) return { opened: name, freshWindow: spec.freshWindow, pasting: true, problem: null };
   try {
     const win32 = loadLaunchWin32();

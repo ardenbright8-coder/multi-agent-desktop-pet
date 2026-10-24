@@ -25,6 +25,28 @@ export function openPathOf(input: unknown): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * E 盘搬过家的夹：旧前缀 → 新前缀。按钮名单在各自系统的终端设置里，哪套没重跑「加命令按钮.py」就还指着旧地址，
+ * 点「使用说明」报找不到（2026-10-23 夹从 20_环境运维配置 搬进 60_公用资源\Claude Code装备）。这里兜一下，两套都能开。
+ */
+const MOVED_FOLDERS: [string, string][] = [
+  [
+    "E:\\个人AI资源管理\\20_环境运维配置（管这台机·服务器·软件设置）\\Claude Code（配置与手感调优）\\",
+    "E:\\个人AI资源管理\\60_公用资源（钩子·skill·搜索引擎·可后期扩展）\\Claude Code装备（键位·状态栏·外观·权限·两套共用）\\",
+  ],
+];
+
+/** 按钮指的文件不在了、又是搬过家的夹，就换成新地址（新地址也没有就原样还回去，让报错照旧说旧地址）。 */
+export function resolveMovedPath(path: string, exists: (p: string) => boolean): string {
+  if (exists(path)) return path;
+  for (const [from, to] of MOVED_FOLDERS) {
+    if (!path.startsWith(from)) continue;
+    const moved = to + path.slice(from.length);
+    if (exists(moved)) return moved;
+  }
+  return path;
+}
+
 /** 键名 f13～f24 → 虚拟键码；别的键一律不认（只认这一段，真键盘上没有，不会跟谁撞）。 */
 export function vkForKey(key: string): number | null {
   const match = /^f(1[3-9]|2[0-4])$/.exec(key.trim().toLowerCase());

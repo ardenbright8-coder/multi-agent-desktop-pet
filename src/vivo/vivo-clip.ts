@@ -87,7 +87,8 @@ function watchDragPatch(): void {
     log.记(`vivo 拖图补丁：${status.dragPatch}`, "patch");
     if (status.dragPatch !== "被升级盖掉了" || !Notification.isSupported()) return;
     new Notification({
-      title: "vivo 拖图补丁被升级盖掉了",
+      // 两套系统各装各的 vivo：这套可能从没装过，也可能是升级盖掉了
+      title: "这套系统的 vivo 没有拖图补丁（没装过或被升级盖掉了）",
       body: `拖 vivo 截图又只能拖出链接了。双击 ${patchCmd(app.getAppPath())} 重新装上（会弹一次管理员确认）`,
     }).show();
   } catch (error) {

@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld("bookmark", {
   onLaunchPasted: (callback: (result: { label: string; ok: boolean; reason: string | null }) => void) => {
     ipcRenderer.on("bookmark:launch-pasted", (_event, result) => callback(result));
   },
+  // Ctrl+R 换新代码的进度（看板、桌宠小窗口按的都在看板上提示，2026-10-24）
+  onReloadProgress: (callback: (progress: { text: string; ms: number }) => void) => {
+    ipcRenderer.on("bookmark:reload-progress", (_event, progress) => callback(progress));
+  },
   // 两档（设定18）：日常档 / 睡觉档；切到睡觉档后开了哪几组的窗另发 bookmark:sleep-nudged。
   getMode: () => ipcRenderer.invoke("bookmark:mode:get") as Promise<"day" | "sleep">,
   setMode: (mode: "day" | "sleep") => ipcRenderer.invoke("bookmark:mode:set", mode) as Promise<"day" | "sleep">,

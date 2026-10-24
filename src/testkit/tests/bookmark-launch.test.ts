@@ -3,26 +3,47 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { agentShortcutFor, pasteIntoAppWindow, pasteIntoNewWindow, type AppPasteDeps, type PasteDeps } from "../../bookmark/launch";
+import {
+  agentShortcutFor, formatLaunchConfig, isAbsoluteTarget, parseLaunchConfig, pasteIntoAppWindow, pasteIntoNewWindow, shortcutFileName,
+  type AppPasteDeps, type PasteDeps,
+} from "../../bookmark/launch";
 
-test("agentShortcutFor：四个默认组各对上桌面那个快捷方式，大小写和空格不管", () => {
+test("agentShortcutFor：五个默认组第一个都是桌面那个快捷方式，大小写和空格不管", () => {
   // Claude 两套系统桌面上叫法不同：燊一修「Claude Code 一」、根「Claude Code 根」（2026-10-24），有哪个开哪个
-  const claude = { shortcuts: ["Claude Code 一.lnk", "Claude Code 根.lnk"], freshWindow: true };
-  assert.deepEqual(agentShortcutFor("Claude"), claude);
-  assert.deepEqual(agentShortcutFor("ChatGPT"), { shortcuts: ["Codex.lnk"], freshWindow: false, app: "chatgpt.exe" });
-  assert.deepEqual(agentShortcutFor("Pi Agent"), { shortcuts: ["Pi 编程智能体.lnk"], freshWindow: true });
-  assert.deepEqual(agentShortcutFor("Hermes"), { shortcuts: ["Hermes.lnk"], freshWindow: false, app: "hermes.exe" });
-  assert.deepEqual(agentShortcutFor(" claude "), claude);
-  assert.deepEqual(agentShortcutFor("piagent"), { shortcuts: ["Pi 编程智能体.lnk"], freshWindow: true });
+  assert.deepEqual(agentShortcutFor("Claude")?.map((t) => t.open), ["Claude Code 一", "Claude Code 根"]);
+  assert.deepEqual(agentShortcutFor(" claude "), agentShortcutFor("Claude"));
+  assert.deepEqual(agentShortcutFor("ChatGPT")?.[0], { open: "Codex", freshWindow: false, app: "chatgpt.exe" });
+  assert.deepEqual(agentShortcutFor("Pi Agent")?.[0], { open: "Pi 编程智能体", freshWindow: true });
+  assert.deepEqual(agentShortcutFor("piagent"), agentShortcutFor("Pi Agent"));
+  assert.deepEqual(agentShortcutFor("Hermes"), [{ open: "Hermes", freshWindow: false, app: "hermes.exe" }]);
   // 2026-09-24 加的第五家：开「Antigravity 反重力CLI」（命令窗口，跟 Pi 一样每点一次开一个新的）
   // 它开窗后要先登录好几秒，登录没完就贴会丢（2026-09-24 实测），所以多等：12 秒
-  assert.deepEqual(agentShortcutFor("Antigravity"), { shortcuts: ["Antigravity 反重力CLI.lnk"], freshWindow: true, settleMs: 12_000 });
+  assert.deepEqual(agentShortcutFor("Antigravity")?.[0], { open: "Antigravity 反重力CLI", freshWindow: true, settleMs: 12_000 });
+  // 桌面上没有的那套用 E 盘入口夹里的启动器（完整路径）
+  assert.ok(agentShortcutFor("Pi Agent")!.slice(1).every((t) => isAbsoluteTarget(t.open)));
 });
 
 test("agentShortcutFor：用户自己加的组认不出是谁，返回 null（只复制不开窗）", () => {
   assert.equal(agentShortcutFor("我的组"), null);
   assert.equal(agentShortcutFor(""), null);
   assert.equal(agentShortcutFor("Claude 二号"), null);
+});
+
+test("启动哪个程序.json：写了的组照文件、自加的组也能开、坏档回落默认、写出来再读回一样", () => {
+  const config = parseLaunchConfig(JSON.stringify({
+    说明: "不是数组，不管",
+    "Claude": [{ 开: "D:\\启动器\\Claude.lnk", 新窗口: true }],
+    "我的组": [{ 开: "DeepSeek", 新窗口: false, 程序名: "DeepSeek.EXE", 多等毫秒: 3000 }, { 开: "" }, "坏的"],
+  }));
+  assert.deepEqual(agentShortcutFor("Claude", config), [{ open: "D:\\启动器\\Claude.lnk", freshWindow: true }]);
+  assert.deepEqual(agentShortcutFor("我的组", config), [{ open: "DeepSeek", freshWindow: false, app: "deepseek.exe", settleMs: 3000 }]);
+  assert.deepEqual(agentShortcutFor("Pi Agent", config), agentShortcutFor("Pi Agent")); // 没写的组用默认
+  assert.deepEqual(parseLaunchConfig("{坏的"), parseLaunchConfig("{}"));
+  assert.deepEqual(parseLaunchConfig(`\uFEFF${formatLaunchConfig()}`), parseLaunchConfig("{}"));
+  assert.equal(shortcutFileName("Claude Code 根"), "Claude Code 根.lnk");
+  assert.equal(shortcutFileName("x.exe"), "x.exe");
+  assert.equal(isAbsoluteTarget("Claude Code 根"), false);
+  assert.equal(isAbsoluteTarget("E:\\入口\\Pi.lnk"), true);
 });
 
 /** 假的 Windows：foregrounds 是每次问「最前面是谁」依次给的答案（问完了就一直给最后一个），时间只在 sleep 里走。 */

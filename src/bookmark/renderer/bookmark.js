@@ -166,7 +166,7 @@ function bmInit() {
       if (reloading || event.repeat) return;
       reloading = true;
       window.localStorage.setItem(justRelaunchedKey, String(Date.now()));
-      bmToast("正在换成最新代码…", 8000);
+      bmToast("正在换成最新代码…", 30000);
       void Promise.resolve(window.bookmark.reload()).then((result) => {
         reloading = false;
         if (!result || result.mode === "reload") {
@@ -260,6 +260,7 @@ function bmInit() {
       bmShowError(bmErrorText(error));
     }
   });
+  window.bookmark.onReloadProgress?.((p) => bmToast(p.text, p.ms));
   window.bookmark.onLaunchPasted?.((r) => {
     if (r.ok) bmToast(`启动句已贴进 ${r.label} 窗口，没按回车：你看一眼再按回车`, 8000);
     else bmToast(`${r.reason}，没替你贴：点一下 ${r.label} 窗口，Ctrl+V 再回车`, 8000);

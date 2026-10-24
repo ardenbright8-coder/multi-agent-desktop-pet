@@ -32,6 +32,7 @@ import {
   moveButton,
   parseOrder,
   parseTerminalButtons,
+  resolveMovedPath,
   type QuickButton,
   type Rect,
 } from "./layout";
@@ -347,7 +348,7 @@ function press(index: number): void {
     const button = buttons[index];
     if (!button) return;
     if (button.openPath) {
-      const path = button.openPath;
+      const path = resolveMovedPath(button.openPath, existsSync);
       if (/\.html?$/i.test(path) && lastView) {
         const bounds = computeSheetBounds(lastView.terminal, lastView.lineY);
         openSheet(path, bounds, behindOf(bounds));

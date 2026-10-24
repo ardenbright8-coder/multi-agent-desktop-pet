@@ -1,8 +1,20 @@
 // vivo 拖图补丁还在不在（2026-10-18 用户拍板装的补丁）：补丁改的是 vivo 自己的程序包 app.asar，
-// vivo 一升级就被盖掉。这里开机看一眼：只读程序包开头的目录和弹窗那一个小文件（几十 KB），找补丁记号。
+// vivo 一升级就被盖掉。这里开机看一眼：只读程序包开头的目录和弹窗那几个小分块，找补丁记号。
 // 补丁脚本在代码夹 `vivo配套（…）\拖图补丁\`（不进桌宠程序），大文件备份在 D 盘。
-import { closeSync, existsSync, openSync, readSync } from "node:fs";
+// vivo 在各自系统的 C 盘，根和燊一修各装各的补丁（2026-10-24：根这边一直没装，检查又报错，看不出来）。
+import * as nodeFs from "node:fs";
 import { join } from "node:path";
+
+// 🚨 Electron 里普通 fs 把 .asar 当成文件夹：existsSync 说有、openSync 却报 ENOENT（2026-10-24 开机天天报「看 vivo 拖图补丁出错」）。
+// 要把 .asar 当普通文件读得用 Electron 的 original-fs；单测跑在普通 Node 里没有它，就用 node:fs。
+const fs: typeof nodeFs = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("original-fs") as typeof nodeFs;
+  } catch {
+    return nodeFs;
+  }
+})();
 
 export const VIVO_ASAR = "C:\\Program Files (x86)\\pcsuite\\resources\\app.asar";
 export const KIT_DIR_NAME = "vivo配套（拖图补丁·插件·一键装）";
@@ -12,25 +24,42 @@ export function patchCmd(appRoot: string): string {
   return join(appRoot, KIT_DIR_NAME, "拖图补丁", "双击装补丁.cmd");
 }
 const MARK = "AGENTPET_VIVO_DRAG_PATCH_v1";
-const POPUP = ["dist", "electron", "174.js"];
+/** 弹窗分块在 dist/electron 下，文件名每版不同（8 月版 174.js，7.0.6 版 184.js），所以挨个小分块找记号。 */
+const CHUNK_DIR = ["dist", "electron"];
+/** 主程序 main.js 好几兆，不读；分块都小，超过这个大小的跳过。 */
+const MAX_CHUNK = 1024 * 1024;
 
 export type DragPatchState = "已装" | "被升级盖掉了" | "没装 vivo" | "看不出来";
 
+interface AsarEntry {
+  size?: number;
+  offset?: string;
+  unpacked?: boolean;
+  files?: Record<string, AsarEntry>;
+}
+
 export function checkDragPatch(asar = VIVO_ASAR): DragPatchState {
-  if (!existsSync(asar)) return "没装 vivo";
-  const fd = openSync(asar, "r");
+  if (!fs.existsSync(asar)) return "没装 vivo";
+  const fd = fs.openSync(asar, "r");
   try {
     const head = Buffer.alloc(16);
-    readSync(fd, head, 0, 16, 0);
+    fs.readSync(fd, head, 0, 16, 0);
     const json = Buffer.alloc(head.readUInt32LE(12));
-    readSync(fd, json, 0, json.length, 16);
-    let node = JSON.parse(json.toString());
-    for (const part of POPUP) node = node?.files?.[part];
-    if (!node || node.offset === undefined) return "看不出来";
-    const body = Buffer.alloc(node.size);
-    readSync(fd, body, 0, node.size, 8 + head.readUInt32LE(4) + Number(node.offset));
-    return body.toString().includes(MARK) ? "已装" : "被升级盖掉了";
+    fs.readSync(fd, json, 0, json.length, 16);
+    let dir = JSON.parse(json.toString()) as AsarEntry;
+    for (const part of CHUNK_DIR) dir = dir?.files?.[part] as AsarEntry;
+    if (!dir?.files) return "看不出来";
+    const base = 8 + head.readUInt32LE(4);
+    let chunks = 0;
+    for (const [name, node] of Object.entries(dir.files)) {
+      if (!name.endsWith(".js") || name === "main.js" || node.unpacked || node.offset === undefined || !node.size || node.size > MAX_CHUNK) continue;
+      chunks++;
+      const body = Buffer.alloc(node.size);
+      fs.readSync(fd, body, 0, node.size, base + Number(node.offset));
+      if (body.toString().includes(MARK)) return "已装";
+    }
+    return chunks ? "被升级盖掉了" : "看不出来";
   } finally {
-    closeSync(fd);
+    fs.closeSync(fd);
   }
 }
