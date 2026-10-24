@@ -28,11 +28,8 @@ export const DEFAULT_LAUNCH: Record<string, LaunchTarget[]> = {
     { open: "Claude Code 一", freshWindow: true },
     { open: "Claude Code 根", freshWindow: true },
   ],
-  // Codex 桌面版的程序文件叫 ChatGPT.exe；没装桌面版的那套用 E 盘的命令行版
-  chatgpt: [
-    { open: "Codex", freshWindow: false, app: "chatgpt.exe" },
-    { open: `${ENTRY}\\Codex一点就开（双击进命令窗口）\\Codex CLI.lnk`, freshWindow: true },
-  ],
+  // Codex 桌面版的程序文件叫 ChatGPT.exe。命令行版「Codex CLI」那条候选 2026-10-24 删了（他不用 Codex 命令行了），组留着
+  chatgpt: [{ open: "Codex", freshWindow: false, app: "chatgpt.exe" }],
   piagent: [
     { open: "Pi 编程智能体", freshWindow: true },
     { open: `${ENTRY}\\Pi一点就开（双击进命令窗口·永久入口）\\Pi 编程智能体.lnk`, freshWindow: true },

@@ -76,7 +76,7 @@ try {
   electronApp = await _electron.launch({
     executablePath: electronExe,
     args: [appEntry],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome, BOOKMARK_AGENT_SHORTCUT_DIR: shortcutDir },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome, BOOKMARK_AGENT_SHORTCUT_DIR: shortcutDir },
   });
   savedClipboard = await electronApp.evaluate(({ clipboard }) => clipboard.readText());
   const panel = await waitFor(async () => {

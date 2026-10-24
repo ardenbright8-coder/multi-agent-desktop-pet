@@ -12,6 +12,7 @@ const bridgeDir = join(root, "integrations");
 mkdirSync(bridgeDir, { recursive: true });
 copyFileSync(resolve("integrations", "hooks", "agent-pet-hook.mjs"), join(bridgeDir, "agent-pet-hook.mjs"));
 process.env.AGENT_PET_HUB_HOME = root;
+process.env.AGENT_PET_ISOLATED = "1";
 process.env.AGENT_PET_SKIP_INTEGRATION_INSTALL = "1";
 
 const { AgentHub } = require("../dist/events/hub.js");
@@ -69,7 +70,7 @@ try {
 async function runBridge(agent, kind, payload) {
   const child = spawn(process.execPath, [resolve("integrations", "hooks", "agent-pet-hook.mjs"), agent, kind], {
     cwd: process.cwd(),
-    env: { ...process.env, AGENT_PET_HUB_HOME: root },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: root },
     stdio: ["pipe", "inherit", "inherit"],
     windowsHide: true,
   });

@@ -42,7 +42,7 @@ try {
   electronApp = await _electron.launch({
     executablePath: electronExe,
     args: [appEntry],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome },
   });
   // 多窗口应用：按 URL 挑书签面板（隔离实例自己的窗口，碰不到主实例）。
   let panel = null;

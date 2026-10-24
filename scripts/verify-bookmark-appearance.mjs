@@ -39,7 +39,7 @@ try {
   electronApp = await _electron.launch({
     executablePath: electronExe,
     args: [appEntry],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome },
   });
   const panel = await waitFor(async () => {
     for (const win of electronApp.windows()) {
@@ -88,7 +88,7 @@ try {
   electronApp = await _electron.launch({
     executablePath: electronExe,
     args: [appEntry],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome },
   });
   const panel2 = await waitFor(async () => {
     for (const win of electronApp.windows()) {

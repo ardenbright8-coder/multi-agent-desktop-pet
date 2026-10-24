@@ -6,15 +6,17 @@ import { join, resolve } from "node:path";
 
 // 分块之后界面文件跟着功能夹走（pet\renderer、interaction\renderer、events\renderer），
 // 所以这里不再写死某一个夹，而是把 src 下所有非 .ts 文件按原样拷进 dist。
-copyNonTypeScript(resolve("src"), resolve("dist"));
+// 第一个参数可指定拷到哪（看板升级先编到 .runtimedist-next，见 upgrade-build.mjs），不给就是 dist。
+const out = resolve(process.argv[2] || "dist");
+copyNonTypeScript(resolve("src"), out);
 
-copyTree(resolve("integrations"), resolve("dist", "integrations"));
+copyTree(resolve("integrations"), join(out, "integrations"));
 
 // 看板内置模型整理捆的规矩（organizer.ts 运行时读）：打包只带 dist，所以拷一份进去。
 const organizerRules = "skills（看板内置模型用·整理捆的规矩）";
-copyTree(resolve(organizerRules), resolve("dist", organizerRules));
+copyTree(resolve(organizerRules), join(out, organizerRules));
 
-copyTree(resolve("assets"), resolve("dist", "assets"));
+copyTree(resolve("assets"), join(out, "assets"));
 
 function copyNonTypeScript(from, to) {
   for (const entry of readdirSync(from, { withFileTypes: true })) {

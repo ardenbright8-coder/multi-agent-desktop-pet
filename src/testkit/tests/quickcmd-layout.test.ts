@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyOrder,
+  clampQcZoom,
   computePanelBounds,
+  parseQcZoom,
+  stepQcZoom,
   computeSheetBounds,
   SHEET,
   parseOrder,
@@ -221,4 +224,20 @@ test("找线：深色主题也认", () => {
 test("找线：只有一条线、或者一条都没有，返回 null（窗口用估的位置）", () => {
   assert.equal(findInputTopLine(fakeTerminal([255])), null);
   assert.equal(findInputTopLine(fakeTerminal([])), null);
+});
+
+test("缩放：窗口跟着放大，右边、底边还贴原位置；档位 10%、到边就停、坏档回 100%", () => {
+  const terminal = { x: 100, y: 50, width: 1400, height: 900 };
+  const big = computePanelBounds(terminal, 5, 700, 1.5);
+  assert.equal(big.width, Math.round(PANEL.width * 1.5));
+  assert.equal(big.height, Math.round(panelHeight(5) * 1.5));
+  assert.equal(big.x + big.width, 100 + 1400 - 10);
+  assert.equal(big.y + big.height, 700 - 3);
+  assert.equal(stepQcZoom(1, "in"), 1.1);
+  assert.equal(stepQcZoom(0.5, "out"), 0.5);
+  assert.equal(stepQcZoom(2.5, "in"), 2.5);
+  assert.equal(clampQcZoom(1.2000001), 1.2);
+  assert.equal(parseQcZoom("{\"zoom\":1.3}"), 1.3);
+  assert.equal(parseQcZoom("{\"zoom\":9}"), 1);
+  assert.equal(parseQcZoom("坏的"), 1);
 });

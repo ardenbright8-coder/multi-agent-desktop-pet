@@ -23,13 +23,15 @@ export const KIT_DIR_NAME = "vivo配套（拖图补丁·插件·一键装）";
 export function patchCmd(appRoot: string): string {
   return join(appRoot, KIT_DIR_NAME, "拖图补丁", "双击装补丁.cmd");
 }
-const MARK = "AGENTPET_VIVO_DRAG_PATCH_v1";
+// 补丁升版就升这个号（跟 打补丁.cjs 的 MARK 一致）。v2（2026-10-24）：点图复制、弹窗回右下角
+const MARK = "AGENTPET_VIVO_DRAG_PATCH_v2";
+const MARK_ANY = "AGENTPET_VIVO_DRAG_PATCH_v";
 /** 弹窗分块在 dist/electron 下，文件名每版不同（8 月版 174.js，7.0.6 版 184.js），所以挨个小分块找记号。 */
 const CHUNK_DIR = ["dist", "electron"];
 /** 主程序 main.js 好几兆，不读；分块都小，超过这个大小的跳过。 */
 const MAX_CHUNK = 1024 * 1024;
 
-export type DragPatchState = "已装" | "被升级盖掉了" | "没装 vivo" | "看不出来";
+export type DragPatchState = "已装" | "装的是旧版补丁" | "被升级盖掉了" | "没装 vivo" | "看不出来";
 
 interface AsarEntry {
   size?: number;
@@ -51,13 +53,17 @@ export function checkDragPatch(asar = VIVO_ASAR): DragPatchState {
     if (!dir?.files) return "看不出来";
     const base = 8 + head.readUInt32LE(4);
     let chunks = 0;
+    let older = false;
     for (const [name, node] of Object.entries(dir.files)) {
       if (!name.endsWith(".js") || name === "main.js" || node.unpacked || node.offset === undefined || !node.size || node.size > MAX_CHUNK) continue;
       chunks++;
       const body = Buffer.alloc(node.size);
       fs.readSync(fd, body, 0, node.size, base + Number(node.offset));
-      if (body.toString().includes(MARK)) return "已装";
+      const text = body.toString();
+      if (text.includes(MARK)) return "已装";
+      if (text.includes(MARK_ANY)) older = true;
     }
+    if (older) return "装的是旧版补丁";
     return chunks ? "被升级盖掉了" : "看不出来";
   } finally {
     fs.closeSync(fd);

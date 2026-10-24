@@ -39,14 +39,14 @@ async function waitFor(fn, timeoutMs = 8000, step = 100) {
   return last;
 }
 function runCli(args) {
-  const r = spawnSync(process.execPath, [cliScript, ...args], { encoding: "utf8", env: { ...process.env, AGENT_PET_HUB_HOME: hubHome } });
+  const r = spawnSync(process.execPath, [cliScript, ...args], { encoding: "utf8", env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome } });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 async function launch() {
   const app = await _electron.launch({
     executablePath: join(root, "node_modules", "electron", "dist", "electron.exe"),
     args: [join(root, "scripts", "bookmark-image-test-host.cjs")],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome, AGENT_PET_SKIP_INTEGRATION_INSTALL: "1" },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome, AGENT_PET_SKIP_INTEGRATION_INSTALL: "1" },
   });
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");

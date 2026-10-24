@@ -7,7 +7,7 @@ const temp = join(root, "temp");
 mkdirSync(temp, { recursive: true });
 const env = {
   ...process.env,
-  AGENT_PET_HUB_HOME: root,
+  AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: root,
   AGENT_PET_SKIP_INTEGRATION_INSTALL: "1",
   TEMP: temp,
   TMP: temp,

@@ -23,6 +23,12 @@ import { CF_DIB, CF_HDROP, CF_UNICODETEXT, loadVivoWin32, type VivoWin32 } from 
 const log = createLogger("vivo");
 
 const POLL_MS = 300;
+/** 卡住自恢复（2026-10-24 加）：看门狗多久看一次；轮询多久没跑算停了；光秃秃的图没补上隔多久重试、最多几次；连着几次放不进剪贴板就重建 */
+const WATCHDOG_MS = 5_000;
+const STALL_MS = 5_000;
+const RETRY_MS = 2_000;
+const MAX_RETRY = 3;
+const REBUILD_AFTER_FAILS = 3;
 /** 命令窗口里 Ctrl+V 只能贴字，所以补一行文件位置。哪个程序因此多贴出一行字，把这里改 false。 */
 const PUT_PATH_TEXT = true;
 const JPEG_QUALITY = 92;
@@ -43,23 +49,24 @@ let pendingSequence = -1;
 let markerFormat = 0;
 let pngFormat = 0;
 let htmlFormat = 0;
+let watchdog: NodeJS.Timeout | null = null;
+let lastTickAt = 0;
+/** 认出是光秃秃的图、但没补成的那次剪贴板（序号）和重试了几次。补成了或剪贴板换了就清掉 */
+let missedSequence = -1;
+let missedRetries = 0;
+let missedAt = 0;
+let writeFails = 0;
+/** 同一句日志不刷屏：上一句和上一次写的时间 */
+let lastNote = "";
+let lastNoteAt = 0;
 const status: VivoClipStatus = { state: "没启用", converted: 0, lastFile: "", lastAt: 0, dragPatch: "看不出来" };
 
 export function initVivoClip(): void {
   watchDragPatch();
   try {
-    win32 = loadVivoWin32();
-    if (!win32) {
-      status.state = "出错";
-      return;
-    }
-    markerFormat = win32.register("AgentPetVivoClip");
-    pngFormat = win32.register("PNG");
-    htmlFormat = win32.register("HTML Format");
-    lastSequence = win32.sequence();
-    timer = setInterval(tick, POLL_MS);
-    timer.unref();
-    status.state = "在跑";
+    if (!startPolling()) return;
+    watchdog = setInterval(watch, WATCHDOG_MS);
+    watchdog.unref();
     log.记(`vivo 截图复制就绪，图存到 ${transitDirectory()}`, "init");
   } catch (error) {
     status.state = "出错";
@@ -67,8 +74,93 @@ export function initVivoClip(): void {
   }
 }
 
+/** 开（或重开）剪贴板接口和 0.3 秒轮询。看门狗重建也走这里 */
+function startPolling(): boolean {
+  if (timer) clearInterval(timer);
+  timer = null;
+  win32 = loadVivoWin32();
+  if (!win32) {
+    status.state = "出错";
+    return false;
+  }
+  markerFormat = win32.register("AgentPetVivoClip");
+  pngFormat = win32.register("PNG");
+  htmlFormat = win32.register("HTML Format");
+  lastSequence = win32.sequence();
+  pendingSequence = -1;
+  lastTickAt = Date.now();
+  writeFails = 0;
+  timer = setInterval(tick, POLL_MS);
+  timer.unref();
+  status.state = "在跑";
+  return true;
+}
+
+/** 重建：关掉剪贴板主人小窗口，重新开接口和轮询。之后剪贴板里那张没补的图交给看门狗重试 */
+function rebuild(why: string): void {
+  log.记(`vivo 截图复制自己重建（${why}）`, "watchdog");
+  try {
+    win32?.dispose();
+  } catch (error) {
+    log.出事("重建时关旧的剪贴板小窗口出错（接着重建）", error, "watchdog");
+  }
+  win32 = null;
+  const keep = missedSequence;
+  if (!startPolling()) {
+    log.出事("重建失败，vivo 截图复制停了（重开桌宠再试）", undefined, "watchdog");
+    return;
+  }
+  // 重建前就在剪贴板里那张图：序号没变，轮询不会再看它，交给看门狗重试
+  if (keep >= 0) missedSequence = keep;
+}
+
+/**
+ * 看门狗（2026-10-24 加）：那天 2:45–3:24 一张没补，重开桌宠才好，日志里什么都没留。现在每 5 秒看三样：
+ * 轮询还在不在跑、剪贴板主人小窗口还在不在、剪贴板里有没有光秃秃的图一直没补上（有就重试，重试不行就重建）。
+ */
+function watch(): void {
+  try {
+    const now = Date.now();
+    if (!win32) {
+      rebuild("剪贴板接口没了");
+      return;
+    }
+    if (now - lastTickAt > STALL_MS) {
+      rebuild(`轮询 ${Math.round((now - lastTickAt) / 1000)} 秒没跑`);
+      return;
+    }
+    if (!win32.alive()) {
+      rebuild("剪贴板主人小窗口没了");
+      return;
+    }
+    if (missedSequence < 0) return;
+    if (win32.sequence() !== missedSequence) {
+      missedSequence = -1;
+      return;
+    }
+    if (now - missedAt < RETRY_MS) return;
+    if (missedRetries >= MAX_RETRY) {
+      note(`剪贴板里那张光秃秃的图重试 ${MAX_RETRY} 次都没补上，不再试（再点一次复制会重新来）`);
+      missedSequence = -1;
+      return;
+    }
+    missedRetries += 1;
+    missedAt = now;
+    log.记(`剪贴板里有光秃秃的图没补上，第 ${missedRetries} 次重试`, "watchdog");
+    if (!readBare()) {
+      missedSequence = -1;
+      return;
+    }
+    convert(missedSequence);
+  } catch (error) {
+    note("看门狗出错", error);
+  }
+}
+
 export function closeVivoClip(): void {
   try {
+    if (watchdog) clearInterval(watchdog);
+    watchdog = null;
     if (timer) clearInterval(timer);
     timer = null;
     win32?.dispose();
@@ -85,12 +177,20 @@ function watchDragPatch(): void {
   try {
     status.dragPatch = checkDragPatch();
     log.记(`vivo 拖图补丁：${status.dragPatch}`, "patch");
-    if (status.dragPatch !== "被升级盖掉了" || !Notification.isSupported()) return;
-    new Notification({
-      // 两套系统各装各的 vivo：这套可能从没装过，也可能是升级盖掉了
-      title: "这套系统的 vivo 没有拖图补丁（没装过或被升级盖掉了）",
-      body: `拖 vivo 截图又只能拖出链接了。双击 ${patchCmd(app.getAppPath())} 重新装上（会弹一次管理员确认）`,
-    }).show();
+    if (!Notification.isSupported()) return;
+    if (status.dragPatch === "被升级盖掉了") {
+      new Notification({
+        // 两套系统各装各的 vivo：这套可能从没装过，也可能是升级盖掉了
+        title: "这套系统的 vivo 没有拖图补丁（没装过或被升级盖掉了）",
+        body: `拖 vivo 截图又只能拖出链接了。双击 ${patchCmd(app.getAppPath())} 重新装上（会弹一次管理员确认）`,
+      }).show();
+    } else if (status.dragPatch === "装的是旧版补丁") {
+      // 补丁出了新版（2026-10-24 v2：点图复制、弹窗回右下角），两套系统各自要重装一次
+      new Notification({
+        title: "vivo 拖图补丁有新版了",
+        body: `点图就复制、弹窗回到右下角。双击 ${patchCmd(app.getAppPath())} 换上（会关一下 vivo、弹一次管理员确认）`,
+      }).show();
+    }
   } catch (error) {
     status.dragPatch = "看不出来";
     log.出事("看 vivo 拖图补丁出错（不影响复制）", error, "patch");
@@ -99,6 +199,7 @@ function watchDragPatch(): void {
 
 function tick(): void {
   if (!win32) return;
+  lastTickAt = Date.now();
   try {
     const sequence = win32.sequence();
     if (sequence === lastSequence) return;
@@ -108,27 +209,55 @@ function tick(): void {
       return;
     }
     lastSequence = sequence;
-    const bare = isBareImage({
-      image: win32.has(CF_DIB) || win32.has(pngFormat),
-      files: win32.has(CF_HDROP),
-      text: win32.has(CF_UNICODETEXT),
-      html: win32.has(htmlFormat),
-      marker: win32.has(markerFormat),
-    });
-    if (bare) convert();
+    if (missedSequence >= 0 && missedSequence !== sequence) missedSequence = -1;
+    if (readBare()) convert(sequence);
   } catch (error) {
-    log.出事("看剪贴板出错", error, "tick");
+    note("看剪贴板出错", error);
   }
 }
 
-function convert(): void {
+/** 剪贴板里是不是光秃秃一张图。有图但不补的，记一句为什么跳过 */
+function readBare(): boolean {
+  if (!win32) return false;
+  const seen = {
+    image: win32.has(CF_DIB) || win32.has(pngFormat),
+    files: win32.has(CF_HDROP),
+    text: win32.has(CF_UNICODETEXT),
+    html: win32.has(htmlFormat),
+    marker: win32.has(markerFormat),
+  };
+  if (isBareImage(seen)) return true;
+  if (seen.image && !seen.marker) {
+    const why = [seen.files && "带文件（PixPin 这类）", seen.html && "带网页片段", seen.text && "带字"].filter(Boolean).join("、");
+    note(`剪贴板有图但不补：${why}`);
+  }
+  return false;
+}
+
+/** 补一次。没补成的记下序号交给看门狗重试 */
+function convert(sequence: number): void {
   if (!win32) return;
+  const missed = (why: string): void => {
+    if (missedSequence !== sequence) {
+      missedSequence = sequence;
+      missedRetries = 0;
+    }
+    missedAt = Date.now();
+    log.记(`这张没补上：${why}（等会儿自动重试）`, "convert");
+  };
   const image = clipboard.readImage();
   if (image.isEmpty()) {
-    log.记("剪贴板说有图，但读出来是空的，原样不动", "convert");
+    missed("剪贴板说有图，但读出来是空的");
     return;
   }
-  const file = saveToTransit(image.toJPEG(JPEG_QUALITY));
+  let file: string;
+  try {
+    file = saveToTransit(image.toJPEG(JPEG_QUALITY));
+  } catch (error) {
+    log.出事("存中转图出错", error, "convert");
+    missed("存不进中转夹");
+    return;
+  }
   const { width, height } = image.getSize();
   const items = [
     { format: CF_HDROP, data: buildDropFiles([file]) },
@@ -138,9 +267,14 @@ function convert(): void {
     { format: markerFormat, data: Buffer.from([1]) },
   ];
   if (!win32.write(items)) {
-    log.出事(`往剪贴板补文件失败（图已存好）：${file}`, undefined, "convert");
+    writeFails += 1;
+    log.出事(`往剪贴板补文件失败（图已存好，连着第 ${writeFails} 次）：${file}`, undefined, "convert");
+    missed("放不进剪贴板");
+    if (writeFails >= REBUILD_AFTER_FAILS) rebuild(`连着 ${writeFails} 次放不进剪贴板`);
     return;
   }
+  writeFails = 0;
+  missedSequence = -1;
   lastSequence = win32.sequence();
   pendingSequence = lastSequence;
   status.converted += 1;
@@ -148,6 +282,16 @@ function convert(): void {
   status.lastAt = Date.now();
   log.记(`补好了 ${width}x${height}：${file}`, "convert");
   prune();
+}
+
+/** 写日志，同一句 1 分钟内只写一次（轮询 0.3 秒一回，出错不刷屏） */
+function note(text: string, error?: unknown): void {
+  const now = Date.now();
+  if (text === lastNote && now - lastNoteAt < 60_000) return;
+  lastNote = text;
+  lastNoteAt = now;
+  if (error === undefined) log.记(text, "tick");
+  else log.出事(text, error, "tick");
 }
 
 function saveToTransit(jpeg: Buffer): string {

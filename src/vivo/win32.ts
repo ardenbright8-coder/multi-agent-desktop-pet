@@ -20,6 +20,8 @@ export interface VivoWin32 {
   register(name: string): number;
   /** 清空剪贴板，一次放进去这几样。成功给 true。 */
   write(items: ReadonlyArray<{ format: number; data: Buffer }>): boolean;
+  /** 剪贴板主人小窗口还在不在（被系统收掉了就放不进东西，要重建） */
+  alive(): boolean;
   dispose(): void;
 }
 
@@ -44,6 +46,7 @@ export function loadVivoWin32(): VivoWin32 | null {
       "uintptr_t __stdcall CreateWindowExW(uint32_t exStyle, str16 className, str16 title, uint32_t style, int x, int y, int w, int h, uintptr_t parent, uintptr_t menu, uintptr_t instance, uintptr_t param)",
     ) as unknown as (...args: unknown[]) => number | bigint;
     const destroyWindow = user32.func("bool __stdcall DestroyWindow(uintptr_t hwnd)") as unknown as (hwnd: bigint) => boolean;
+    const isWindow = user32.func("bool __stdcall IsWindow(uintptr_t hwnd)") as unknown as (hwnd: bigint) => boolean;
     const globalAlloc = kernel32.func("uintptr_t __stdcall GlobalAlloc(uint32_t flags, size_t bytes)") as unknown as (flags: number, bytes: number) => number | bigint;
     const globalLock = kernel32.func("uintptr_t __stdcall GlobalLock(uintptr_t memory)") as unknown as (memory: bigint) => number | bigint;
     const globalUnlock = kernel32.func("bool __stdcall GlobalUnlock(uintptr_t memory)") as unknown as (memory: bigint) => boolean;
@@ -97,8 +100,10 @@ export function loadVivoWin32(): VivoWin32 | null {
           closeClipboard();
         }
       },
+      alive: () => isWindow(owner),
       dispose: () => {
         destroyWindow(owner);
+        cached = undefined;
       },
     };
   } catch (error) {

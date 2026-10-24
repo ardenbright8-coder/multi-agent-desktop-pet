@@ -13,7 +13,7 @@ const args = packaged ? ["--single-instance-host-test"] : [electronCli, ".", "--
 if (!existsSync(command)) throw new Error(`Test executable is missing: ${command}`);
 const env = {
   ...process.env,
-  AGENT_PET_HUB_HOME: root,
+  AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: root,
   AGENT_PET_SKIP_INTEGRATION_INSTALL: "1",
   TEMP: temp,
   TMP: temp,

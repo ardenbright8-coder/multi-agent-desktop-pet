@@ -225,8 +225,37 @@ export function panelHeight(count: number): number {
  * 终端拖多大、挪哪儿都跟着。lineY＝那条线的位置（跟 terminal 同一套坐标），量不到就放在终端底部往上 1/6 处。
  * 终端太矮放不下就顶到终端最上面，不出终端。
  */
-export function computePanelBounds(terminal: Rect, count: number, lineY: number | null): Rect {
-  return anchorAboveInput(terminal, lineY, PANEL.width, panelHeight(count));
+export function computePanelBounds(terminal: Rect, count: number, lineY: number | null, zoom = 1): Rect {
+  return anchorAboveInput(terminal, lineY, Math.round(PANEL.width * zoom), Math.round(panelHeight(count) * zoom));
+}
+
+// ── 缩放（2026-10-24，照看板 bookmark/zoom.ts 那套抄的，两块互不 import）──
+// 他电脑是 3440×1440 带鱼屏、缩放 100%，按钮显小；燊一修那套多半 125%/150%。各自 Ctrl 加减调到顺眼，记在各自数据夹。
+export const DEFAULT_QC_ZOOM = 1;
+export const MIN_QC_ZOOM = 0.5;
+export const MAX_QC_ZOOM = 2.5;
+const QC_ZOOM_STEP = 0.1;
+
+/** 夹到 50%–250%，按 10% 取整；非数字回落 100%。 */
+export function clampQcZoom(value: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_QC_ZOOM;
+  return Math.min(MAX_QC_ZOOM, Math.max(MIN_QC_ZOOM, Math.round(value * 10) / 10));
+}
+
+/** 放大 / 缩小一档，到边就停。 */
+export function stepQcZoom(current: number, direction: "in" | "out"): number {
+  return clampQcZoom(clampQcZoom(current) + (direction === "in" ? QC_ZOOM_STEP : -QC_ZOOM_STEP));
+}
+
+/** 解析 quickcmd-zoom.json：{"zoom":1.2}，坏档、越界回落 100%。 */
+export function parseQcZoom(text: string): number {
+  try {
+    const zoom = (JSON.parse(text) as { zoom?: unknown } | null)?.zoom;
+    if (typeof zoom !== "number" || !Number.isFinite(zoom) || zoom < MIN_QC_ZOOM || zoom > MAX_QC_ZOOM) return DEFAULT_QC_ZOOM;
+    return clampQcZoom(zoom);
+  } catch {
+    return DEFAULT_QC_ZOOM;
+  }
 }
 
 /** 说明面板（点「打开文件」按钮弹出的那块玻璃）的尺寸。 */

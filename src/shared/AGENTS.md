@@ -5,7 +5,7 @@
 | 文件 | 管什么 |
 |---|---|
 | `protocol.ts` | `AgentEvent` 等全部类型 + `normalizeAgentEvent`（外来事件一律先过它）+ 协议版本号 |
-| `paths.ts` | `appDataRoot` `discoveryPath` `eventJournalPath` `preferencesPath` |
+| `paths.ts` | `appDataRoot` `discoveryPath` `eventJournalPath` `preferencesPath`；`isIsolatedRun`（这次是不是测试实例，认 `AGENT_PET_ISOLATED=1` 或临时夹数据。🚨 数据放哪照旧认 `AGENT_PET_HUB_HOME`，「是不是测试」不许再拿它判：两套共用数据时真机也设它） |
 | `atomic-file.ts` | `writeJsonAtomic`（先写临时文件再改名，防写一半断电） |
 
 ## 对外露出什么

@@ -10,6 +10,7 @@ const root = resolve(".runtime", "verify-seats");
 rmSync(root, { recursive: true, force: true });
 mkdirSync(root, { recursive: true });
 process.env.AGENT_PET_HUB_HOME = root;
+process.env.AGENT_PET_ISOLATED = "1";
 process.env.AGENT_PET_SKIP_INTEGRATION_INSTALL = "1";
 
 const { app, ipcMain } = require("electron");

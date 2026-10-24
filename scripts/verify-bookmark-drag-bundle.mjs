@@ -18,7 +18,7 @@ function check(name, ok, detail = '') {
 }
 let app;
 try {
-  app = await _electron.launch({ executablePath: join(root, 'node_modules/electron/dist/electron.exe'), args: [join(root, 'dist/app.js')], env: { ...process.env, AGENT_PET_HUB_HOME: home } });
+  app = await _electron.launch({ executablePath: join(root, 'node_modules/electron/dist/electron.exe'), args: [join(root, 'dist/app.js')], env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: home } });
   let page;
   const end = Date.now() + 15000;
   while (!page && Date.now() < end) {

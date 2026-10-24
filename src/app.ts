@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { app, type Tray } from "electron";
 import type { InteractionResponseInput, SessionSnapshot } from "./shared/protocol";
 import { PROTOCOL_VERSION } from "./shared/protocol";
-import { appDataRoot, discoveryPath, eventJournalPath } from "./shared/paths";
+import { appDataRoot, discoveryPath, eventJournalPath, isIsolatedRun } from "./shared/paths";
 import { createLogger, lastLogError, logRoot, startLog } from "./shared/log";
 import { AgentHub } from "./events/hub";
 import { LocalIpcServer } from "./channel/ipc-server";
@@ -41,10 +41,12 @@ import type { TestHost } from "./testkit/host";
 const skipIntegrationInstall = process.env.AGENT_PET_SKIP_INTEGRATION_INSTALL === "1"
   || process.argv.includes("--skip-integration-install");
 if (screenshotMode) app.disableHardwareAcceleration();
-if (testMode && !process.env.AGENT_PET_HUB_HOME) {
+// 自测一律进自己的隔离夹并打标记。用户环境变量里的 AGENT_PET_HUB_HOME 是真数据（两套共用），不能被测试拿去写。
+if (testMode && !isIsolatedRun()) {
   const testRoot = join(process.cwd(), ".runtime", "test-runs", `${testModeName()}-${process.pid}`);
   process.env.AGENT_PET_HUB_HOME = testRoot;
 }
+if (testMode) process.env.AGENT_PET_ISOLATED = "1";
 if (process.env.AGENT_PET_HUB_HOME) app.setPath("userData", join(process.env.AGENT_PET_HUB_HOME, "electron"));
 
 const log = createLogger("app");

@@ -51,7 +51,7 @@ try {
   electronApp = await _electron.launch({
     executablePath: electronExe,
     args: [appEntry],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome },
   });
   // 多窗口应用：按 URL 挑书签面板（别拿 firstWindow——那是桌宠本体的）。
   const panel = await waitFor(async () => {

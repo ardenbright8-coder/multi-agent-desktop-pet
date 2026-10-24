@@ -30,15 +30,17 @@ function fakeAsar(popup: string, chunk = "174.js"): string {
 }
 
 test("checkDragPatch：有记号=已装，没记号=被升级盖掉了，没文件=没装 vivo", () => {
-  const patched = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v1*/}");
+  const patched = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v2*/}");
   const plain = fakeAsar("a(){}");
-  const newer = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v1*/}", "184.js");
+  const newer = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v2*/}", "184.js");
+  const older = fakeAsar("a(){/*AGENTPET_VIVO_DRAG_PATCH_v1*/}", "184.js");
   try {
     assert.equal(checkDragPatch(patched), "已装");
     assert.equal(checkDragPatch(plain), "被升级盖掉了");
     assert.equal(checkDragPatch(newer), "已装");
+    assert.equal(checkDragPatch(older), "装的是旧版补丁");
     assert.equal(checkDragPatch(join(tmpdir(), "没有这个文件.asar")), "没装 vivo");
   } finally {
-    for (const f of [patched, plain, newer]) rmSync(join(f, ".."), { recursive: true, force: true });
+    for (const f of [patched, plain, newer, older]) rmSync(join(f, ".."), { recursive: true, force: true });
   }
 });

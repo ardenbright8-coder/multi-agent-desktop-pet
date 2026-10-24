@@ -159,30 +159,38 @@ function bmInit() {
   void window.bookmark.getAppearance?.().then((opacity) => bmApplyOpacity(Number(opacity)));
   // 局部 Ctrl+R：真机编译+整程序重开（只在本窗口监听，🚨 不注册 globalShortcut，不拦其他软件）。
   // 编译那几秒主进程是卡住的，按键会攒着一起来：一次没完不再起第二次（2026-10-24 日志里一按就编三遍）。
+  // 标题栏版本号旁的「升级」钮（2026-10-24）＝按一次 Ctrl+R。
   let reloading = false;
+  const upgrade = () => {
+    if (reloading) return;
+    reloading = true;
+    window.localStorage.setItem(justRelaunchedKey, String(Date.now()));
+    bmToast("正在升级成最新代码…", 30000);
+    const failed = () => {
+      window.localStorage.removeItem(justRelaunchedKey);
+      bmToast("升级失败：编译没过，旧代码照常在用（原因在桌宠日志 bookmark 那份）", 12000);
+    };
+    void Promise.resolve(window.bookmark.reload()).then((result) => {
+      reloading = false;
+      if (!result || result.mode === "reload") {
+        window.localStorage.removeItem(justRelaunchedKey);
+        bmToast("🌲 代码是最新的", 2000);
+        return;
+      }
+      if (result.ok === false) failed();
+    }).catch(() => {
+      reloading = false;
+      failed();
+    });
+  };
+  document.getElementById("upgrade-btn")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    upgrade();
+  });
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && (event.key === "r" || event.key === "R")) {
       event.preventDefault();
-      if (reloading || event.repeat) return;
-      reloading = true;
-      window.localStorage.setItem(justRelaunchedKey, String(Date.now()));
-      bmToast("正在换成最新代码…", 30000);
-      void Promise.resolve(window.bookmark.reload()).then((result) => {
-        reloading = false;
-        if (!result || result.mode === "reload") {
-          window.localStorage.removeItem(justRelaunchedKey);
-          bmToast("🌲 代码是最新的", 2000);
-          return;
-        }
-        if (result.ok === false) {
-          window.localStorage.removeItem(justRelaunchedKey);
-          bmToast("换新失败：编译没过，还是旧代码（原因在桌宠日志 bookmark 那份）", 12000);
-        }
-      }).catch(() => {
-        reloading = false;
-        window.localStorage.removeItem(justRelaunchedKey);
-        bmToast("换新失败：编译没过，还是旧代码（原因在桌宠日志 bookmark 那份）", 12000);
-      });
+      if (!event.repeat) upgrade();
     }
   });
   // 设置浮层（透明度滑条；以后设置项往这个浮层里加）。

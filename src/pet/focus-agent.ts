@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createLogger } from "../shared/log";
+import { isIsolatedRun } from "../shared/paths";
 
 const log = createLogger("window");
 
@@ -68,7 +69,7 @@ export function scoreAgentWindow(input: {
 
 /** 点了「返回终端」才调。测试隔离环境里不真切窗口，避免抢自测焦点。 */
 export function focusAgentWindow(hint: FocusAgentHint): void {
-  if (process.env.AGENT_PET_HUB_HOME) return;
+  if (isIsolatedRun()) return;
   const agent = String(hint.agent || "").trim();
   const project = String(hint.project || "").trim();
   const originPid = Number(hint.originPid) > 0 ? Math.floor(Number(hint.originPid)) : 0;

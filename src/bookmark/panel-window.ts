@@ -16,7 +16,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readF
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
-import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory } from "../shared/paths";
+import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory, isIsolatedRun } from "../shared/paths";
 import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_ZORDER_FLAGS, pinToggleSteps } from "./dock";
 import { AgentRoster } from "./agents";
 import { BookmarkStore, type BookmarkRecord } from "./store";
@@ -410,9 +410,10 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   store.onSaved = scheduleItemFileSync;
   scheduleItemFileSync();
   liveRestart = Boolean(options?.liveRestart);
-  // 启动 Agent 真打开桌面快捷方式只在真机。验证脚本不带自测开关（照样常驻），但都用隔离数据夹 AGENT_PET_HUB_HOME，
-  // 真机入口从不设它（同 pet/focus-agent 的判法）。2026-09-24 踩过：只看常驻，验证脚本跑一次开一个真 Claude 窗口。
-  openAgents = Boolean(options?.resident) && !process.env.AGENT_PET_HUB_HOME;
+  // 启动 Agent 真打开桌面快捷方式只在真机。验证脚本不带自测开关（照样常驻），靠 isIsolatedRun 认出来（同 pet/focus-agent）。
+  // 2026-09-24 踩过：只看常驻，验证脚本跑一次开一个真 Claude 窗口。
+  // 🚨 别再拿 AGENT_PET_HUB_HOME 判：两套共用数据时真机也设它，10-22 起真机六个点开不了 Agent（10-24 修）。
+  openAgents = Boolean(options?.resident) && !isIsolatedRun();
   hoverFocusEnabled = openAgents;
   registerIpc();
   if (options?.hotkey) registerHotkey();
@@ -435,7 +436,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
       log.出事("收信模块启动失败（看板仍可用，只是收不到手机消息）", error, "inbox");
     }
   }
-  if (options?.resident && !process.env.AGENT_PET_HUB_HOME) {
+  if (options?.resident && !isIsolatedRun()) {
     startOrganizerTimer();
     startIdleOrganizer();
   }
@@ -443,10 +444,10 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
     try {
       const win = ensurePanel();
       // 页面还没加载完：记下「加载完就显示」。以前漏了这一笔，开机每次都干等 6 秒兜底才出来（2026-10-24 修）。
-      // 🚨 验证脚本（隔离数据夹）照旧等 6 秒兜底：一加载完就显示的话测试窗口马上沉到真桌面底下，
+      // 🚨 验证脚本（isIsolatedRun）照旧等 6 秒兜底：一加载完就显示的话测试窗口马上沉到真桌面底下，
       // carry、drag-bundle、titles 截图常卡死（对照实测 6 次过 3 次 vs 不改 6 次过 5 次），原因没挖到底。
       if (rendererReady) showDocked(win);
-      else if (!process.env.AGENT_PET_HUB_HOME) pendingShow = true;
+      else if (!isIsolatedRun()) pendingShow = true;
       startSinkTimer();
     } catch (error) {
       log.出事("书签台常驻显示失败（不影响桌宠本体）", error, "init");
@@ -790,16 +791,17 @@ function sendReloadProgress(text: string, ms: number): void {
 async function rebuildAndRelaunch(): Promise<RelaunchResult> {
   const appRoot = app.getAppPath();
   log.记(`Ctrl+R：开始编译源码（${appRoot}）`, "reload");
-  sendReloadProgress("正在换成最新代码…（编译几秒，期间照常能用）", 30_000);
-  // Windows 上直接 spawn npm.cmd 会 EINVAL，看板就报「换新失败」。走 cmd.exe。
-  const [cmd, args] = process.platform === "win32"
-    ? [process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "npm run build"]]
-    : ["npm", ["run", "build"]];
+  sendReloadProgress("正在升级成最新代码…（编译几秒，期间照常能用）", 30_000);
+  // 2026-10-24 改成「升级」：拿桌宠自带的 electron.exe 当 node 跑（ELECTRON_RUN_AS_NODE），不靠电脑上碰巧装的 node / npm
+  // （根这边只有 Hermes 带的 node 22.23，碰中文路径就崩）。upgrade-build.mjs 先编到新夹，编成功才换 dist，失败旧的照用。
+  const bundled = join(appRoot, "node_modules", "electron", "dist", "electron.exe");
+  const nodeExe = existsSync(bundled) ? bundled : process.execPath;
+  const args = [join(appRoot, "scripts", "upgrade-build.mjs")];
   const result = await new Promise<{ status: number | null; output: string; error?: Error }>((resolve) => {
     let output = "";
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(cmd, args, { cwd: appRoot, windowsHide: true });
+      child = spawn(nodeExe, args, { cwd: appRoot, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
     } catch (error) {
       resolve({ status: null, output: "", error: error as Error });
       return;
@@ -819,11 +821,11 @@ async function rebuildAndRelaunch(): Promise<RelaunchResult> {
   if (result.status !== 0) {
     const detail = result.output.trim();
     log.出事(`Ctrl+R 编译失败（status=${result.status}）`, detail || result.error, "reload");
-    sendReloadProgress("换新失败：编译没过，还是旧代码（原因在桌宠日志 bookmark 那份）", 12_000);
+    sendReloadProgress("升级失败：编译没过，旧代码照常在用（原因在桌宠日志 bookmark 那份）", 12_000);
     return { ok: false, mode: "relaunch", error: detail.slice(-500) || "编译失败" };
   }
   const relaunchArgs = process.argv.slice(1).filter((item) => item !== RELAUNCH_FLAG).concat(RELAUNCH_FLAG);
-  log.记("Ctrl+R：编译完成，整程序重开", "reload");
+  log.记(`Ctrl+R：编译完成，整程序重开（${result.output.trim().split(/\r?\n/).pop() || ""}）`, "reload");
   sendReloadProgress("编译好了，马上重开…", 5_000);
   app.relaunch({ args: relaunchArgs });
   app.quit();

@@ -15,6 +15,8 @@
 // - 按钮能拖：拖起来别的按钮实时让位，松手插到那个位置（2026-10-17 从「交换」改的），顺序记在 quickcmd-order.json
 // - 「打开文件」按钮（终端里打 `! explorer "路径"` 的）窗口自己开文件，不往终端打字（2026-10-17：输入框有字时会接在后面一起发出去）。
 //   是网页就在原位置弹说明面板（sheet-window.ts），不开浏览器；别的文件交给系统默认程序
+// - 缩放（2026-10-24）：按钮那列开着时 Ctrl+加号/减号/0、或鼠标停在上面 Ctrl+滚轮，调大小，记在 quickcmd-zoom.json。
+//   窗口从不拿焦点，按键到不了它，所以开着的那会儿临时注册这几个全局键，收起就退（不长期占终端的 Ctrl+加减）
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +27,11 @@ import { appDataRoot } from "../shared/paths";
 import { closeSheet, openSheet } from "./sheet-window";
 import {
   applyOrder,
+  clampQcZoom,
   computePanelBounds,
+  DEFAULT_QC_ZOOM,
+  parseQcZoom,
+  stepQcZoom,
   computeSheetBounds,
   findInputTopLine,
   isTerminalProcess,
@@ -59,6 +65,18 @@ function readOrder(): string[] {
   }
 }
 
+function zoomPath(): string {
+  return join(appDataRoot(), "quickcmd-zoom.json");
+}
+
+function readZoom(): number {
+  try {
+    return existsSync(zoomPath()) ? parseQcZoom(readFileSync(zoomPath(), "utf8")) : DEFAULT_QC_ZOOM;
+  } catch {
+    return DEFAULT_QC_ZOOM;
+  }
+}
+
 function terminalSettingsPath(): string {
   const local = process.env.LOCALAPPDATA || "";
   return join(local, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState", "settings.json");
@@ -87,12 +105,22 @@ let pressStartedInside = false;
 let lastView: { shot: NativeImage | null; scale: number; origin: { x: number; y: number }; terminal: Rect; lineY: number | null } | null = null;
 /** 最前面窗口 → 是不是终端，问过的记住（每 200 毫秒问一次程序路径太浪费）。 */
 const terminalCache = new Map<bigint, boolean>();
+/** 按钮那列的大小（1＝原样），开机读 quickcmd-zoom.json */
+let zoom = DEFAULT_QC_ZOOM;
+/** 开着时临时注册的缩放键 */
+const ZOOM_KEYS: Array<[string, "in" | "out" | "reset"]> = [
+  ["Ctrl+=", "in"], ["Ctrl+Plus", "in"], ["Ctrl+numadd", "in"],
+  ["Ctrl+-", "out"], ["Ctrl+numsub", "out"],
+  ["Ctrl+0", "reset"], ["Ctrl+num0", "reset"],
+];
+let zoomKeysOn = false;
 
 /** 装配口。任何失败在这里吞掉记日志，不往外炸。 */
 export function initQuickCmd(): void {
   try {
     win32 = loadQuickWin32();
     if (!win32) return;
+    zoom = readZoom();
     ipcMain.on("quickcmd:press", (_event, index: unknown) => {
       if (typeof index === "number") press(index);
     });
@@ -200,7 +228,7 @@ async function toggle(): Promise<void> {
     const lineY = shot ? measureLine(shot, physical, display) : null;
     if (shot && lineY === null) log.记("截图里没找到输入框那条线，先放在终端靠下的位置", "toggle");
     const terminal = screen.screenToDipRect(null, physical);
-    const bounds = computePanelBounds(terminal, buttons.length, lineY);
+    const bounds = computePanelBounds(terminal, buttons.length, lineY, zoom);
     lastView = { shot, scale, origin, terminal, lineY };
     const background = behindOf(bounds);
     const win = ensurePanel();
@@ -258,6 +286,7 @@ function reveal(payload: { labels: string[]; background: string }): void {
   pendingReveal = null;
   const win = panel;
   if (!win || win.isDestroyed()) return;
+  win.webContents.setZoomFactor(zoom);
   win.webContents.send("quickcmd:buttons", payload);
   win.showInactive();
   win.setAlwaysOnTop(true, "pop-up-menu");
@@ -282,9 +311,43 @@ function startWatching(): void {
   mouseTimer.unref();
   followTimer = setInterval(() => void followLine(), FOLLOW_MS);
   followTimer.unref();
+  setZoomKeys(true);
+}
+
+function setZoomKeys(on: boolean): void {
+  if (on === zoomKeysOn) return;
+  zoomKeysOn = on;
+  for (const [key, action] of ZOOM_KEYS) {
+    try {
+      if (on) globalShortcut.register(key, () => changeZoom(action === "reset" ? DEFAULT_QC_ZOOM : stepQcZoom(zoom, action)));
+      else globalShortcut.unregister(key);
+    } catch (error) {
+      log.出事(`缩放键 ${key} 注册/注销失败（不影响按钮）`, error, "zoom");
+    }
+  }
+}
+
+/** 调大小：记下来，开着的话当场换窗口大小、重剪玻璃底 */
+function changeZoom(next: number): void {
+  const value = clampQcZoom(next);
+  if (value === zoom) return;
+  zoom = value;
+  try {
+    writeJsonAtomic(zoomPath(), { zoom });
+  } catch (error) {
+    log.出事("记大小失败（这次调了，下次弹出回原样）", error, "zoom");
+  }
+  log.记(`按钮那列大小 ${Math.round(zoom * 100)}%`, "zoom");
+  const win = panel;
+  if (!win || win.isDestroyed() || !win.isVisible() || !lastView) return;
+  const bounds = computePanelBounds(lastView.terminal, buttons.length, lastView.lineY, zoom);
+  win.setBounds(bounds);
+  win.webContents.setZoomFactor(zoom);
+  win.webContents.send("quickcmd:buttons", { labels: buttons.map((button) => button.label), background: behindOf(bounds) });
 }
 
 function stopWatching(): void {
+  setZoomKeys(false);
   if (mouseTimer) clearInterval(mouseTimer);
   if (followTimer) clearInterval(followTimer);
   mouseTimer = null;
@@ -320,7 +383,9 @@ async function followLine(): Promise<void> {
     if (!shot || !panel || panel.isDestroyed() || !panel.isVisible()) return;
     const lineY = measureLine(shot, physical, display);
     if (lineY === null) return;
-    const bounds = computePanelBounds(screen.screenToDipRect(null, physical), buttons.length, lineY);
+    const terminal = screen.screenToDipRect(null, physical);
+    if (lastView) lastView = { ...lastView, terminal, lineY };
+    const bounds = computePanelBounds(terminal, buttons.length, lineY, zoom);
     const now = panel.getBounds();
     if (Math.abs(now.y - bounds.y) > 1) panel.setBounds(bounds);
   } catch (error) {
@@ -400,9 +465,13 @@ function ensurePanel(): BrowserWindow {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // 单独一个会话：Chromium 按网址来源记缩放，同是 file:// 的看板、桌宠会跟着一起变大变小（2026-10-24 加缩放时隔开）
+      partition: "quickcmd",
     },
   });
   pageLoaded = false;
+  // Ctrl+滚轮（鼠标停在按钮那列上）：Electron 不自己缩放，只发这个事件，照走一档
+  win.webContents.on("zoom-changed", (_event, direction) => changeZoom(stepQcZoom(zoom, direction)));
   win.webContents.once("did-finish-load", () => {
     pageLoaded = true;
     if (pendingReveal) reveal(pendingReveal);

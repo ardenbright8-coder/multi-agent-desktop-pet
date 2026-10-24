@@ -1,10 +1,25 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 
 export function appDataRoot(): string {
   if (process.env.AGENT_PET_HUB_HOME) return process.env.AGENT_PET_HUB_HOME;
   const roaming = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
   return join(roaming, "AgentPetHub");
+}
+
+/**
+ * 这次是不是测试、验证脚本起的隔离实例（不真开 Agent 窗口、不抢焦点、不跑定时整理、看板等 6 秒才显示）。
+ * 🚨 别拿「有没有 AGENT_PET_HUB_HOME」判：两套系统共用数据时真用的桌宠也设它（F:\应用数据\AgentPetHub），
+ * 2026-10-22 起真机被当成测试，六个点开不了 Agent、跳不回 AI 窗口（10-24 改成这个）。
+ * 认两样：显式标记 AGENT_PET_ISOLATED=1；或数据夹在系统临时夹 / .runtime\test-runs 下面（没带标记的老脚本也认得出）。
+ */
+export function isIsolatedRun(): boolean {
+  if (process.env.AGENT_PET_ISOLATED === "1") return true;
+  const home = process.env.AGENT_PET_HUB_HOME;
+  if (!home) return false;
+  const dir = resolve(home).toLowerCase();
+  const temp = resolve(tmpdir()).toLowerCase();
+  return dir.startsWith(temp + sep) || /[\\/]\.runtime[\\/]test-runs[\\/]/.test(dir);
 }
 
 export function runtimeDirectory(): string {

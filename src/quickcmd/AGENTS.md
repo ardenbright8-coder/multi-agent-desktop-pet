@@ -23,4 +23,5 @@
 - 说明面板每次打开都重新加载网页（用户改了内容文件下次就是新的），F5 / Ctrl+R 重新加载，失焦就收，不许跳到别的网址
 - 截图测说明面板：窗口开 `offscreen: true` 再 `capturePage`；普通隐藏窗口或挪到屏幕外截图会报 UnknownVizError 卡死
 - 窗口尺寸跟 `renderer/quickcmd.css` 对上（`PANEL` 常数），改一边要改另一边
+- 🚨 **缩放（2026-10-24）**：按钮那列开着时 Ctrl+加号/减号/0、鼠标停在上面 Ctrl+滚轮调大小，记在数据夹 `quickcmd-zoom.json`（两套各自一份：根是 3440×1440 带鱼屏 100%，燊一修多半 125%/150%）。窗口从不拿焦点、按键到不了它，所以只在开着那会儿临时注册这几个全局键（`setZoomKeys`），收起就退。窗口用单独会话 `partition: "quickcmd"`：Chromium 按来源记缩放，同是 file:// 的看板、桌宠会跟着变
 - 拖动的真鼠标测法：隐藏 Electron 窗口照真尺寸开（无边框 166×高度），注入假的 `window.quickcmd`，用 `webContents.sendInputEvent` 按下、挪、松开，看顺序和收到的调用。鼠标拖出窗口外这种情况模拟不出来，只能实机试

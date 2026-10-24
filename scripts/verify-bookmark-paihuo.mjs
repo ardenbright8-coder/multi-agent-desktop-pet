@@ -43,7 +43,7 @@ function check(name, ok, detail = "") {
   if (!ok) failed += 1;
 }
 function runCli(args) {
-  const r = spawnSync(process.execPath, [cliScript, ...args], { encoding: "utf8", env: { ...process.env, AGENT_PET_HUB_HOME: home, BOOKMARK_PI_SETTINGS: piSettings } });
+  const r = spawnSync(process.execPath, [cliScript, ...args], { encoding: "utf8", env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: home, BOOKMARK_PI_SETTINGS: piSettings } });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 function writeCards(name, cards) {
@@ -65,7 +65,7 @@ async function waitFor(fn, ms = 8000) {
 let app;
 let saved = null;
 try {
-  app = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(root, "dist/app.js")], env: { ...process.env, AGENT_PET_HUB_HOME: home, BOOKMARK_PI_SETTINGS: piSettings } });
+  app = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(root, "dist/app.js")], env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: home, BOOKMARK_PI_SETTINGS: piSettings } });
   let page;
   const end = Date.now() + 15000;
   while (!page && Date.now() < end) {

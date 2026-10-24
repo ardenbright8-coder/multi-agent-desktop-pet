@@ -54,7 +54,7 @@ writeFileSync(join(hubHome, "bookmark", "要求模板", "带编程.md"), TEMPLAT
 function runCli(args) {
   const r = spawnSync(process.execPath, [cliScript, ...args], {
     encoding: "utf8",
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome },
   });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
@@ -71,7 +71,7 @@ try {
   electronApp = await _electron.launch({
     executablePath: electronExe,
     args: [appEntry],
-    env: { ...process.env, AGENT_PET_HUB_HOME: hubHome },
+    env: { ...process.env, AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: hubHome },
   });
   savedClipboard = await electronApp.evaluate(({ clipboard }) => clipboard.readText());
   const readClipboard = () => electronApp.evaluate(({ clipboard }) => clipboard.readText());

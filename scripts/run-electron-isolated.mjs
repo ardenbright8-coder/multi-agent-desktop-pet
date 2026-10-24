@@ -12,7 +12,7 @@ const child = spawn(process.execPath, [electronCli, ".", modeArg], {
   cwd: process.cwd(),
   env: {
     ...process.env,
-    AGENT_PET_HUB_HOME: root,
+    AGENT_PET_ISOLATED: "1", AGENT_PET_HUB_HOME: root,
     AGENT_PET_SKIP_INTEGRATION_INSTALL: "1",
     TEMP: join(root, "temp"),
     TMP: join(root, "temp"),

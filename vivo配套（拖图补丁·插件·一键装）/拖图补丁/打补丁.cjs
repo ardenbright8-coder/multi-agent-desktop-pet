@@ -1,26 +1,51 @@
 // vivo 办公套件拖图补丁：读原版 app.asar，改两小段，写出一份新的 app.asar（不碰原件）
 // 用法：node 打补丁.cjs <原版app.asar> <输出app.asar>
-//       node 打补丁.cjs --看 [app.asar]   只看装没装：打印「已装 / 没装」，退出码 0=已装 1=没装 2=没找到
+//       node 打补丁.cjs --看 [app.asar]   只看装没装：打印「已装 / 没装 / 装的是旧版」，退出码 0=已装最新 1=没装 2=没找到 3=装的是旧版补丁
+//       node 打补丁.cjs --版本 <app.asar>  打印这份程序包的 vivo 版本号（装补丁.ps1 用它找同版本的原版备份）
 // 改了什么：
-//   1. dist/electron/174.js（手机截图弹窗）：弹窗一出来就在后台下载原图；拖图时交出原图文件；电脑上只留最新 10 张
-//   2. dist/electron/main.js（主程序）：末尾加一个「拖文件」小帮手，收到弹窗的请求就让 Windows 拖这个文件
+//   1. 手机截图弹窗那个分块（8 月版叫 dist/electron/174.js，7.0.6 版叫 184.js；按图片那行锚点自动找）：
+//      弹窗一出来就在后台下载原图；拖图时交出原图文件；电脑上只留最新 10 张；
+//      点图＝复制（原来是打开），复制完 0.6 秒就关弹窗（原来 2 秒）
+//   2. dist/electron/main.js（主程序）：末尾加一个「拖文件」小帮手，收到弹窗的请求就让 Windows 拖这个文件；
+//      弹窗滑进来的动画带上 y：vivo 原版动画只给 x，弹窗算好的右下角位置被冲成 y=0，贴在屏幕最顶上、标题被切
 // 改之前先知道：每处改动都要求锚点在原文里正好出现 1 次，对不上就整个停下不写文件（vivo 升级改了代码时会这样）
+// 2026-10-22 适配 7.0.6：分块改名、发消息的变量从 I 改成 w（现在按 {ipcRenderer:X}=e(4) 自动认）、
+//   拼路径的模块 e(12) 没了（改成直接切字符串，新旧版都能用）
+// 2026-10-24 第 2 版补丁（v2）：点图复制、弹窗回右下角。补丁改了就要升记号版本号，不然装过旧版的电脑「看」成已装、不会重装
 const fs = require("fs");
 const crypto = require("crypto");
 
-const MARK = "AGENTPET_VIVO_DRAG_PATCH_v1";
+const MARK = "AGENTPET_VIVO_DRAG_PATCH_v2";
+const MARK_ANY = "AGENTPET_VIVO_DRAG_PATCH_v";
 const KEEP = 10;
 const BLOCK = 4 * 1024 * 1024;
 
 const VIVO_ASAR = "C:\\Program Files (x86)\\pcsuite\\resources\\app.asar";
+// 只认图片那行后半截：前半截的 click 会被本补丁改掉，打过补丁的包也要认得出
+const POPUP_ANCHOR = "load:i.imgLoadEnd,error:i.imgErr";
 const [src, dst] = process.argv.slice(2);
 if (src === "--看") {
   const file = dst || VIVO_ASAR;
   if (!fs.existsSync(file)) { console.log("没找到 vivo 程序包"); process.exit(2); }
   const a = readHeader(file);
-  const ok = readEntry(a, "dist/electron/174.js").includes(MARK) && readEntry(a, "dist/electron/main.js").includes(MARK);
-  console.log(ok ? "已装" : "没装");
-  process.exit(ok ? 0 : 1);
+  const popup = findPopup(a);
+  const both = (m) => !!popup && readEntry(a, popup).includes(m) && readEntry(a, "dist/electron/main.js").includes(m);
+  if (both(MARK)) { console.log("已装"); process.exit(0); }
+  if (popup && readEntry(a, popup).includes(MARK_ANY)) { console.log("装的是旧版补丁"); process.exit(3); }
+  console.log("没装");
+  process.exit(1);
+}
+if (src === "--版本") {
+  if (!dst || !fs.existsSync(dst)) { console.log("没找到程序包"); process.exit(2); }
+  console.log(JSON.parse(readEntry(readHeader(dst), "package.json").toString("utf8")).version);
+  process.exit(0);
+}
+
+// 找手机截图弹窗在哪个分块：图片那行锚点只出现在它里面
+function findPopup(a) {
+  const dir = entry(a.header, "dist/electron");
+  const hits = Object.keys(dir.files).filter(n => n.endsWith(".js") && !dir.files[n].unpacked && readEntry(a, "dist/electron/" + n).includes(POPUP_ANCHOR));
+  return hits.length === 1 ? "dist/electron/" + hits[0] : null;
 }
 if (!src || !dst) { console.error("用法：node 打补丁.cjs <原版app.asar> <输出app.asar>"); process.exit(2); }
 
@@ -62,12 +87,22 @@ function integrity(buf) {
 
 // ---------- 弹窗（174.js） ----------
 function patchPopup(s) {
-  if (s.includes(MARK)) throw new Error("174.js 已经打过补丁了，请拿原版来打");
-  // 图片加拖动事件
+  if (s.includes(MARK_ANY)) throw new Error("弹窗分块已经打过补丁了，请拿原版来打");
+  // 发消息给主程序的变量名每版可能不同（8 月版 I，7.0.6 版 w）
+  const ipc = (s.match(/\{ipcRenderer:([A-Za-z_$][\w$]*)\}=e\(4\)/) || [])[1];
+  if (!ipc) throw new Error("弹窗分块里找不到 ipcRenderer，vivo 代码可能改过，停下");
+  // e(20) 是读写文件的模块（两版都用它）
+  if (!/e\(20\)\.(promises|existsSync|readdirSync)/.test(s)) throw new Error("弹窗分块里认不出读文件模块 e(20)，vivo 代码可能改过，停下");
+  // 图片：点一下＝复制（原来是打开，「打开」按钮还在），加拖动事件
   s = replaceOnce(s,
     "on:{click:i.handleBrowse,load:i.imgLoadEnd,error:i.imgErr}",
-    "on:{click:i.handleBrowse,load:i.imgLoadEnd,error:i.imgErr,dragstart:function(t){return i.agentDrag(t)}}",
-    "弹窗图片拖动事件");
+    "on:{click:function(){return i.agentCopy()},load:i.imgLoadEnd,error:i.imgErr,dragstart:function(t){return i.agentDrag(t)}}",
+    "弹窗图片点击和拖动事件");
+  // 点图复制的：复制完 0.6 秒就关（按「复制」按钮的照旧 2 秒）
+  s = replaceOnce(s,
+    "this.isCopying=!1,yield r.sleep(2e3),this.hideNotification()",
+    "this.isCopying=!1,yield r.sleep(this.agentQuick?600:2e3),this.agentQuick=!1,this.hideNotification()",
+    "复制完关弹窗");
   // 弹窗显示后开始后台下载原图
   s = replaceOnce(s,
     "this.isSetTheWidthTo100=t/e>1.35,this.handleShow(),",
@@ -85,11 +120,12 @@ function patchPopup(s) {
     `if(this.agentP&&this.agentP.f===f.originPath)return;const S=_.DownloadStatus.SUCCESS;window._log.info("[agentpet] pre download "+f.originPath);` +
     `const p=r.downloadImage(f,"sync",_.ImageOperation.COPY).then(c=>{window._log.info("[agentpet] pre download result "+c);if(c==S){this.agentOk=f.originPath;this.agentPrune(f.originPath)}return c});` +
     `this.agentP={f:f.originPath,p:p}}catch(z){window._log.info("[agentpet] pre err "+z)}}` +
+    `agentCopy(){try{window._log.info("[agentpet] click image = copy");this.agentQuick=!0;this.handleCopy()}catch(z){this.agentQuick=!1;window._log.info("[agentpet] copy err "+z)}}` +
     `agentDl(f,t,op){const a=this.agentP;if(a&&f&&a.f===f.originPath){return a.p.then(c=>c==_.DownloadStatus.SUCCESS?c:r.downloadImage(f,t,op))}return r.downloadImage(f,t,op)}` +
     `agentDrag(t){try{const f=this.fileInfo&&this.fileInfo.originPath;if(!f||this.agentOk!==f||!e(20).existsSync(f)){window._log.info("[agentpet] drag skip, original not ready");return}` +
-    `t.preventDefault();I.send("agentpet-vivo-drag",f);window._log.info("[agentpet] drag file "+f);this.autoClose.cancel(),this.autoClose()}catch(z){window._log.info("[agentpet] drag err "+z)}}` +
-    `agentPrune(keepPath){try{const fs=e(20),pa=e(12),d=pa.dirname(keepPath);` +
-    `const L=fs.readdirSync(d).filter(n=>/\\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(n)&&n.toLowerCase()!=="icon.png").map(n=>{const p=pa.join(d,n);return{p:p,t:fs.statSync(p).mtimeMs}}).sort((a,b)=>b.t-a.t);` +
+    `t.preventDefault();${ipc}.send("agentpet-vivo-drag",f);window._log.info("[agentpet] drag file "+f);this.autoClose.cancel(),this.autoClose()}catch(z){window._log.info("[agentpet] drag err "+z)}}` +
+    `agentPrune(keepPath){try{const fs=e(20),d=keepPath.slice(0,Math.max(keepPath.lastIndexOf("\\\\"),keepPath.lastIndexOf("/")));` +
+    `const L=fs.readdirSync(d).filter(n=>/\\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(n)&&n.toLowerCase()!=="icon.png").map(n=>{const p=d+"\\\\"+n;return{p:p,t:fs.statSync(p).mtimeMs}}).sort((a,b)=>b.t-a.t);` +
     `L.slice(${KEEP}).forEach(x=>{if(x.p!==keepPath){try{fs.unlinkSync(x.p)}catch(z){}}})}catch(z){window._log.info("[agentpet] prune err "+z)}}`;
   s = replaceOnce(s, "imgErr(){", methods + "imgErr(){", "加方法");
   return s;
@@ -97,16 +133,22 @@ function patchPopup(s) {
 
 // ---------- 主程序（main.js） ----------
 function patchMain(s) {
-  if (s.includes(MARK)) throw new Error("main.js 已经打过补丁了，请拿原版来打");
+  if (s.includes(MARK_ANY)) throw new Error("main.js 已经打过补丁了，请拿原版来打");
   if (!s.trimEnd().endsWith("}]);")) throw new Error("main.js 结尾跟预期不一样，停下");
-  return s + `\n;(function(){/*${MARK}*/try{const{ipcMain:M,nativeImage:N}=require("electron");` +
+  // 弹窗滑进来的动画带上 y：原版只给 x，动画每一帧 setBounds 不带 y，弹窗被冲到 y=0（屏幕最顶上、标题被切）。
+  // vivo 自己的日志：recalcBounds setBounds {"y":1000} → win-animation tick end {"y":0}（2026-10-24 根这边 3440×1440）
+  s = replaceOnce(s, "{start:{x:l},end:{x:l-o}}", "{start:{x:l,y:c},end:{x:l-o,y:c}}", "弹窗动画带上 y");
+  return s +`\n;(function(){/*${MARK}*/try{const{ipcMain:M,nativeImage:N}=require("electron");` +
     `M.on("agentpet-vivo-drag",(ev,f)=>{try{let ic=N.createFromPath(f);if(!ic.isEmpty())ic=ic.resize({width:96});` +
     `ev.sender.startDrag({file:f,icon:ic});global.__log&&global.__log.info("[agentpet] startDrag "+f)}catch(z){global.__log&&global.__log.info("[agentpet] startDrag err "+z)}})}catch(z){}})();\n`;
 }
 
 const a = readHeader(src);
+const popupPath = findPopup(a);
+if (!popupPath) throw new Error("找不到手机截图弹窗那个分块（图片那行锚点没有或不止一处），vivo 代码可能改过，停下");
+console.log(`弹窗分块：${popupPath}`);
 const targets = {
-  "dist/electron/174.js": patchPopup,
+  [popupPath]: patchPopup,
   "dist/electron/main.js": patchMain,
 };
 
