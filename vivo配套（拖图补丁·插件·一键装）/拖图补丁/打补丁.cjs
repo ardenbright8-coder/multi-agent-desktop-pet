@@ -12,7 +12,8 @@
 // 2026-10-22 适配 7.0.6：分块改名、发消息的变量从 I 改成 w（现在按 {ipcRenderer:X}=e(4) 自动认）、
 //   拼路径的模块 e(12) 没了（改成直接切字符串，新旧版都能用）
 // 2026-10-24 第 2 版补丁（v2）：点图复制、弹窗回右下角。补丁改了就要升记号版本号，不然装过旧版的电脑「看」成已装、不会重装
-const fs = require("fs");
+// 用桌宠自带的 electron.exe 跑时，普通 fs 把 .asar 当文件夹（读不了文件头），要用 original-fs
+const fs = process.versions.electron ? require("original-fs") : require("fs");
 const crypto = require("crypto");
 
 const MARK = "AGENTPET_VIVO_DRAG_PATCH_v2";

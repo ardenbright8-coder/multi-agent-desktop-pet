@@ -16,7 +16,8 @@ $petElectron = Join-Path $here "..\..\node_modules\electron\dist\electron.exe"
 function Patch-Js {
   if (Test-Path -LiteralPath $petElectron) {
     $env:ELECTRON_RUN_AS_NODE = "1"
-    try { & $petElectron (Join-Path $here "打补丁.cjs") @args } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+    # electron.exe 是窗口程序：不接管道的话 PowerShell 不等它跑完、也拿不到输出和退出码，所以一定接上管道
+    try { & $petElectron (Join-Path $here "打补丁.cjs") @args 2>&1 | ForEach-Object { "$_" } } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
   } else {
     & node (Join-Path $here "打补丁.cjs") @args
   }
