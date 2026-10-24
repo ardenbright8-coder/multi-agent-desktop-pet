@@ -1080,7 +1080,8 @@ function bmBuildTask(record, groupKey, order) {
   // 第一行永远是标题：读好了用 AI 的；正按新规矩重读的先用旧的顶着；还没读过的拿它自己的字顶着（最多露三行）。
   // 原文（交接单连详情）默认收起，点标题展开 / 收起。待定区是自己还在想的，照旧露原文。
   const note = bmNotes[record.id];
-  const titled = groupKey !== BM_INBOX_KEY && bmEditingId !== record.id;
+  // 改详情（交接单的正文）时顶上照样是 AI 小标题，跟收起时一样（2026-10-24 用户：展开收起顶上两句不一样，那一行还能点进去误改）
+  const titled = groupKey !== BM_INBOX_KEY && !(bmEditingId === record.id && bmEditingField === "text");
   const bodyOpen = !titled || bmOpenBodies.has(record.id);
   if (titled) {
     const title = document.createElement("div");
@@ -1132,7 +1133,8 @@ function bmBuildTask(record, groupKey, order) {
     bmRenderImages(text, record.text.replace(/\s*\n+\s*/g, " "), false, record.attachments || []);
     // 有小标题的：原文默认收起；点开了就整段露出来，不再只露两行。
     if (titled) {
-      text.hidden = !bodyOpen;
+      // 有详情的（交接单）那一行原文是它自带的标题，归 AI，不露出来、也点不进去；正文是下面的详情
+      text.hidden = !bodyOpen || Boolean(record.detail);
       text.classList.add("full");
     }
     // 单击就改字；按下挪了算拖（bmBindDrag），拖完那一下点击会被吞掉，不会误进改字。

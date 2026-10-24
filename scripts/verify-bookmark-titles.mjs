@@ -78,6 +78,7 @@ try {
   await page.locator(`${H} .task-title`).click();
   await page.waitForTimeout(400);
   check('⑤ 点交接单小标题：直接进详情（正文）改字框，光标在里面', (await vis(`${H} .task-detail-edit`)) && await page.evaluate(() => document.activeElement?.classList.contains('task-detail-edit') ?? false) && (await page.locator(`${H} .detail-fold`).count()) === 0);
+  check('⑤ 改详情时顶上照样是小标题，交接单自带那一行原文不露出来', (await vis(`${H} .task-title`)) && !(await vis(`${H} .task-text`)));
   await page.screenshot({ path: join(out, '交接单改字.png') });
   await page.mouse.click(260, 760);
   await page.waitForTimeout(700);
