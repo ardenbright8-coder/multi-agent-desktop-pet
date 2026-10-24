@@ -125,12 +125,12 @@ try {
   });
   check("③ 详情默认收起", detailHiddenBefore === true, `hidden=${detailHiddenBefore}`);
   await panel.locator(".group.handoff-zone .task .task-title").first().click(); // 2026-10-13 起点标题展开原文和详情，没有「详情」按钮
+  // 2026-10-24 起点小标题＝直接改正文：交接单的正文是详情，直接进详情的改字框
   const detailShown = await panel.evaluate(() => {
-    const detail = document.querySelector(".group.handoff-zone .task .task-detail");
-    return { hidden: detail?.hidden ?? null, text: detail?.textContent?.includes("手机端待拍板") ?? false };
+    const detail = document.querySelector(".group.handoff-zone .task .task-detail-edit");
+    return { hidden: detail ? detail.hidden : null, text: detail?.value?.includes("手机端待拍板") ?? false };
   });
-  check("③ 点条目展开详情看到详情文本", detailShown.hidden === false && detailShown.text, JSON.stringify(detailShown));
-  // 2026-10-15 起点标题＝直接改原文（详情露在下面），点别处存好收起
+  check("③ 点小标题直接进详情改字框，看到详情文本", detailShown.hidden === false && detailShown.text, JSON.stringify(detailShown));
   await panel.keyboard.press("Escape");
   await panel.waitForTimeout(500);
   const detailHiddenAgain = await panel.evaluate(() => {

@@ -74,12 +74,11 @@ try {
   const H = `.task[data-id="${hand.id}"]`;
   check('⑤ 交接单：第一行小标题，原文和详情收着，没有「详情」按钮', (await vis(`${H} .task-title`)) && !(await vis(`${H} .task-text`)) && !(await vis(`${H} .task-detail`)) && (await page.locator(`${H} .detail-fold`).count()) === 0);
   check('⑤ 交接单的小标还在序号下面，碰到有说明', (await vis(`${H} .num-col .handoff-badge`)) && Boolean(await page.locator(`${H} .num-col .handoff-badge`).getAttribute('title')));
+  // 2026-10-24 用户：小标题归 AI 写，点它是要改正文——交接单的正文是详情，点小标题直接进详情改字框
   await page.locator(`${H} .task-title`).click();
-  check('⑤ 点交接单小标题：进改字框，详情露在下面', (await vis(`${H} .task-edit`)) && (await vis(`${H} .task-detail`)) && (await page.locator(`${H} .detail-fold`).count()) === 0);
+  await page.waitForTimeout(400);
+  check('⑤ 点交接单小标题：直接进详情（正文）改字框，光标在里面', (await vis(`${H} .task-detail-edit`)) && await page.evaluate(() => document.activeElement?.classList.contains('task-detail-edit') ?? false) && (await page.locator(`${H} .detail-fold`).count()) === 0);
   await page.screenshot({ path: join(out, '交接单改字.png') });
-  await page.locator(`${H} .task-detail`).click();
-  await page.waitForTimeout(500);
-  check('⑤ 改原文时点详情：接着改详情，不收起', await vis(`${H} .task-detail-edit`));
   await page.mouse.click(260, 760);
   await page.waitForTimeout(700);
   check('⑤ 点别处：收回去只剩标题', !(await vis(`${H} .task-edit`)) && !(await vis(`${H} .task-detail`)));
@@ -91,6 +90,22 @@ try {
   await page.keyboard.press('Escape');
   await page.mouse.click(260, 760);
   check('⑥ 点空白：不选了', await page.locator('.task-picked').count() === 0);
+
+  // ⑥b 鼠标碰到哪条就选中哪条，不用点（2026-10-24 用户）；Ctrl+X 剪的就是碰着的那条
+  const centerOf = async (sel) => { const b = await page.locator(sel).boundingBox(); return [b.x + b.width / 2, b.y + 6]; };
+  await page.mouse.move(...(await centerOf(P)));
+  await page.waitForTimeout(150);
+  check('⑥b 鼠标碰到一条：不点也选中', await page.locator(`${P}.task-picked`).count() === 1);
+  await page.mouse.move(...(await centerOf(T)));
+  await page.waitForTimeout(150);
+  check('⑥b 挪到另一条：选中跟着走，前一条不亮了', (await page.locator(`${T}.task-picked`).count()) === 1 && (await page.locator(`${P}.task-picked`).count()) === 0);
+  await page.keyboard.press('Control+x');
+  await page.waitForTimeout(150);
+  check('⑥b Ctrl+X 剪的是鼠标碰着的那条', (await page.locator(`${T}.clip-cut`).count()) === 1 && (await page.locator(`${P}.clip-cut`).count()) === 0);
+  await page.keyboard.press('Escape');
+  await page.mouse.move(260, 760);
+  await page.waitForTimeout(150);
+  check('⑥b 鼠标挪到空白：不选了', await page.locator('.task-picked').count() === 0);
 
   // ④ 右键菜单：点到别条文字（会进改字、截走 click）也要收起
   await page.locator(`${T} .handle`).click();

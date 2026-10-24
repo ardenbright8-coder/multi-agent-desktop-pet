@@ -317,6 +317,7 @@ async function bmRefresh() {
     } finally {
       bmRepainting = false;
     }
+    bmQueueHoverPick(); // 重画完整列可能挪了位置，按鼠标现在的位置重认选中
     if (typing) {
       const input = typing.edit ? document.querySelector(".task-edit") : bmFindInsertInput(typing.group, typing.blank);
       if (input && document.activeElement !== input) {
@@ -1087,13 +1088,13 @@ function bmBuildTask(record, groupKey, order) {
     const own = record.text.replace(/\[图片:[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
     title.textContent = note && note.title ? note.title : own || "（只有图）";
     if (!(note && note.title)) title.classList.add("raw-title");
-    // 点小标题＝直接改原文（2026-10-15 看板 Claude 01：标题只是显示，点一下就能改，不用再往下挪去点正文）。
-    // 改字框里就是整段原文（交接单的详情也露在下面，单击就改）；点别处存好、收回去只剩标题。
-    title.title = "点一下直接改原文；点别处就存好收起";
+    // 点小标题＝直接改正文（2026-10-24 用户：小标题归 AI 写，我不手动改；点它是要改正文）。
+    // 有详情的（交接单这类）正文是详情那一大段，直接进详情；没有详情的，原文就是正文。点别处存好、收回去只剩标题。
+    title.title = "点一下直接改正文；点别处就存好收起";
     title.addEventListener("click", (event) => {
       event.stopPropagation();
       bmOpenBodies.add(record.id);
-      void bmBeginEdit(record.id);
+      void bmBeginEdit(record.id, record.detail ? "detail" : "text");
     });
     body.appendChild(title);
     item.classList.add("titled");
@@ -3135,11 +3136,47 @@ function bmTyping() {
   return Boolean(sel && !sel.isCollapsed && String(sel).trim());
 }
 
+/**
+ * 鼠标碰到哪条就选中哪条（2026-10-24 用户：不用点，碰到就亮绿框，Ctrl+X、Delete 都认它）。
+ * 按鼠标此刻的坐标重认，不靠 pointerenter：上面一条收起、看板重画、滚动时整列往上跳，手没动、鼠标底下已经换了一条，
+ * pointerenter 不会响，以前就认成旧的那条（「点 13 点到 14、16」）。拿着走、拖动中不动选中。
+ */
+function bmSyncHoverPick() {
+  if (bmCarry || bmDragActive) return;
+  const under = document.elementFromPoint(bmMouse.x, bmMouse.y);
+  const task = under instanceof Element ? under.closest(".task[data-id]") : null;
+  const head = !task && under instanceof Element ? under.closest(".bundle-head[data-bundle]") : null;
+  bmHoverTaskId = task ? task.dataset.id : null;
+  bmHoverBundleId = head ? head.dataset.bundle : null;
+  if (task) {
+    if (bmPickedTaskId !== task.dataset.id || !task.classList.contains("task-picked")) bmPickTask(task.dataset.id);
+  } else if (head) {
+    if (bmPickedBundleId !== head.dataset.bundle || !head.classList.contains("task-picked")) bmPickTask(null, head.dataset.bundle);
+  } else if (bmPickedTaskId || bmPickedBundleId) {
+    bmPickTask(null);
+  }
+}
+let bmHoverPickQueued = false;
+function bmQueueHoverPick() {
+  if (bmHoverPickQueued) return;
+  bmHoverPickQueued = true;
+  requestAnimationFrame(() => { bmHoverPickQueued = false; bmSyncHoverPick(); });
+}
+
 function bmInitClipboard() {
   window.addEventListener("pointermove", (event) => {
     bmMouse = { x: event.clientX, y: event.clientY };
     if (bmCarry) bmCarryPaint();
+    else bmQueueHoverPick();
   }, true);
+  window.addEventListener("scroll", bmQueueHoverPick, true);
+  // 鼠标出了看板＝不选了
+  document.documentElement.addEventListener("pointerleave", () => {
+    if (bmCarry || bmDragActive) return;
+    bmHoverTaskId = null;
+    bmHoverBundleId = null;
+    if (bmPickedTaskId || bmPickedBundleId) bmPickTask(null);
+  });
   // 点在条目、捆标题外面（空白处、组名、页签）＝不选了；菜单里点不算。
   window.addEventListener("pointerdown", (event) => {
     const t = event.target;
@@ -3161,8 +3198,8 @@ function bmInitClipboard() {
       bmPickTask(null);
       return;
     }
-    // 按 Delete＝删掉一条，跟 Ctrl+X 一个认法：点过选中的那条优先，没选中就删鼠标指着的那条，不用先点
-    // （2026-10-16 用户：点了常点进字里改字）。它那份小文件跟着删，Ctrl+Z 能撤回。整捆删走大标题右键「删除这一捆」。
+    // 按 Delete＝删掉一条，跟 Ctrl+X 一个认法：选中的那条（2026-10-24 起鼠标碰着哪条就选中哪条，不用先点）
+    // （2026-10-16 用户：点了常点进字里改字；10-24 用户：Delete 也跟着鼠标走，删错了 Ctrl+Z）。它那份小文件跟着删，Ctrl+Z 能撤回。整捆删走大标题右键「删除这一捆」。
     const pickedLive = bmPickedTaskId && document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`) ? bmPickedTaskId : null;
     const delId = pickedLive || bmHoverTaskId;
     if (event.key === "Delete" && !bmTyping() && !bmCarry && delId) {

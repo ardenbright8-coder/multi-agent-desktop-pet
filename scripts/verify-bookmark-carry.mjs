@@ -199,12 +199,11 @@ try {
   check('⑨ 拖了一条再按 Ctrl+Z：回到原来的位置', afterDrag !== beforeDrag && JSON.stringify(await order('Claude')) === beforeDrag, `${beforeDrag} → ${afterDrag} → ${JSON.stringify(await order('Claude'))}`);
 
   // ⑩ 交接单展开后单击详情就能改（2026-10-13 用户：点了没光标、一按就成拖动）；改完 Ctrl+Z 也能退回
+  // 2026-10-24 起点小标题就直接进详情（交接单的正文）
   await page.locator(`${task(ids.H)} .task-title`).click();
-  await wait(300);
-  await page.locator(`${task(ids.H)} .task-detail`).click();
   await wait(400);
   const editing = await page.evaluate(() => document.activeElement?.classList.contains('task-detail-edit') ?? false);
-  check('⑩ 单击详情：变成改字框、光标在里面', editing);
+  check('⑩ 单击小标题：直接进详情改字框、光标在里面', editing);
   await page.keyboard.press('End');
   await page.keyboard.type('加一句');
   await page.keyboard.press('Enter');
