@@ -1206,6 +1206,15 @@ function registerIpc(): void {
     clipboard.writeText(line);
     return { path, line };
   });
+  // 大标题右键「复制路径」（2026-10-27 看板 01）：这一捆每条的单独文件一行一条，贴给 AI 只读这几份。
+  ipcMain.handle("bookmark:bundle-files", (_event, bundleId: unknown) => {
+    const rows = boardRows();
+    const members = requireStore().list().filter((r) => r.bundleId === String(bundleId ?? ""));
+    if (!members.length) throw new Error("这一捆已经不在了");
+    const line = [`看板这一捆 ${members.length} 条的单独文件（只读这几份，别翻整组）：`, ...members.map((r) => `${rowName(rows, r)}：${itemFileFor(r.id)}`)].join("\n");
+    clipboard.writeText(line);
+    return { line, count: members.length };
+  });
   // 两档仅决定领活后的报告流程；执行窗口一律由用户自己开，不挂自动开窗计时器。
   ipcMain.handle("bookmark:mode:get", () => readBoardMode());
   ipcMain.handle("bookmark:mode:set", (_event, value: unknown) => {

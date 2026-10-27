@@ -280,6 +280,19 @@ try {
     return /已打开|启动句已复制/.test(t) ? t : "";
   }, 5000);
   check("⑫ 双击模型：换成它、直接启动、菜单收起", Boolean(pi3) && Boolean(launchedToast) && !(await page.locator("#ctx-menu").isVisible()), launchedToast || JSON.stringify(piNow()).slice(0, 80));
+
+  // ⑬ 右键「复制路径」（2026-10-27 看板 01）：一条复制它的单独文件；大标题复制这一捆每条的
+  await page.locator(T(claudeCard)).click({ button: "right" });
+  await page.locator("#ctx-menu .ctx-item", { hasText: "复制路径" }).click();
+  const oneLine = await waitFor(async () => ((await clip()).includes(claudeCard.id) ? clip() : ""), 3000);
+  check("⑬ 条目右键复制路径：剪贴板里是这条的单独文件", Boolean(oneLine) && /单独文件/.test(oneLine) && existsSync(oneLine.slice(oneLine.lastIndexOf("：") + 1)), oneLine);
+  await page.locator(`.bundle-head[data-bundle="${bid}"]`).click({ button: "right" });
+  await page.locator("#ctx-menu .ctx-item", { hasText: "复制路径" }).click();
+  const bundleLines = await waitFor(async () => {
+    const t = await clip();
+    return t.includes(b1.id) && t.includes(b2.id) ? t : "";
+  }, 3000);
+  check("⑬ 大标题右键复制路径：这一捆两条的单独文件各一行", Boolean(bundleLines) && /这一捆 2 条/.test(bundleLines) && bundleLines.split("\n").length === 3, bundleLines.replace(/\n/g, " | "));
   await page.screenshot({ path: join(out, "结束.png") });
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {

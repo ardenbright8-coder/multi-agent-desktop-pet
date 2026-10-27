@@ -2131,6 +2131,12 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
     menu.appendChild(sep);
   }
 
+  // 复制路径（2026-10-27 看板 01）：跟点号码一样，复制这条单独文件的路径，贴到哪个窗口都行。
+  menu.appendChild(bmCtxButton("复制路径", async () => {
+    await window.bookmark.itemFile(record.id);
+    bmToast("这条的单独文件路径复制好了：贴给 AI，它只读这一份", 3500);
+  }));
+
   if (insertPlace) {
     const create = document.createElement("button");
     create.type = "button";
@@ -2210,7 +2216,7 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   const panelRect = document.getElementById("app").getBoundingClientRect();
   const rect = anchor.getBoundingClientRect();
   const menuWidth = 168;
-  const menuHeightEstimate = 40 + (targets.length + copyOptions.length + (record.kind === "handoff" ? 4 : 0)) * 30 + 70;
+  const menuHeightEstimate = 40 + (targets.length + copyOptions.length + (record.kind === "handoff" ? 4 : 0)) * 30 + 100;
   let left = rect.right - panelRect.left + 6;
   if (left + menuWidth > panelRect.width) left = rect.left - panelRect.left - menuWidth - 6;
   let top = rect.top - panelRect.top;
@@ -2356,6 +2362,23 @@ function bmBatchLaunchText(res) {
   return parts.join("。") || "这一批都有人领了，没开新窗口";
 }
 
+/** 右键菜单里一个普通按钮：点了先收菜单再干活，出错照常报。 */
+function bmCtxButton(label, run) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "ctx-item";
+  item.textContent = label;
+  item.addEventListener("click", async () => {
+    bmHideCtxMenu();
+    try {
+      await run();
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
+  });
+  return item;
+}
+
 function bmReleaseItem(record) {
   const item = document.createElement("button");
   item.type = "button";
@@ -2438,6 +2461,10 @@ function bmShowBundleMenu(bundleId, groupKey, anchor) {
   const sep = document.createElement("div");
   sep.className = "ctx-sep";
   menu.appendChild(sep);
+  menu.appendChild(bmCtxButton("复制路径", async () => {
+    const { count } = await window.bookmark.bundleFiles(bundleId);
+    bmToast(`这一捆 ${count} 条的单独文件路径复制好了：贴给 AI，它只读这几份`, 3500);
+  }));
   const split = document.createElement("button");
   split.type = "button";
   split.className = "ctx-item";
