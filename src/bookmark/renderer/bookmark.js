@@ -239,6 +239,14 @@ function bmInit() {
     tab.addEventListener("click", () => bmSwitchPage(tab.dataset.page));
   });
   document.getElementById("add-agent-btn").addEventListener("click", () => bmToggleAddAgentRow(true));
+  document.getElementById("search-btn").addEventListener("click", () => bmToggleSearchRow(true));
+  document.getElementById("search-cancel").addEventListener("click", () => bmToggleSearchRow(false));
+  document.getElementById("search-ok").addEventListener("click", () => { void bmRunSearch(); });
+  document.getElementById("search-input").addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.key === "Enter") { event.preventDefault(); void bmRunSearch(); }
+    if (event.key === "Escape") { event.preventDefault(); bmToggleSearchRow(false); }
+  });
   document.getElementById("new-agent-ok").addEventListener("click", () => { void bmSubmitNewAgent(); });
   document.getElementById("new-agent-cancel").addEventListener("click", () => bmToggleAddAgentRow(false));
   document.getElementById("new-agent-name").addEventListener("keydown", (event) => {
@@ -3090,6 +3098,45 @@ async function bmRemove(id) {
   } catch (error) {
     bmShowError("删失败了： " + bmErrorText(error));
     return false;
+  }
+}
+
+// ── 找一摊活（2026-10-27 用户：说一句「Agent看板」，把这摊活全拉出来，好批量剪走）──────
+// 找到的就是 Ctrl 点选：绿底选中，接着 Ctrl+X 一起剪、Ctrl+V 拿到一处放下。按字找，再让整理用的小模型认说歪的名字。
+
+function bmToggleSearchRow(show) {
+  document.getElementById("search-row").hidden = !show;
+  document.getElementById("search-btn").hidden = show;
+  if (show) document.getElementById("search-input").focus();
+}
+
+async function bmRunSearch() {
+  const input = document.getElementById("search-input");
+  const query = input.value.trim();
+  if (!query) return;
+  const ok = document.getElementById("search-ok");
+  ok.disabled = true;
+  ok.textContent = "找…";
+  try {
+    const res = await window.bookmark.search(query);
+    if (bmCurrentPage !== "groups") bmSwitchPage("groups");
+    await bmRefresh();
+    bmSelectedTasks.clear();
+    for (const id of res.ids) if (document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)) bmSelectedTasks.add(id);
+    bmRefreshDispatchSelection();
+    const away = res.ids.length - bmSelectedTasks.size;
+    const first = document.querySelector(".task.dispatch-selected");
+    if (first) first.scrollIntoView({ block: "center" });
+    const parts = [bmSelectedTasks.size ? `找到 ${bmSelectedTasks.size} 条，已选中：Ctrl+X 一起剪走，Esc 取消选中` : `没找到「${query}」`];
+    if (away > 0) parts.push(`另有 ${away} 条在待定页`);
+    if (res.projects.length) parts.push(`认成：${res.projects.join("、")}`);
+    if (res.modelError) parts.push("小模型没连上，只按字找了");
+    bmToast(parts.join("；"), 6000);
+  } catch (error) {
+    bmShowError("找没成：" + bmErrorText(error));
+  } finally {
+    ok.disabled = false;
+    ok.textContent = "找";
   }
 }
 

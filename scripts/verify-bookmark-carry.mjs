@@ -303,6 +303,25 @@ try {
   await wait(400);
   check('⑭ 右键「不标」：名牌拿掉', (await rec(ids.S)).forSystem === null && (await page.locator(`${task(ids.S)} .for-system`).count()) === 0);
 
+  // ⑮ 找一摊活（2026-10-27）：点「🔍 找」输「agent 看板」回车 → 带这几个字的条目（跨组）全选中，接着 Ctrl+X 能一起剪
+  //    隔离环境没配小模型：只按字找，提示里说一声
+  ids.P = await page.evaluate(async () => { const r = await window.bookmark.add({ text: 'Agent看板六个点换模型', assignee: 'Claude' }); return r.id; });
+  ids.Q = await page.evaluate(async () => { const r = await window.bookmark.add({ text: '看板交接单：Agent 看板要加资料组', kind: 'handoff' }); await bmRefresh(); return r.id; });
+  await wait(300);
+  await page.locator('#search-btn').click();
+  await page.locator('#search-input').fill('agent 看板');
+  await page.keyboard.press('Enter');
+  await wait(1500);
+  const picked = await page.evaluate(() => [...bmSelectedTasks]);
+  check('⑮ 找「agent 看板」：两条（一条 Claude 组、一条交接单）都选中了', picked.length === 2 && picked.includes(ids.P) && picked.includes(ids.Q), JSON.stringify(picked));
+  check('⑮ 提示说找到几条、没连上小模型只按字找', ((await page.locator('#bm-toast').textContent()) || '').includes('找到 2 条'), await page.locator('#bm-toast').textContent());
+  await page.screenshot({ path: join(out, '15-找一摊活.png') });
+  await page.locator('#titlebar .title').click();
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  check('⑮ 找到的接着 Ctrl+X：两条一起剪下', (await page.locator('.task.clip-cut').count()) === 2);
+  await page.keyboard.press('Escape');
+
   console.log(failed ? `结果：${failed} 项没过` : '结果：全部验证点通过');
 } finally {
   if (app) await app.close();

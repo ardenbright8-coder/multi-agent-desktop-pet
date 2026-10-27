@@ -173,6 +173,16 @@ export interface GroupTask {
   seenIds: string[];
   text: string;
   images: { alias: string; file: string }[];
+  /** 条目短号 → 读条员认出的项目（projectKey 过的，认不出的不进来）。过筛用：项目不一样的不许捆一起。 */
+  projects: Map<string, string>;
+  /** 捆短号 → 捆里各条认出的项目（同上）。 */
+  bundleProjects: Map<string, Set<string>>;
+}
+
+/** 项目名比对用（2026-10-27 用户：一捆就是一个应用、一件事）：去空格、不管大小写；「认不出」和空的算不知道，返回 null。 */
+export function projectKey(project: string | null | undefined): string | null {
+  const key = String(project ?? "").replace(/\s+/g, "").toLowerCase();
+  return key && key !== "认不出" ? key : null;
 }
 
 export interface TaskOptions {
@@ -368,6 +378,9 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
   if (!fresh.length) return null;
   const items = new Map<string, string>();
   const bundles = new Map<string, string>();
+  const projects = new Map<string, string>();
+  const bundleProjects = new Map<string, Set<string>>();
+  const keyOf = (r: BookmarkRecord) => projectKey(opts.notes?.[r.id]?.project);
   const lines: string[] = [`分组：${group.label}`, ""];
 
   const bundleIds = [...new Set(group.records.map((r) => r.bundleId).filter((b): b is string => Boolean(b)))].filter(opts.openBundle);
@@ -377,6 +390,7 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     const alias = `B${i + 1}`;
     bundles.set(alias, bid);
     const members = group.records.filter((r) => r.bundleId === bid);
+    bundleProjects.set(alias, new Set(members.map(keyOf).filter((k): k is string => Boolean(k))));
     const name = opts.meta[bid]?.name ?? cleanText(members[0], 16);
     lines.push(`${alias}「${name}」，里面有：`);
     for (const m of members) lines.push(`  - ${lineOf(m, opts.notes, 120)}`);
@@ -391,6 +405,8 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     const alias = `O${i + 1}`;
     items.set(alias, r.id);
     oldAliases.push(alias);
+    const k = keyOf(r);
+    if (k) projects.set(alias, k);
     lines.push(`${alias} ${lineOf(r, opts.notes, 160)}`);
   });
   lines.push("");
@@ -402,6 +418,8 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     const alias = `N${i + 1}`;
     items.set(alias, r.id);
     newAliases.push(alias);
+    const k = keyOf(r);
+    if (k) projects.set(alias, k);
     let pics = 0;
     const note = freshNote(r, opts.notes);
     if (opts.attachmentsDir && !note) {
@@ -422,11 +440,46 @@ export function buildGroupTask(group: OrganizerGroup, opts: TaskOptions): GroupT
     lines.push(`${alias} ${lineOf(r, opts.notes, 300)}${pics ? `（带 ${pics} 张图，见下面标着 ${alias} 的图）` : ""}`);
   });
 
-  return { label: group.label, items, bundles, newAliases, oldAliases, seenIds: unseen.map((r) => r.id), text: lines.join("\n"), images };
+  return { label: group.label, items, bundles, newAliases, oldAliases, seenIds: unseen.map((r) => r.id), text: lines.join("\n"), images, projects, bundleProjects };
 }
 
 /** 捆标题怎么写：开新捆、捆里加了条目重写标题都照这一段。字数上限、不许用的词拿代码里真卡的数填。 */
 const BUNDLE_NAME_GUIDE = fillRule(loadRule("捆标题写法"), { 捆标题最多几个字: String(MAX_BUNDLE_NAME), 捆名不许用的词: BANNED_NAMES.join("、") });
+
+// ── 搜看板（2026-10-27 用户：说一句「Agent看板」，把这摊活全拉出来，好批量剪走）──
+
+/** 字面找：去空格、不管大小写，项目名、小标题、原文、详情里带这几个字就算。 */
+export function searchByText(records: BookmarkRecord[], book: NoteBook, query: string): string[] {
+  const key = projectKey(query);
+  if (!key) return [];
+  const flat = (s: string | null | undefined) => String(s ?? "").replace(/\s+/g, "").toLowerCase();
+  return records
+    .filter((r) => {
+      const n = book[r.id];
+      return [n?.project, n?.title, r.text, r.detail].some((s) => flat(s).includes(key));
+    })
+    .map((r) => r.id);
+}
+
+export const SEARCH_RULES = [
+  "你是看板的找东西助手。用户想把看板上讲某个项目的条目全找出来，给了一句话（多半是语音转的字，名字常说歪）。",
+  "下面是看板上已经认出的全部项目名。挑出跟用户要找的是同一个东西的那几个；只是大类相同的不算（都跟 AI 有关、都是界面问题都不算）。",
+  "例：要找「AG的看板」→ 挑「Agent看板」；要找「酒馆」→ 挑「酒馆」「酒馆出图」；一个都对不上就给空数组。",
+  "只能从给的项目名里原样挑，不许编新的。只输出一个 JSON，不要解释、不要 markdown 代码块：{\"projects\":[\"Agent看板\"]}",
+].join("\n");
+
+/** 小模型挑项目名：只送项目名清单（几十个词），快、便宜。回来的只认清单里有的。 */
+export async function askSearchProjects(query: string, projects: string[], config: OrganizerConfig, fetchFn: FetchFn, timeoutMs = 60000): Promise<string[]> {
+  if (!projects.length) return [];
+  return askJson(config, [
+    { role: "system", content: SEARCH_RULES },
+    { role: "user", content: `用户要找：${query}\n看板上的项目名：${projects.join("、")}` },
+  ], fetchFn, timeoutMs, (reply) => {
+    const raw = parsePlanText(reply) as { projects?: unknown };
+    if (!Array.isArray(raw.projects)) throw new Error("模型没回项目名清单");
+    return raw.projects.map((p) => String(p ?? "").trim()).filter((p) => projects.includes(p));
+  });
+}
 
 /** 捆里的条目变了，重写捆标题（第三步）。 */
 export const BUNDLE_NAME_RULES = fillRule(loadRule("起捆名"), { 捆标题写法: BUNDLE_NAME_GUIDE });
@@ -536,6 +589,11 @@ export function validatePlan(raw: RawPlan, task: GroupTask): CleanPlan {
       out.dropped.push(`开新捆「${name}」${aliases.join("、")}`);
       continue;
     }
+    // 一捆一个项目（2026-10-27）：读条员认出的项目有两样以上，就不让捆（认不出的不算数）。
+    if (new Set(aliases.map((a) => task.projects.get(a)).filter(Boolean)).size > 1) {
+      out.dropped.push(`开新捆「${name}」${aliases.join("、")}（项目不一样）`);
+      continue;
+    }
     aliases.forEach((a) => used.add(a));
     out.creates.push({ name, ids: aliases.map((a) => task.items.get(a)!), why: cleanWhy(entry.why) });
   }
@@ -545,6 +603,12 @@ export function validatePlan(raw: RawPlan, task: GroupTask): CleanPlan {
     const b = norm(entry.bundle);
     if (!isNew(a) || used.has(a) || !task.bundles.has(b)) {
       out.dropped.push(`放进 ${b}：${a}`);
+      continue;
+    }
+    const mine = task.projects.get(a);
+    const theirs = task.bundleProjects.get(b);
+    if (mine && theirs && theirs.size && !theirs.has(mine)) { // 这条的项目跟这捆里哪条都对不上，不让放
+      out.dropped.push(`放进 ${b}：${a}（项目不一样）`);
       continue;
     }
     used.add(a);
@@ -768,6 +832,7 @@ export function hardRulesText(): string {
     "- 再分捆：拿小卡片出题，不再送原文和原图；没读成的条目退回送原文和原图。",
     "- 分捆只看 AI 没看过的新条目，看过一次就不再看。",
     "- AI 只能做两件事：把新条目放进已有的捆、拿两条以上开一个新捆。不能改字、不能把捆里的拿出来。",
+    "- 一捆一个项目：读条目时认出的项目名不一样的，AI 说要捆一起也捆不进去（认不出项目的不拦）。",
     "- 你手动动过的条目（拖进拖出、右键成捆、拆捆）不碰。",
     `- 捆名不许用：${BANNED_NAMES.join("、")}。捆名最长 ${MAX_BUNDLE_NAME} 个字。`,
     "- 捆名全交给 AI：没起过名的捆、条目进出过的捆、里面条目小标题变了的捆，都照各条小标题重写大标题（多人派工捆除外）。没变的不再花钱。",

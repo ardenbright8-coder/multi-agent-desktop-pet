@@ -40,7 +40,7 @@ import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseA
 import { readPiModels, setPiModel } from "./pi-model";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
-  activeModel, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
+  activeModel, askSearchProjects, knownProjects, projectKey, searchByText, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
   boardFingerprint, freshNote, ITEM_RULES, parseNameBook, runBundleNames, type NameBook, liveHintBook, liveNoteBook, modelLabel, ORGANIZER_RULES, organizeRows, parseHintBook, parseNoteBook, parseOrganizerConfig, parseRunRecords,
   pruneRunRecords, RULES_DIR, runChecker, runItemNotes, runOrganizer, shortSummary, takeModelSwitches, testModel,
   type Effort, type FetchFn, type HintBook, type NoteBook, type OrganizerConfig, type RecordRow, type RunRecord,
@@ -1080,6 +1080,25 @@ function registerIpc(): void {
   // 看板上的小橙点：条目 id → 提示。
   ipcMain.handle("bookmark:organizer:hints", () => readHintBook().hints);
   // 每条的小标题（第五版）：板上第一行显示。只给还作数的（读完没改过的）。
+  // 搜看板（2026-10-27 用户：说一句「Agent看板」，把这摊活全拉出来）：先按字找，再让整理用的小模型从认出的项目名里挑同一个东西。
+  // 小模型没配、不通，就只给按字找到的，并说一声。
+  ipcMain.handle("bookmark:search", async (_event, query: unknown) => {
+    const q = String(query ?? "").trim().slice(0, 40);
+    if (!q) return { ids: [], projects: [], modelError: null };
+    const records = requireStore().list();
+    const book = readNoteBook();
+    const ids = new Set(searchByText(records, book, q));
+    let projects: string[] = [];
+    let modelError: string | null = null;
+    try {
+      projects = await askSearchProjects(q, knownProjects(book), readOrganizerConfig(), organizerFetch);
+      const keys = new Set(projects.map(projectKey));
+      for (const r of records) if (keys.has(projectKey(book[r.id]?.project))) ids.add(r.id);
+    } catch (error) {
+      modelError = error instanceof Error ? error.message : String(error);
+    }
+    return { ids: [...ids], projects, modelError };
+  });
   ipcMain.handle("bookmark:organizer:notes", () => {
     const records = requireStore().list();
     const book = readNoteBook();

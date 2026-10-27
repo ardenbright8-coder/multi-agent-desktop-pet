@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   moveMany: (ids: string[], target: { assignee: string | null; anchorId?: string | null; place?: "above" | "below"; into?: string | null; bundleWith?: string | null }) =>
     ipcRenderer.invoke("bookmark:move-many", { ids, ...target }) as Promise<number>,
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
+  /** 搜看板：返回找到的条目 id、小模型认成同一个东西的项目名；小模型不通时 modelError 写原因。 */
+  search: (query: string) => ipcRenderer.invoke("bookmark:search", query) as Promise<{ ids: string[]; projects: string[]; modelError: string | null }>,
   /** 交给哪套系统（根／燊一修）；null＝不标。 */
   setForSystem: (id: string, name: string | null) => ipcRenderer.invoke("bookmark:set-for-system", { id, name }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。

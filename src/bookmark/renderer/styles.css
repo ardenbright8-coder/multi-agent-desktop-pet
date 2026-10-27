@@ -1071,3 +1071,14 @@ body.carrying, body.carrying * { user-select: none !important; }
 .task .num:hover { color: rgba(47, 62, 44, 0.85); background: rgba(122, 156, 94, 0.14); }
 /* 派活单小标（设定23）：跟交接小标同一个圆角小方块，换成青绿色，一眼分得出 */
 .handoff-badge.dispatch-badge { color: #2f6f6a; background: rgba(76, 160, 150, 0.16); border-color: rgba(76, 160, 150, 0.5); }
+
+/* 找一摊活（2026-10-27）：「🔍 找」放在「＋组」左边一起靠右；点开的框在页签下面单独一行，不挤页签 */
+#page-tabs { flex-wrap: wrap; }
+#search-btn { -webkit-app-region: no-drag; margin-left: auto; border: 1px solid rgba(122, 156, 94, 0.6); background: rgba(255, 255, 255, 0.5); color: #4d6b3a; border-radius: 999px; padding: 1px 9px; font-size: 12px; cursor: pointer; }
+#search-btn:hover { background: rgba(122, 156, 94, 0.12); }
+#search-btn[hidden], #search-row[hidden] { display: none; }
+#search-btn:not([hidden]) ~ #add-agent-btn { margin-left: 4px; }
+#search-row { -webkit-app-region: no-drag; order: 99; flex: 1 0 100%; display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+#search-input { flex: 1; min-width: 0; background: rgba(255, 255, 255, 0.75); border: 1px solid rgba(122, 156, 94, 0.5); border-radius: 6px; padding: 3px 8px; font-size: 13px; }
+#search-input:focus { outline: 1px solid rgba(122, 156, 94, 0.8); }
+#search-ok, #search-cancel { flex: none; border: 1px solid rgba(122, 156, 94, 0.5); background: #fff; border-radius: 6px; padding: 2px 10px; font-size: 12.5px; cursor: pointer; }

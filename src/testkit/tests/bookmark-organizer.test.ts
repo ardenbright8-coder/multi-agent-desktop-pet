@@ -181,6 +181,26 @@ test("出题：只送写完 3 分钟以上、散着、用户没动过的新条�
     assert.equal(buildGroupTask(group, { meta: {}, openBundle: () => true, now: Date.now() }), null, "刚写的不送");
   }));
 
+test("过筛：一捆一个项目——认出的项目不一样，开新捆、放进捆都丢掉；认不出的不拦（2026-10-27）", () =>
+  withStore((store) => {
+    seed(store, ["一", "二", "三", "四", "五"]);
+    const ids = store.list().map((r) => r.id);
+    store.markSorted([ids[3], ids[4]]);
+    store.createTaskBundle([ids[3], ids[4]], "看板的捆");
+    const note = (project: string) => ({ project, title: "", summary: "", key: "" });
+    const notes = { [ids[0]]: note("Agent 看板"), [ids[1]]: note("库管理面板"), [ids[2]]: note("认不出"), [ids[3]]: note("agent看板"), [ids[4]]: note("Agent看板") };
+    const [g] = groupsForOrganizer(store.list(), ["Claude"]);
+    const task = buildGroupTask(g, { meta: store.bundleMeta(), openBundle: () => true, now: NOW, notes })!;
+    const plan = validatePlan(parsePlanText(JSON.stringify({
+      create: [{ name: "看板和库面板", items: ["N1", "N2"] }],
+      join: [{ item: "N2", bundle: "B1" }, { item: "N1", bundle: "B1" }, { item: "N3", bundle: "B1" }],
+      skip: [],
+    })), task);
+    assert.equal(plan.creates.length, 0, "看板和库面板不是一个项目");
+    assert.deepEqual(plan.joins.map((j) => j.id), [ids[0], ids[2]], "N1（写法不同也认）、N3（认不出）放得进，N2 放不进");
+    assert.equal(plan.dropped.filter((d) => d.includes("项目不一样")).length, 2);
+  }));
+
 test("过筛：编的编号、重复用、禁用捆名、新捆里没有新条目、放进不存在的捆——都丢掉", () =>
   withStore((store) => {
     seed(store, ["一", "二", "三", "四"]);
