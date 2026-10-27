@@ -70,8 +70,9 @@ contextBridge.exposeInMainWorld("bookmark", {
     ipcRenderer.on("bookmark:organized", (_event, text) => callback(String(text ?? "")));
   },
   release: (id: string) => ipcRenderer.invoke("bookmark:release", id),
-  launchLine: (target: string, group: string, coding: boolean) =>
-    ipcRenderer.invoke("bookmark:launch-line", { target, group, coding }) as Promise<{ line: string; label: string; opened: string | null; freshWindow: boolean; pasting: boolean; problem: string | null }>,
+  // model：Pi 组六个点挑的模型，开窗前替用户在 Pi 里换成它（2026-10-27）。
+  launchLine: (target: string, group: string, coding: boolean, model: string | null = null) =>
+    ipcRenderer.invoke("bookmark:launch-line", { target, group, coding, model }) as Promise<{ line: string; label: string; model: string | null; opened: string | null; freshWindow: boolean; pasting: boolean; problem: string | null }>,
   // 派活单一键启动（设定23）：同批没人领的一个接一个开，撞文件就一个不开。
   // model：这批有 Pi 的单子时，开窗前替用户在 Pi 里换成它（2026-10-16）。
   launchBatch: (id: string, coding: boolean, model: string | null = null) =>

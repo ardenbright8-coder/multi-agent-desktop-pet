@@ -2184,8 +2184,11 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
 // 启动 Agent：看板给这个窗口起名（Claude-3），把一句「领看板的活：node … next <捆或条> --by Claude-3」放进剪贴板，
 // 用户开窗 Ctrl+V、自己按回车；AI 敲了这句才算领走（看板上出「🔄 Claude-3 在干」）。🚨 看板绝不替他发。
 
+// Pi 组的六个点也能挑模型（2026-10-27 用户：同一条想换三个不同模型测）：跟一键启动同一个选单，挑了＝开窗前替他按一次 Ctrl+E。
 function bmLaunchOptions(target, groupKey) {
-  return [
+  const state = { model: null };
+  const isPi = groupKey.replace(/\s+/g, "").toLowerCase() === "piagent";
+  const buttons = [
     { label: "启动 Agent · 带编程", coding: true },
     { label: "启动 Agent · 普通", coding: false },
   ].map((opt) => {
@@ -2196,7 +2199,8 @@ function bmLaunchOptions(target, groupKey) {
     item.addEventListener("click", async () => {
       bmHideCtxMenu();
       try {
-        const res = await window.bookmark.launchLine(target, groupKey, opt.coding);
+        const res = await window.bookmark.launchLine(target, groupKey, opt.coding, isPi ? state.model : null);
+        if (res.model) bmToast(`Pi 换成 ${res.model.slice(res.model.lastIndexOf("/") + 1)}（思考档最高）`, 3000);
         if (res.opened && res.pasting) {
           const how = res.freshWindow ? "把启动句贴进去" : "新开一个对话、把启动句贴进去";
           bmToast(`已打开「${res.opened}」（${res.label}）：等它启动好，看板替你${how}，你看一眼再按回车`, 8000);
@@ -2213,6 +2217,7 @@ function bmLaunchOptions(target, groupKey) {
     });
     return item;
   });
+  return isPi ? [bmPiModelPicker(state), ...buttons] : buttons;
 }
 
 // ── 派活单一键启动（设定23，2026-10-15）────────────────────

@@ -1164,15 +1164,21 @@ function registerIpc(): void {
   // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式，
   // 新窗口启动好后替用户按一次 Ctrl+V。🚨 绝不替他按回车。开不了窗、贴不了只提示，照旧能手动来。
   ipcMain.handle("bookmark:launch-line", async (_event, payload: unknown) => {
-    const raw = (payload ?? {}) as { target?: unknown; group?: unknown; coding?: unknown };
+    const raw = (payload ?? {}) as { target?: unknown; group?: unknown; coding?: unknown; model?: unknown };
     const target = String(raw.target ?? "").trim();
     const group = String(raw.group ?? "").trim();
     if (!target || !group) throw new Error("缺条目或组名");
+    // Pi 组挑了模型（2026-10-27）：跟一键启动一样，开窗前替他按一次 Ctrl+E；测试实例不碰真的 Pi 设置
+    const model = raw.model && launchKey(group) === launchKey("Pi Agent") ? String(raw.model) : null;
+    if (model) {
+      if (openAgents || process.env.BOOKMARK_PI_SETTINGS) setPiModel(model);
+      log.记(`启动 Agent：Pi 换成 ${model}（思考档开最高）`, "cli");
+    }
     const label = nextWindowLabel(group);
     const line = `${LAUNCH_HEAD}node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
     clipboard.writeText(line);
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
-    return { line, label, ...(await openAgentShortcut(group, line, label)) };
+    return { line, label, model, ...(await openAgentShortcut(group, line, label)) };
   });
   // 一键启动（设定23，2026-10-15）：这张派活单同批、还没人领的（最多三张），各开在自己所在组的软件里。
   // 一个接一个开：等上一个贴好再开下一个（同时开会贴串）。开之前查两张单子「只许动」有没有撞文件，撞了一个都不开。

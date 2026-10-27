@@ -250,6 +250,24 @@ try {
     const y = l.find((r) => r.id === b2.id);
     return x && y && x.bundleId && x.bundleId === y.bundleId;
   }, 4000)));
+
+  // ⑪ 普通条目的六个点也能挑 Pi 模型（2026-10-27）：Pi 组有选单、挑了启动＝换模型；Claude 组没有
+  writeFileSync(piSettings, JSON.stringify({ ...piNow(), defaultProvider: "openai-codex", defaultModel: "gpt-6.1-sol" }), "utf8");
+  const piCard = await page.evaluate(() => window.bookmark.add({ text: "普通条目挑模型", assignee: "Pi Agent" }));
+  const claudeCard = await page.evaluate(() => window.bookmark.add({ text: "普通条目 Claude 组", assignee: "Claude" }));
+  await page.evaluate(() => bmRefresh());
+  await page.locator(`${T(claudeCard)} .handle`).click();
+  const qMenu = await page.locator("#ctx-menu").innerText();
+  check("⑪ Claude 组普通条目：六个点有启动 Agent、没有挑 Pi 模型", /启动 Agent · 普通/.test(qMenu) && !/Pi 用哪个模型/.test(qMenu), qMenu.replace(/\s+/g, " "));
+  await page.keyboard.press("Escape");
+  await page.locator(`${T(piCard)} .handle`).click();
+  await waitFor(async () => (await chips.count()) === 2);
+  check("⑪ Pi 组普通条目：六个点列出 Pi 的模型、默认选上次那个",
+    /启动 Agent · 普通/.test(await page.locator("#ctx-menu").innerText()) && (await page.locator('#ctx-menu .ctx-model.on').getAttribute("data-model")) === "openai-codex/gpt-6.1-sol");
+  await page.locator('#ctx-menu .ctx-model[data-model="commandcode/z-ai/glm-5.3-flash"]').click();
+  await page.locator("#ctx-menu .ctx-item", { hasText: "启动 Agent · 普通" }).click();
+  const pi2 = await waitFor(() => (piNow().defaultModel === "z-ai/glm-5.3-flash" ? piNow() : null), 5000);
+  check("⑪ 挑了再启动：替他换了 Pi 模型、思考档最高", Boolean(pi2) && pi2.defaultProvider === "commandcode" && pi2.defaultThinkingLevel === "max", JSON.stringify(piNow()).slice(0, 120));
   await page.screenshot({ path: join(out, "结束.png") });
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {
