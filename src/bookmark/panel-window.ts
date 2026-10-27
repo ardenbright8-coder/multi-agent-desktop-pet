@@ -13,7 +13,7 @@
 import { basename, join } from "node:path";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeImage, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory, isIsolatedRun } from "../shared/paths";
@@ -1227,6 +1227,17 @@ function registerIpc(): void {
     const line = `看板${rowName(boardRows(), record)}的单独文件（只读这一份，别翻整组）：${path}`;
     clipboard.writeText(line);
     return { path, line };
+  });
+  // 按住序号拖出看板（2026-10-27 用户）：拖的就是这条的单独文件——放进 Claude Code 等窗口贴路径，放进文件夹复制一份
+  ipcMain.on("bookmark:drag-out", (event, id: unknown) => {
+    try {
+      const path = itemFileFor(String(id ?? ""));
+      if (!existsSync(path)) return;
+      const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 32, height: 32 });
+      event.sender.startDrag({ file: path, icon });
+    } catch (error) {
+      log.出事("拖出看板失败（点序号照样能复制路径）", error, "window");
+    }
   });
   // 大标题右键「复制路径」（2026-10-27 看板 01）：这一捆每条的单独文件一行一条，贴给 AI 只读这几份。
   ipcMain.handle("bookmark:bundle-files", (_event, bundleId: unknown) => {

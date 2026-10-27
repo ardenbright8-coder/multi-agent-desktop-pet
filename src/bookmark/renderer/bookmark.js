@@ -1161,7 +1161,14 @@ function bmBuildTask(record, groupKey, order) {
   num.className = "num";
   num.textContent = String(order).padStart(2, "0");
   // 点号码（2026-10-15 看板 Claude 01）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
-  num.title = "点一下复制这条的单独文件路径：贴给 AI，它只读这一份，不用翻整组";
+  num.title = "点一下复制这条的单独文件路径；按住拖进 Claude Code 等窗口直接贴路径，拖进文件夹复制一份";
+  // 按住序号拖出看板（2026-10-27 用户）：走系统的拖文件，不走看板里挪位置那套
+  num.draggable = true;
+  num.addEventListener("pointerdown", (event) => event.stopPropagation());
+  num.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+    window.bookmark.dragOut?.(record.id);
+  });
   num.addEventListener("click", async (event) => {
     event.stopPropagation();
     try {
