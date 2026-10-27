@@ -34,12 +34,31 @@ try {
   const t0 = Date.now();
   const voice = await page.evaluate(() => window.bookmark.search("说话说两句就没了"));
   const ms = Date.now() - t0;
-  // 08 号、01 号：语音输入说两句就断
-  const want = ["mvf8sca7-12fb8040", "mvlx43fz-3a62e65d"];
-  check("① 说法跟原文不一样：按意思找到语音那几条", want.every((id) => voice.ids.includes(id)) && voice.byMeaning > 0 && !voice.vectorError,
+  // 找到的每条都得是讲语音输入的（看板上的条目会变，不写死号码）
+  const texts = await page.evaluate((ids) => window.bookmark.list().then((l) => l.filter((r) => ids.includes(r.id)).map((r) => `${r.text}\n${r.detail ?? ""}`)), voice.ids);
+  check("① 说法跟原文不一样：按意思找到的都是讲语音输入的", texts.length > 0 && texts.every((t) => /语音/.test(t)) && voice.byMeaning > 0 && !voice.vectorError,
     `按意思 ${voice.byMeaning} 条，共 ${voice.ids.length} 条，${ms} 毫秒${voice.vectorError ? `，错：${voice.vectorError}` : ""}`);
   const weather = await page.evaluate(() => window.bookmark.search("今天天气怎么样"));
   check("② 不相干的话：按意思一条都不加", weather.byMeaning === 0 && !weather.vectorError, `按意思 ${weather.byMeaning} 条`);
+
+  // ③ 搜索框（2026-10-27 用户：点了就地变小框、打完自己找、点别处就收，没有「找」「关」钮）
+  const fast = await page.evaluate(async () => { const t = Date.now(); const r = await window.bookmark.search("说话说两句就没了", "fast"); return { ms: Date.now() - t, n: r.ids.length }; });
+  check("③ 先回来的一段（按字＋按意思）够快", fast.ms < 3500 && fast.n > 0, `${fast.ms} 毫秒、${fast.n} 条`);
+  await page.locator("#tab-groups").click();
+  await page.locator("#search-btn").click();
+  const opened = await page.evaluate(() => ({ box: !document.getElementById("search-input").hidden, btn: document.getElementById("search-btn").hidden, focus: document.activeElement?.id, extra: document.querySelectorAll("#search-ok, #search-cancel").length }));
+  check("③ 点「🔍 找」：就地变成小框、光标在里面、没有找/关钮", opened.box && opened.btn && opened.focus === "search-input" && opened.extra === 0, JSON.stringify(opened));
+  await page.keyboard.insertText("说话说两句就没了");
+  const t1 = Date.now();
+  let picked = 0;
+  while (Date.now() - t1 < 6000 && !picked) {
+    picked = await page.evaluate(() => document.querySelectorAll(".task.dispatch-selected").length);
+    if (!picked) await sleep(100);
+  }
+  check("③ 打完停一下自己找、选中了", picked > 0, `${Date.now() - t1} 毫秒选中 ${picked} 条`);
+  await page.locator("#titlebar .title").click();
+  const closed = await page.evaluate(() => ({ box: document.getElementById("search-input").hidden, btn: !document.getElementById("search-btn").hidden, still: document.querySelectorAll(".task.dispatch-selected").length }));
+  check("③ 点别处：小框收起、按钮回来、选中的还留着", closed.box && closed.btn && closed.still > 0, JSON.stringify(closed));
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {
   await app.close();

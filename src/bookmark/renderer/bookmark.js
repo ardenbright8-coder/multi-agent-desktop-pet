@@ -240,13 +240,17 @@ function bmInit() {
   });
   document.getElementById("add-agent-btn").addEventListener("click", () => bmToggleAddAgentRow(true));
   document.getElementById("search-btn").addEventListener("click", () => bmToggleSearchRow(true));
-  document.getElementById("search-cancel").addEventListener("click", () => bmToggleSearchRow(false));
-  document.getElementById("search-ok").addEventListener("click", () => { void bmRunSearch(); });
-  document.getElementById("search-input").addEventListener("keydown", (event) => {
+  const searchInput = document.getElementById("search-input");
+  // 打完停一下自己找；中文组字中不找，组完再算（2026-10-27）
+  searchInput.addEventListener("input", (event) => { if (!event.isComposing) bmScheduleSearch(); });
+  searchInput.addEventListener("compositionend", () => bmScheduleSearch());
+  searchInput.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
     if (event.key === "Enter") { event.preventDefault(); void bmRunSearch(); }
     if (event.key === "Escape") { event.preventDefault(); bmToggleSearchRow(false); }
   });
+  // 点别处就收：选中的照样留着，接着 Ctrl+X
+  searchInput.addEventListener("blur", () => { if (document.hasFocus()) bmToggleSearchRow(false); }); // 被豆包浮窗抢焦点不算点别处
   document.getElementById("new-agent-ok").addEventListener("click", () => { void bmSubmitNewAgent(); });
   document.getElementById("new-agent-cancel").addEventListener("click", () => bmToggleAddAgentRow(false));
   document.getElementById("new-agent-name").addEventListener("keydown", (event) => {
@@ -3239,45 +3243,74 @@ async function bmRemove(id) {
 // ── 找一摊活（2026-10-27 用户：说一句「Agent看板」，把这摊活全拉出来，好批量剪走）──────
 // 找到的就是 Ctrl 点选：绿底选中，接着 Ctrl+X 一起剪、Ctrl+V 拿到一处放下。按字找，再让整理用的小模型认说歪的名字。
 
+// 搜索框（2026-10-27 用户：跟大厂一样，点了就是小框、打完自己找、点别处就收，不要「找」「关」两个钮）
+const BM_SEARCH_DEBOUNCE_MS = 700;
+let bmSearchTimer = null;
+let bmSearchSeq = 0;
+
 function bmToggleSearchRow(show) {
-  document.getElementById("search-row").hidden = !show;
+  const input = document.getElementById("search-input");
+  input.hidden = !show;
   document.getElementById("search-btn").hidden = show;
-  if (show) document.getElementById("search-input").focus();
+  if (show) {
+    input.value = "";
+    input.focus();
+  } else {
+    if (bmSearchTimer) window.clearTimeout(bmSearchTimer);
+    bmSearchTimer = null;
+  }
 }
 
+function bmScheduleSearch() {
+  if (bmSearchTimer) window.clearTimeout(bmSearchTimer);
+  bmSearchTimer = window.setTimeout(() => { bmSearchTimer = null; void bmRunSearch(); }, BM_SEARCH_DEBOUNCE_MS);
+}
+
+/** 两段一起发（质量跟一次全等完一样）：按字＋按意思先回来先选中，小模型认的项目名回来再补上。后发的盖掉先发的。 */
 async function bmRunSearch() {
   const input = document.getElementById("search-input");
   const query = input.value.trim();
+  if (bmSearchTimer) window.clearTimeout(bmSearchTimer);
+  bmSearchTimer = null;
   if (!query) return;
-  const ok = document.getElementById("search-ok");
-  ok.disabled = true;
-  ok.textContent = "找…";
-  try {
-    const res = await window.bookmark.search(query);
+  const seq = ++bmSearchSeq;
+  const found = new Set();
+  const notes = { projects: [], byMeaning: 0, vectorError: null, modelError: null, pending: 2 };
+  input.classList.add("busy");
+  const apply = async (res) => {
+    if (seq !== bmSearchSeq) return;
+    for (const id of res.ids) found.add(id);
+    if (res.projects?.length) notes.projects = res.projects;
+    if (res.byMeaning) notes.byMeaning = res.byMeaning;
+    if (res.vectorError) notes.vectorError = res.vectorError;
+    if (res.modelError) notes.modelError = res.modelError;
     if (bmCurrentPage !== "groups") bmSwitchPage("groups");
     // 找到的在收起的「更多 Agent」里：先展开，不然选不中
-    const inFold = res.ids.some((id) => { const r = bmDispatchRecords.find((x) => x.id === id); return r && bmFold.members.includes(r.assignee); });
+    const inFold = [...found].some((id) => { const r = bmDispatchRecords.find((x) => x.id === id); return r && bmFold.members.includes(r.assignee); });
     if (inFold && !bmFold.open) bmFold = await window.bookmark.setFoldOpen(true);
     await bmRefresh();
+    if (seq !== bmSearchSeq) return;
+    const firstTime = !bmSelectedTasks.size;
     bmSelectedTasks.clear();
-    for (const id of res.ids) if (document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)) bmSelectedTasks.add(id);
+    for (const id of found) if (document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)) bmSelectedTasks.add(id);
     bmRefreshDispatchSelection();
-    const away = res.ids.length - bmSelectedTasks.size;
     const first = document.querySelector(".task.dispatch-selected");
-    if (first) first.scrollIntoView({ block: "center" });
+    if (first && firstTime) first.scrollIntoView({ block: "center" });
+    const away = found.size - bmSelectedTasks.size;
     const parts = [bmSelectedTasks.size ? `找到 ${bmSelectedTasks.size} 条，已选中：Ctrl+X 一起剪走，Esc 取消选中` : `没找到「${query}」`];
     if (away > 0) parts.push(`另有 ${away} 条在待定页`);
-    if (res.projects.length) parts.push(`认成：${res.projects.join("、")}`);
-    if (res.byMeaning) parts.push(`按意思又找到 ${res.byMeaning} 条`);
-    if (res.vectorError) parts.push("按意思找没连上");
-    if (res.modelError) parts.push("小模型没连上，只按字找了");
+    if (notes.projects.length) parts.push(`认成：${notes.projects.join("、")}`);
+    if (notes.byMeaning) parts.push(`按意思找到 ${notes.byMeaning} 条`);
+    if (notes.pending) parts.push("还在认项目名…");
+    if (notes.vectorError) parts.push("按意思找没连上");
+    if (notes.modelError) parts.push("小模型没连上");
     bmToast(parts.join("；"), 6000);
-  } catch (error) {
-    bmShowError("找没成：" + bmErrorText(error));
-  } finally {
-    ok.disabled = false;
-    ok.textContent = "找";
-  }
+  };
+  const run = (part) => window.bookmark.search(query, part)
+    .then((res) => { notes.pending -= 1; return apply(res); })
+    .catch((error) => { notes.pending -= 1; if (seq === bmSearchSeq) bmShowError("找没成：" + bmErrorText(error)); });
+  await Promise.all([run("fast"), run("projects")]);
+  if (seq === bmSearchSeq) input.classList.remove("busy");
 }
 
 // ── 加Agent ──────────────────────────────────────────────

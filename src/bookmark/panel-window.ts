@@ -1090,23 +1090,29 @@ function registerIpc(): void {
   // 每条的小标题（第五版）：板上第一行显示。只给还作数的（读完没改过的）。
   // 搜看板（2026-10-27 用户：说一句「Agent看板」，把这摊活全拉出来）：先按字找，再让整理用的小模型从认出的项目名里挑同一个东西。
   // 小模型没配、不通，就只给按字找到的，并说一声。
-  ipcMain.handle("bookmark:search", async (_event, query: unknown) => {
-    const q = String(query ?? "").trim().slice(0, 40);
-    if (!q) return { ids: [], projects: [], modelError: null };
+  // 找分两段（2026-10-27 用户：快，但质量不能降）：part=fast 只按字找＋按意思找（2 秒内），part=projects 只让小模型认项目名（慢）；
+  // 界面两段一起发，先回来的先选中，后回来的补上，三路结果跟一次全等完一样。不带 part（老写法）＝三路都等完再回。
+  ipcMain.handle("bookmark:search", async (_event, payload: unknown) => {
+    const raw = (typeof payload === "object" && payload ? payload : { query: payload }) as { query?: unknown; part?: unknown };
+    const part = raw.part === "fast" || raw.part === "projects" ? raw.part : "all";
+    const q = String(raw.query ?? "").trim().slice(0, 40);
+    if (!q) return { ids: [], projects: [], modelError: null, byMeaning: 0, vectorError: null };
     const records = requireStore().list();
     const book = readNoteBook();
-    const ids = new Set(searchByText(records, book, q));
+    const ids = new Set(part === "projects" ? [] : searchByText(records, book, q));
     let projects: string[] = [];
     let modelError: string | null = null;
-    // 按意思找（2026-10-27）跟小模型认项目名一起跑，谁先回来都不等谁
-    const meaning = vectorSearch(q).then((found) => ({ found, error: null as string | null }),
-      (error: unknown) => ({ found: [] as string[], error: error instanceof Error ? error.message : String(error) }));
-    try {
-      projects = await askSearchProjects(q, knownProjects(book), readOrganizerConfig(), organizerFetch);
-      const keys = new Set(projects.map(projectKey));
-      for (const r of records) if (keys.has(projectKey(book[r.id]?.project))) ids.add(r.id);
-    } catch (error) {
-      modelError = error instanceof Error ? error.message : String(error);
+    const meaning = part === "projects" ? Promise.resolve({ found: [] as string[], error: null as string | null })
+      : vectorSearch(q).then((found) => ({ found, error: null as string | null }),
+        (error: unknown) => ({ found: [] as string[], error: error instanceof Error ? error.message : String(error) }));
+    if (part !== "fast") {
+      try {
+        projects = await askSearchProjects(q, knownProjects(book), readOrganizerConfig(), organizerFetch);
+        const keys = new Set(projects.map(projectKey));
+        for (const r of records) if (keys.has(projectKey(book[r.id]?.project))) ids.add(r.id);
+      } catch (error) {
+        modelError = error instanceof Error ? error.message : String(error);
+      }
     }
     const { found, error: vectorError } = await meaning;
     const live = new Set(records.map((r) => r.id));

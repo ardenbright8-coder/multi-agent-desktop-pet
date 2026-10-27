@@ -29,13 +29,9 @@
       <button id="tab-groups" type="button" class="page-tab active" data-page="groups">🤖 Agent 分组</button>
       <button id="tab-projects" type="button" class="page-tab" data-page="projects">📁 项目</button>
       <button id="tab-skills" type="button" class="page-tab" data-page="skills">📖 技能</button>
-      <!-- 找一摊活（2026-10-27）：说一句项目名，找到的全选中，接着 Ctrl+X 一起剪走 -->
-      <button id="search-btn" type="button" title="找一摊活：输入项目名，找到的全选中">🔍 找</button>
-      <span id="search-row" hidden>
-        <input id="search-input" type="text" maxlength="40" placeholder="找什么，如 Agent看板" />
-        <button id="search-ok" type="button">找</button>
-        <button id="search-cancel" type="button">关</button>
-      </span>
+      <!-- 找一摊活（2026-10-27）：点「🔍 找」就地变成小搜索框，打完停一下自己找，点别处就收（用户：跟大厂的搜索框一样） -->
+      <button id="search-btn" type="button" title="找一摊活：说个意思差不多的词也行，找到的全选中">🔍 找</button>
+      <input id="search-input" type="text" maxlength="40" placeholder="找什么，如 Agent看板" hidden />
       <button id="add-agent-btn" type="button" title="加一个分组">＋组</button>
       <!-- 加分组：点「＋组」就在这一栏变出小框（2026-10-12 用户：底下一整条太占地方） -->
       <span id="add-agent-row" hidden>
