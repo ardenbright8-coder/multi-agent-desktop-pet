@@ -36,6 +36,8 @@ export interface BookmarkInput {
   kind?: BookmarkKind;
   /** 派活单的批号：同一次写的几张同一个号，一键启动按它找同批。 */
   batchId?: string | null;
+  /** 交给哪套系统（2026-10-27 用户：根和燊一修两套 Windows 互相交接，一眼分清这张是给谁的）。只写名字，没有就是 null。 */
+  forSystem?: string | null;
   /** 贴图文件名（不含路径）；真文件在 attachments\。创建时传入就按原样落盘，不拷贝。 */
   attachments?: string[];
 }
@@ -52,6 +54,8 @@ export interface BookmarkRecord {
   kind: BookmarkKind;
   /** 派活单批号（设定23）：同批的几张不管拖到哪个组，一键启动都一起开。不是派活单就是 null。 */
   batchId: string | null;
+  /** 交给哪套系统（根／燊一修）：看板上挂醒目名牌。旧库无此字段读入时回落 null。 */
+  forSystem: string | null;
   /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
   attachments: string[];
   /** 捆号（2026-09-24 设定15）：同组里挨着的几条捆成一捆，一捆交给一个 AI 窗口。null = 没捆。 */
@@ -111,6 +115,12 @@ interface UndoStep {
 const MAX_UNDO = 30;
 /** 连着改同一条字，隔多久以内算一步。 */
 const UNDO_MERGE_MS = 120_000;
+
+/** 交给哪套系统：只留名字（去空格、最长 12 字），空的算没标。 */
+export function normalizeForSystem(value: unknown): string | null {
+  const name = typeof value === "string" ? value.trim().slice(0, 12) : "";
+  return name || null;
+}
 
 export class BookmarkStore {
   private records: BookmarkRecord[] = [];
@@ -464,6 +474,7 @@ export class BookmarkStore {
       detail: input.detail ? String(input.detail) : null,
       kind: normalizeKind(input.kind),
       batchId: normalizeKind(input.kind) === "dispatch" && input.batchId ? String(input.batchId) : null,
+      forSystem: normalizeForSystem(input.forSystem),
       attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
@@ -500,6 +511,7 @@ export class BookmarkStore {
       detail: c.detail && String(c.detail).trim() ? String(c.detail).trim() : null,
       kind: "dispatch",
       batchId,
+      forSystem: null,
       attachments: [],
       bundleId: null,
       claimedBy: null,
@@ -539,6 +551,7 @@ export class BookmarkStore {
       detail: input.detail ? String(input.detail) : null,
       kind: normalizeKind(input.kind),
       batchId: normalizeKind(input.kind) === "dispatch" && input.batchId ? String(input.batchId) : null,
+      forSystem: normalizeForSystem(input.forSystem),
       attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
@@ -894,6 +907,16 @@ export class BookmarkStore {
     return record;
   }
 
+  /** 改「交给哪套系统」（右键菜单）：空＝不标。换组、挪动都不动它。 */
+  setForSystem(id: string, name: string | null): BookmarkRecord | null {
+    this.ensureLoaded();
+    const record = this.records.find((item) => item.id === id);
+    if (!record) return null;
+    record.forSystem = normalizeForSystem(name);
+    this.save();
+    return record;
+  }
+
   setAssignee(id: string, assignee: string | null): BookmarkRecord | null {
     this.ensureLoaded();
     const record = this.records.find((item) => item.id === id);
@@ -954,6 +977,7 @@ export class BookmarkStore {
           detail: typeof record.detail === "string" ? record.detail : null,
           kind: normalizeKind(record.kind),
           batchId: record.kind === "dispatch" && typeof record.batchId === "string" ? record.batchId : null,
+          forSystem: normalizeForSystem(record.forSystem),
           attachments: reconcileImages(normalizeAttachmentNames(record.attachments), "", record.text),
           bundleId: typeof record.bundleId === "string" ? record.bundleId : null,
           claimedBy: typeof record.claimedBy === "string" ? record.claimedBy : null,

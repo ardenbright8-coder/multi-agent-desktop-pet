@@ -70,7 +70,21 @@ const BM_ICONS = {
   // 状态小标（2026-10-13 用户：显示状态的一律小标，碰到才冒说明）：在干＝转圈箭头；AI 捆的＝小机器人
   busy: '<path d="M20 12a8 8 0 0 1-13.7 5.6"/><path d="M4 12a8 8 0 0 1 13.7-5.6"/><path d="M17.7 3v3.6h-3.6M6.3 21v-3.6h3.6"/>',
   robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V5M9.5 13h.01M14.5 13h.01M9.5 16.5h5"/>',
+  // 交给哪套系统的名牌（2026-10-27）：一台显示器
+  computer: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/>',
 };
+// 交给哪套系统（2026-10-27 用户：根和燊一修两套 Windows 互相写交接单，一眼分清给谁）：右键菜单列这两个，名牌只写名字。
+const BM_SYSTEMS = ["根", "燊一修"];
+/** 交接单标题前的名牌：显示器小图标＋名字，按名字上色（样式表 data-system）。 */
+function bmForSystemTag(name) {
+  const tag = document.createElement("span");
+  tag.className = "for-system";
+  tag.dataset.system = name;
+  tag.title = `交给「${name}」那套 Windows 的`;
+  tag.innerHTML = bmIcon("computer");
+  tag.appendChild(document.createTextNode(name));
+  return tag;
+}
 /** 状态小标：圆角小方块＋细线图标，说明放在鼠标碰到才冒的提示里（2026-10-13 用户：省地方给标题）。 */
 // 干活的两个状态用表情（2026-10-13 用户：正在干＝绿的，干完等审＝勾，一眼分得出）；别的小标照旧细线图标。
 const BM_STATUS_EMOJI = { busy: "♻️", review: "✅" };
@@ -1004,6 +1018,7 @@ function bmBuildTask(record, groupKey, order) {
   const item = document.createElement("li");
   item.className = "task";
   if (record.kind === "handoff") item.classList.add("handoff"); // 交接单：显眼样式（序号下面一个交接小标），一眼认出；底色跟普通条目一样
+  if (record.forSystem) { item.classList.add("has-for-system"); item.dataset.system = record.forSystem; } // 交给哪套系统：左边一道同色粗边
   if (record.kind === "dispatch") item.classList.add("dispatch"); // 派活单（设定23）：序号下面一个分叉小标，六个点里是「一键启动」
   item.dataset.id = record.id;
   item.dataset.kind = record.kind || "note";
@@ -1093,6 +1108,7 @@ function bmBuildTask(record, groupKey, order) {
     title.className = "task-title";
     const own = record.text.replace(/\[图片:[^\]]*\]/g, " ").replace(/\s+/g, " ").trim();
     title.textContent = note && note.title ? note.title : own || "（只有图）";
+    if (record.forSystem) title.prepend(bmForSystemTag(record.forSystem));
     if (!(note && note.title)) title.classList.add("raw-title");
     // 点小标题＝直接改正文（2026-10-24 用户：小标题归 AI 写，我不手动改；点它是要改正文）。
     // 有详情的（交接单这类）正文是详情那一大段，直接进详情；没有详情的，原文就是正文。点别处存好、收回去只剩标题。
@@ -2115,6 +2131,26 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
     menu.appendChild(back);
   }
 
+  // 交给哪套系统（2026-10-27）：只给交接单，点一下就标上，再点「不标」拿掉。
+  if (record.kind === "handoff") {
+    const head = document.createElement("div");
+    head.className = "ctx-title";
+    head.textContent = "交给哪套 →";
+    menu.appendChild(head);
+    for (const name of [...BM_SYSTEMS, null]) {
+      const pick = document.createElement("button");
+      pick.type = "button";
+      pick.className = "ctx-item";
+      pick.textContent = `${(record.forSystem || null) === name ? "✓ " : ""}${name ?? "不标"}`;
+      pick.addEventListener("click", async () => {
+        bmHideCtxMenu();
+        try { await window.bookmark.setForSystem(record.id, name); } catch (error) { bmShowError(bmErrorText(error)); }
+        await bmRefresh();
+      });
+      menu.appendChild(pick);
+    }
+  }
+
   const del = document.createElement("button");
   del.type = "button";
   del.className = "ctx-item danger";
@@ -2127,7 +2163,7 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   const panelRect = document.getElementById("app").getBoundingClientRect();
   const rect = anchor.getBoundingClientRect();
   const menuWidth = 168;
-  const menuHeightEstimate = 40 + (targets.length + copyOptions.length) * 30 + 70;
+  const menuHeightEstimate = 40 + (targets.length + copyOptions.length + (record.kind === "handoff" ? 4 : 0)) * 30 + 70;
   let left = rect.right - panelRect.left + 6;
   if (left + menuWidth > panelRect.width) left = rect.left - panelRect.left - menuWidth - 6;
   let top = rect.top - panelRect.top;
@@ -3196,9 +3232,8 @@ function bmInitClipboard() {
       bmEndCarry(false);
       return;
     }
-    if (bmClip && event.key === "Escape") { // 还没 Ctrl+V 就按 Esc：剪下 / 复制的也放弃
-      bmClip = null;
-      document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
+    if (bmClip && event.key === "Escape") { // 还没 Ctrl+V 就按 Esc：剪下的也放弃（跟 Windows 资源管理器一样）
+      bmCancelClip();
       return;
     }
     if (event.key === "Escape" && !bmTyping() && (bmPickedTaskId || bmPickedBundleId)) {
@@ -3247,10 +3282,15 @@ function bmInitClipboard() {
       const els = [...document.querySelectorAll(".task[data-id]")].filter((n) => bmSelectedTasks.has(n.dataset.id));
       if (els.length) {
         event.preventDefault();
-        bmClip = { ids: els.map((n) => n.dataset.id) };
+        const ids = els.map((n) => n.dataset.id);
+        if (bmClip && bmClip.ids && bmClip.ids.join() === ids.join()) { // 同样几条再按一次 Ctrl+X＝不剪了
+          bmCancelClip();
+          return;
+        }
+        bmClip = { ids };
         document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
         els.forEach((n) => n.classList.add("clip-cut"));
-        bmToast(`剪下这 ${els.length} 条了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了`, 4000);
+        bmSyncClipBar();
         return;
       }
     }
@@ -3263,12 +3303,54 @@ function bmInitClipboard() {
     const head = bundleId ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"]`) : null;
     if (!el && !head) return;
     event.preventDefault();
+    if (bmClip && (el ? bmClip.id === id : bmClip.bundleId === bundleId)) { // 剪下的那条 / 那捆上再按一次 Ctrl+X＝不剪了
+      bmCancelClip();
+      return;
+    }
     bmClip = el ? { id } : { bundleId };
     document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
     if (el) el.classList.add("clip-cut");
     else document.querySelectorAll(`.bundle-head[data-bundle="${CSS.escape(bundleId)}"], .task[data-bundle="${CSS.escape(bundleId)}"]`).forEach((n) => n.classList.add("clip-cut"));
-    bmToast(el ? "剪下这条了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了" : "剪下这一整捆了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了", 4000);
+    bmSyncClipBar();
   }, true);
+}
+
+/** 不剪了：虚线、底下那条提示一起收掉，条目原地不动。Esc、再按一次 Ctrl+X、点提示条上的「取消」都走这里。 */
+function bmCancelClip() {
+  bmClip = null;
+  document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
+  bmSyncClipBar();
+  bmToast("取消剪切了，条目都在原地", 1500);
+}
+
+/** 剪下没放之前，看板底下一直挂一条提示（2026-10-27 用户：剪错了虚线一直挂着，不知道怎么消）。
+ *  照 Windows 资源管理器：Esc 取消；再加一个能点的「取消」，不用记键。拿起来以后换成拿着走的说法。 */
+function bmSyncClipBar() {
+  let bar = document.getElementById("bm-clip-bar");
+  if (!bmClip) {
+    if (bar) bar.hidden = true;
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "bm-clip-bar";
+    bar.className = "bm-clip-bar";
+    const text = document.createElement("span");
+    text.className = "bm-clip-text";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "bm-clip-cancel";
+    cancel.textContent = "取消";
+    cancel.addEventListener("pointerdown", (event) => { event.stopPropagation(); });
+    cancel.addEventListener("click", () => { if (bmCarry) bmEndCarry(false); else bmCancelClip(); });
+    bar.append(text, cancel);
+    document.getElementById("app").appendChild(bar);
+  }
+  const what = bmClip.ids ? `${bmClip.ids.length} 条` : bmClip.bundleId ? "一整捆" : "1 条";
+  bar.querySelector(".bm-clip-text").textContent = bmCarry
+    ? `拿着 ${what}：按住左键拖到要放的地方松开 · 右键或 Esc 不要了`
+    : `剪下了 ${what}：Ctrl+V 拿起来 · Esc 或再按 Ctrl+X 取消`;
+  bar.hidden = false;
 }
 
 async function bmUndo() {
@@ -3295,6 +3377,7 @@ function bmStartCarry() {
     return;
   }
   bmHideCtxMenu();
+  window.getSelection()?.removeAllRanges(); // 拿着走时按住左键拖，别顺手把一片字选成蓝的
   const members = clip.bundleId ? [...document.querySelectorAll(`.task[data-bundle="${CSS.escape(clip.bundleId)}"]`)] : [];
   let ghost;
   if (clip.bundleId) {
@@ -3318,6 +3401,7 @@ function bmStartCarry() {
   window.addEventListener("pointerup", bmCarryUp, true);
   window.addEventListener("contextmenu", bmSwallowEvent, true);
   bmCarryPaint();
+  bmSyncClipBar();
 }
 
 /** Ctrl 点选的好几条一起拿着走：影子是第一条，后面注明一共几条；落点规矩跟拿一条一样，松手按原来上下顺序一条接一条放。 */
@@ -3328,6 +3412,7 @@ function bmStartCarryMany(clip) {
     return;
   }
   bmHideCtxMenu();
+  window.getSelection()?.removeAllRanges();
   const ghost = bmBundleGhost(els[0], els.length);
   const count = ghost.querySelector(".bundle-ghost-count");
   count.textContent = `一共 ${els.length} 条`;
@@ -3342,6 +3427,7 @@ function bmStartCarryMany(clip) {
   window.addEventListener("pointerup", bmCarryUp, true);
   window.addEventListener("contextmenu", bmSwallowEvent, true);
   bmCarryPaint();
+  bmSyncClipBar();
 }
 
 /** 好几条一起放下：照落点换算成一次 moveMany，一步做完，Ctrl+Z 一步全回去。 */
@@ -3413,6 +3499,7 @@ function bmEndCarry(commit) {
   bmDragActive = false;
   bmRefreshPending = false;
   bmClip = null; // 放下或不要了，都算用完
+  bmSyncClipBar();
   bmPickTask(null); // 选中也一起用完，免得下次 Ctrl+X 又剪到它
   if (c.ids) bmClearDispatchSelection(); // Ctrl 点选的那几条也用完了
   document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));

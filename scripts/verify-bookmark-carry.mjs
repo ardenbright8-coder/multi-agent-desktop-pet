@@ -269,6 +269,40 @@ try {
   const cl2 = await order('Claude');
   check('⑫ 松手：D、E 都进了捆一，挨着放', de.length === 2 && de.every((x) => x === bundle) && Math.abs(cl2.indexOf('D') - cl2.indexOf('E')) === 1, JSON.stringify(cl2));
 
+  // ⑬ 剪下了怎么取消（2026-10-27 用户：剪错了虚线一直挂着）：底下挂提示条；同一条再按 Ctrl+X＝取消；点提示条「取消」也行
+  await page.locator('#titlebar .title').click();
+  const am = await box(task(ids.A));
+  await page.mouse.move(am.x, am.y);
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  check('⑬ 剪下 A：底下挂着提示条，写着怎么取消', (await page.locator('#bm-clip-bar').isVisible()) && ((await page.locator('#bm-clip-bar .bm-clip-text').textContent()) || '').includes('取消'));
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  check('⑬ 同一条再按一次 Ctrl+X：不剪了（虚线、提示条都没了）', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0 && !(await page.locator('#bm-clip-bar').isVisible()));
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  await page.locator('#bm-clip-bar .bm-clip-cancel').click();
+  await wait(150);
+  check('⑬ 点提示条上的「取消」：不剪了', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0 && !(await page.locator('#bm-clip-bar').isVisible()));
+
+  // ⑭ 交给哪套系统（2026-10-27）：交接单带 forSystem → 标题前挂名牌、只写名字；右键「交给哪套」能改、能拿掉
+  ids.S = await page.evaluate(async () => { const r = await window.bookmark.add({ text: '交接单乙', kind: 'handoff', detail: '乙的详情', forSystem: '燊一修' }); await bmRefresh(); return r.id; });
+  await wait(400);
+  const tag = page.locator(`${task(ids.S)} .for-system`);
+  check('⑭ 交接单写了交给燊一修：标题前挂名牌，只写「燊一修」', (await tag.count()) === 1 && ((await tag.textContent()) || '').trim() === '燊一修' && (await page.locator(`${task(ids.S)}.has-for-system`).count()) === 1);
+  await page.locator(task(ids.S)).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(out, '14-交给哪套系统的名牌.png') });
+  await page.locator(task(ids.S)).click({ button: 'right' });
+  await wait(200);
+  await page.locator('#ctx-menu .ctx-item', { hasText: /^根$/ }).click();
+  await wait(400);
+  check('⑭ 右键「交给哪套 → 根」：改成根', (await rec(ids.S)).forSystem === '根' && ((await page.locator(`${task(ids.S)} .for-system`).textContent()) || '').trim() === '根');
+  await page.locator(task(ids.S)).click({ button: 'right' });
+  await wait(200);
+  await page.locator('#ctx-menu .ctx-item', { hasText: '不标' }).click();
+  await wait(400);
+  check('⑭ 右键「不标」：名牌拿掉', (await rec(ids.S)).forSystem === null && (await page.locator(`${task(ids.S)} .for-system`).count()) === 0);
+
   console.log(failed ? `结果：${failed} 项没过` : '结果：全部验证点通过');
 } finally {
   if (app) await app.close();

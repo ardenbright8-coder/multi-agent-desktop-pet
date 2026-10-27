@@ -110,7 +110,7 @@ try {
     res = await fetch(`${base}/handoff`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
-      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null }),
+      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null, forSystem: args.forSystem ?? null }),
       signal: AbortSignal.timeout(5_000),
     });
   } else if (args.command === "next" || args.command === "done" || args.command === "release" || args.command === "report") {

@@ -33,6 +33,7 @@ export function formatItemFile(
     `> 看板「${opts.group}」组的一条${KIND_LABEL[record.kind]} · id ${record.id} · ${status}`,
     "> 这是看板自动写的副本：只读这一份就够，别去翻整组。要改内容、领活、交报告，照旧走看板命令（bookmark-cli.mjs），别改这个文件——改了也会被盖掉。",
   ];
+  if (record.forSystem) lines.push(`> 交给 ${record.forSystem}：这张是写给「${record.forSystem}」那套 Windows 的，不是那套就别接。`);
   if (record.kind === "dispatch") {
     lines.push("> 派活单：强模型拆好的活，同一批的几张会被一键同时开出去。只动单子里「只许动」写的文件；干完 report 交报告，等调度审、用户测，别自己 done。");
   }

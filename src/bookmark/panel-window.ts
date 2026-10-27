@@ -19,7 +19,7 @@ import { writeJsonAtomic } from "../shared/atomic-file";
 import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory, isIsolatedRun } from "../shared/paths";
 import { computeDockedBounds, parseSavedWindowSize, HWND_BOTTOM, SWP_ZORDER_FLAGS, pinToggleSteps } from "./dock";
 import { AgentRoster } from "./agents";
-import { BookmarkStore, type BookmarkRecord } from "./store";
+import { BookmarkStore, normalizeForSystem, type BookmarkRecord } from "./store";
 import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "./inbox";
 import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
 import { formatClaimMessage, startBookmarkCliServer, type CliRecord } from "./cli-server";
@@ -902,6 +902,11 @@ function registerIpc(): void {
       into: str(raw.into),
       bundleWith: str(raw.bundleWith),
     }));
+  });
+  // 交给哪套系统（2026-10-27）：右键改，空＝不标。
+  ipcMain.handle("bookmark:set-for-system", (_event, payload: unknown) => {
+    const { id, name } = (payload ?? {}) as { id?: unknown; name?: unknown };
+    return act("改交给谁", () => requireStore().setForSystem(String(id ?? ""), typeof name === "string" ? name : null));
   });
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => act("删掉一条", () => requireStore().remove(String(id))));
   // 大标题右键「删除这一捆」（2026-10-16）：整捆在一步里删，Ctrl+Z 一步全回来
@@ -1891,8 +1896,8 @@ function notifyInboxChanged(): void {
   }
 }
 
-function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail: string | null; kind: "note" | "handoff" } {
-  const raw = (input ?? {}) as { text?: unknown; url?: unknown; assignee?: unknown; dedupeKey?: unknown; detail?: unknown; kind?: unknown };
+function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail: string | null; kind: "note" | "handoff"; forSystem: string | null } {
+  const raw = (input ?? {}) as { text?: unknown; url?: unknown; assignee?: unknown; dedupeKey?: unknown; detail?: unknown; kind?: unknown; forSystem?: unknown };
   const text = String(raw.text ?? "").trim();
   if (!text) throw new Error("书签内容不能为空");
   return {
@@ -1902,6 +1907,7 @@ function normalizeInput(input: unknown): { text: string; url: string | null; ass
     dedupeKey: raw.dedupeKey ? String(raw.dedupeKey) : null,
     detail: raw.detail ? String(raw.detail) : null,
     kind: raw.kind === "handoff" ? "handoff" : "note",
+    forSystem: normalizeForSystem(raw.forSystem),
   };
 }
 

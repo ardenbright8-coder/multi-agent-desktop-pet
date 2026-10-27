@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   moveMany: (ids: string[], target: { assignee: string | null; anchorId?: string | null; place?: "above" | "below"; into?: string | null; bundleWith?: string | null }) =>
     ipcRenderer.invoke("bookmark:move-many", { ids, ...target }) as Promise<number>,
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
+  /** 交给哪套系统（根／燊一修）；null＝不标。 */
+  setForSystem: (id: string, name: string | null) => ipcRenderer.invoke("bookmark:set-for-system", { id, name }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
   updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),
   /** 改详情（交接单展开的那段）；清空＝不要详情了。 */

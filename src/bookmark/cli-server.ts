@@ -29,6 +29,8 @@ export interface CliRecord {
   kind: "note" | "handoff" | "dispatch";
   /** 派活单批号（设定23）；老适配器可以不给。 */
   batchId?: string | null;
+  /** 交给哪套系统（根／燊一修，2026-10-27）；没标是 null，老适配器可以不给。 */
+  forSystem?: string | null;
   /** list 出口会把文件名展开成 attachmentsRoot 下的完整路径。 */
   attachments: string[];
   createdAt: string;
@@ -51,7 +53,7 @@ export interface CliClaim {
 }
 
 export interface CliStoreAdapter {
-  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff"; attachments?: string[] }): CliRecord;
+  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff"; attachments?: string[]; forSystem?: string | null }): CliRecord;
   list(): CliRecord[];
   /** 删除一条（交接完自删用）；没找到返回 false。 */
   remove(id: string): boolean;
@@ -123,6 +125,8 @@ export interface CliArgs {
   detail?: string;
   id?: string;
   handoffOnly?: boolean;
+  /** handoff 的 --for：交给哪套系统（根／燊一修）。 */
+  forSystem?: string;
   json: boolean;
   /** add --attach 的源图片路径（可多次）。 */
   attach: string[];
@@ -131,7 +135,7 @@ export interface CliArgs {
 const CLI_USAGE =
   '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <号码：7 / 7-9 / 7,8,9 / 捆2>（号码全板统一，只读点名的全文）| '
   + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
-  + 'handoff "标题" [--to Agent名] [--detail 详情] | remove <条目id> | '
+  + 'handoff "标题" [--to Agent名] [--detail 详情] [--for 系统名：交给另一套 Windows（根／燊一修）时才写] | remove <条目id> | '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
   + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名 | '
   + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）| '
@@ -187,7 +191,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   const args: CliArgs = {
     command, text: undefined, to: undefined, url: undefined,
-    detail: undefined, id: undefined, handoffOnly: false, json: false, attach: [],
+    detail: undefined, id: undefined, handoffOnly: false, json: false, attach: [], forSystem: undefined,
   };
   const positional: string[] = [];
   for (let i = 1; i < argv.length; i++) {
@@ -212,6 +216,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
       args.attach.push(value);
     } else if (flag === "--handoff") {
       args.handoffOnly = true;
+    } else if (flag === "--for" && command === "handoff") {
+      const value = argv[++i];
+      if (value == null || !value.trim()) throw new Error("--for 后面要跟交给哪套系统（根 / 燊一修），只写名字");
+      args.forSystem = value.trim();
     } else if (flag.startsWith("--")) {
       throw new Error(`不认识的参数 ${flag}。${CLI_USAGE}`);
     } else if (command === "remove" && args.id == null) {
@@ -356,7 +364,11 @@ export function formatClaimMessage(
       : `【看板领活】${what} 没有可领的了。${busy}跟用户说一声这边的活领完了就行。`;
   }
   const id = reply.item.id;
-  const fileLine = reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "";
+  const forSystem = reply.item.forSystem;
+  const fileLine = [
+    forSystem ? `【交给 ${forSystem}】这张是写给「${forSystem}」那套 Windows 的。先认清你在哪套上（看你的底层设定或家目录），不是 ${forSystem} 就别干，照最后一条放回去，跟用户说一声。` : "",
+    reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "",
+  ].filter(Boolean).join(String.fromCharCode(10));
   // 派活单（设定23）：强模型拆好的活，同批几张同时开在不同窗口。两档一个样：干完交报告就停，调度审、用户测。
   if (reply.item.kind === "dispatch") {
     return [
@@ -516,6 +528,7 @@ export function handleCliRequest(
       dedupeKey: null,
       kind: "handoff",
       detail: raw.detail ? String(raw.detail) : null,
+      forSystem: typeof raw.forSystem === "string" && raw.forSystem.trim() ? raw.forSystem.trim() : null,
     });
     try {
       ctx.onChanged?.();

@@ -99,10 +99,11 @@ function plain(text: string): string {
 }
 
 function rowTitle(r: CliRecord, names: BoardNames): string {
+  const mark = r.forSystem ? `【给${r.forSystem}】` : ""; // 交给哪套系统（2026-10-27）：AI 扫标题就分得清
   const t = names.titles[r.id];
-  if (t) return t;
+  if (t) return mark + t;
   const own = plain(r.text);
-  return own.length > 80 ? `${own.slice(0, 80)}…` : own || "（只有图）";
+  return mark + (own.length > 80 ? `${own.slice(0, 80)}…` : own || "（只有图）");
 }
 
 function rowStatus(r: CliRecord): string {
