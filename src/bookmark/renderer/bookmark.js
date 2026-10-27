@@ -364,7 +364,34 @@ function bmHoldForTyping() {
   const active = bmActiveImageInput();
   if (!active || !active.matches || !active.matches(".insert-row textarea, .task-edit")) return false;
   if (!bmInsertDraft && !bmEditingId) return false;
-  return bmComposing || document.hasFocus();
+  return bmComposing || document.hasFocus() || bmAwayHold;
+}
+
+// 窗口被别的程序抢走焦点（2026-10-27 看板 01、08）：豆包语音说话时浮窗抢一下焦点，看板以为点了别处，
+// 框收起、第一句存成一条，回来说的第二句另起一条。现在框失焦时窗口也没焦点＝被抢走：只存不收、不重画，
+// 回来接着写；一分钟还没回来才当真走了，照常收起。
+const BM_AWAY_CLOSE_MS = 60_000;
+let bmAwayHold = false;
+let bmAwayTimer = null;
+
+/** 框失焦时调：是被别的程序抢走（窗口也没焦点）就挂上「一分钟后收起」，返回 true，调用方只存不收。 */
+function bmWindowStolen(close) {
+  if (document.hasFocus()) return false;
+  bmAwayHold = true;
+  if (bmAwayTimer) window.clearTimeout(bmAwayTimer);
+  bmAwayTimer = window.setTimeout(() => {
+    bmAwayTimer = null;
+    bmAwayHold = false;
+    close();
+    bmFlushTypingRefresh();
+  }, BM_AWAY_CLOSE_MS);
+  return true;
+}
+
+function bmWindowBack() {
+  if (bmAwayTimer) window.clearTimeout(bmAwayTimer);
+  bmAwayTimer = null;
+  bmAwayHold = false;
 }
 
 function bmFlushTypingRefresh() {
@@ -381,6 +408,7 @@ function bmInitTypingHold() {
   // 重画拔框也会触发 focusout，那时 bmRepainting 为真，不算人离开
   document.addEventListener("focusout", () => { if (!bmRepainting) { bmComposing = false; bmFlushTypingRefresh(); } }, true);
   window.addEventListener("blur", bmFlushTypingRefresh);
+  window.addEventListener("focus", bmWindowBack, true);
 }
 
 // ── 鼠标碰到看板就能直接按键（2026-10-24 看板 Claude 01）─────────────
@@ -1138,7 +1166,11 @@ function bmBuildTask(record, groupKey, order) {
       bmScheduleEditSave(record.id, input);
     });
     input.addEventListener("compositionend", () => bmScheduleEditSave(record.id, input));
-    input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy) void bmEditCommit(record.id, input, true); });
+    input.addEventListener("blur", () => {
+      if (bmRepainting || bmImagesBusy) return;
+      const stolen = bmWindowStolen(() => void bmEditCommit(record.id, input, true));
+      void bmEditCommit(record.id, input, !stolen);
+    });
     input.addEventListener("keydown", (event) => {
       if (event.isComposing) return;
       if (event.key === "Enter" && !event.shiftKey) {
@@ -1869,7 +1901,11 @@ function bmBuildInsertRow(groupKey, blank) {
     bmScheduleInsertSave(input);
   });
   input.addEventListener("compositionend", () => { if (mine()) bmScheduleInsertSave(input); });
-  input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy && mine()) void bmInsertCommit({ close: true, input }); });
+  input.addEventListener("blur", () => {
+    if (bmRepainting || bmImagesBusy || !mine()) return;
+    const stolen = bmWindowStolen(() => { if (mine()) void bmInsertCommit({ close: true, input }); });
+    void bmInsertCommit({ close: !stolen, input });
+  });
   input.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
     if ((event.key === "Enter" && !event.shiftKey) || event.key === "Escape") {
@@ -1973,7 +2009,10 @@ function bmBuildDetailEditor(record) {
     if (bmEditSaveTimer) window.clearTimeout(bmEditSaveTimer);
     bmEditSaveTimer = window.setTimeout(() => { bmEditSaveTimer = null; void save(false); }, 400);
   });
-  input.addEventListener("blur", () => { if (!bmRepainting && !bmImagesBusy) void save(true); });
+  input.addEventListener("blur", () => {
+    if (bmRepainting || bmImagesBusy) return;
+    void save(!bmWindowStolen(() => void save(true)));
+  });
   input.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {

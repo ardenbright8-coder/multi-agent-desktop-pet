@@ -159,6 +159,40 @@ try {
   const editClosed = await waitFor(async () => (await panel.locator("#board .task-edit").count()) === 0, 2000);
   check("④ 改字时点别处，改字框收起", !!editClosed);
 
+  // ⑧ 豆包语音（2026-10-27 看板 01、08）：说话时它的浮窗把焦点抢走一下，看板窗口失焦；
+  //    框不能当成「点了别处」收起来，回来接着说的字要接在同一条后面。跟 Chromium 真失焦一样：activeElement 不变。
+  const loseWindowFocus = () => panel.evaluate(() => {
+    window.__bmHasFocus = document.hasFocus;
+    document.hasFocus = () => false;
+    const el = document.activeElement;
+    el.dispatchEvent(new FocusEvent("blur"));
+    el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    window.dispatchEvent(new Event("blur"));
+  });
+  const regainWindowFocus = () => panel.evaluate(() => {
+    document.hasFocus = window.__bmHasFocus;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await panel.locator(blank).click();
+  await waitFor(focusedInBlank, 1500, 50);
+  await panel.keyboard.insertText("语音第一句");
+  await sleep(700); // 停顿一下：自动存档过一次
+  await loseWindowFocus();
+  await sleep(900);
+  const away = await panel.evaluate(() => ({ inBlank: !!document.activeElement?.closest?.(".blank-row"), value: document.activeElement?.value ?? null }));
+  check("⑧ 语音浮窗抢走焦点：框不收起、字还在框里", away.inBlank && away.value === "语音第一句", JSON.stringify(away));
+  await regainWindowFocus();
+  await sleep(300);
+  await panel.keyboard.insertText("第二句");
+  await sleep(700);
+  await panel.keyboard.press("Enter");
+  const joined = await waitFor(async () => panel.evaluate(() => {
+    const texts = [...document.querySelectorAll("#board .task:not(.insert-row) .task-text")].map((el) => el.textContent);
+    return texts.includes("语音第一句第二句") ? texts : null;
+  }), 3000);
+  check("⑧ 回来接着说：两句接成同一条，没有拆成两条", !!joined && !joined.includes("第二句") && !joined.includes("语音第一句"), JSON.stringify(joined ?? await firstTwo()));
+  await clickElsewhere();
+
   // ⑦ 分组页：每个 agent 组第一格都是空白框、没有小加号；写进 Claude 组的就落在 Claude 组
   await panel.locator("#tab-groups").click();
   await waitFor(async () => (await panel.locator("#board .group.handoff-zone").count()) === 1);
