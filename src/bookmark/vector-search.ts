@@ -65,6 +65,26 @@ export function pickVectorIds(hits: Hit[]): string[] {
   return ranked.slice(0, VECTOR_TOP).map((h) => String(h.path).replace(/\\/g, "/").split("/").pop()!.replace(/\.md$/i, ""));
 }
 
+// 条目改了要跟着重算（2026-10-27 自审）：搜索引擎只在 AI 窗口挂着它时才自己跟，看板这边搜不会顺手更新。
+// 一有改动等 20 秒没新改动，后台跑一次增量重建（只算改过的，约 3 秒），不挡着搜索。
+const REINDEX_QUIET_MS = 20_000;
+let reindexTimer: NodeJS.Timeout | null = null;
+let reindexing = false;
+
+export function scheduleVectorReindex(): void {
+  if (reindexTimer) clearTimeout(reindexTimer);
+  reindexTimer = setTimeout(() => {
+    reindexTimer = null;
+    if (reindexing) return scheduleVectorReindex();
+    const script = working ?? readScripts().find((s) => existsSync(s));
+    if (!script) return;
+    reindexing = true;
+    execFile("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "reindex"],
+      { timeout: 120_000, windowsHide: true }, () => { reindexing = false; });
+  }, REINDEX_QUIET_MS);
+  reindexTimer.unref?.();
+}
+
 /** 按意思找看板条目，返回条目 id。入口都跑不通就抛错（界面说一声「按意思找没连上」，按字找照常）。 */
 export async function vectorSearch(query: string): Promise<string[]> {
   const scripts = working ? [working] : readScripts().filter((s) => existsSync(s));

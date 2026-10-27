@@ -38,7 +38,7 @@ import { registerBookmarkImageIpc } from "./image-ipc";
 import { imagesForAgent } from "./inline-images";
 import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
 import { readPiModels, setPiModel } from "./pi-model";
-import { vectorSearch } from "./vector-search";
+import { scheduleVectorReindex, vectorSearch } from "./vector-search";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
   activeModel, askSearchProjects, knownProjects, projectKey, searchByText, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
@@ -1519,6 +1519,7 @@ function scheduleItemFileSync(): void {
   if (itemFileTimer) clearTimeout(itemFileTimer);
   itemFileTimer = setTimeout(syncItemFilesNow, 300);
   itemFileTimer.unref?.();
+  if (openAgents) scheduleVectorReindex(); // 按意思找的索引跟上（测试实例不动真索引）
 }
 
 /** 这条那份小文件的完整路径（先对齐一次，保证是最新的）。 */
