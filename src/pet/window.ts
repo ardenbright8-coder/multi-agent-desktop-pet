@@ -146,7 +146,7 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
     if (["+", "-", "=", "0", "_", "Add", "Subtract"].includes(input.key)) event.preventDefault();
   });
   win.once("ready-to-show", () => {
-    win.showInactive();
+    if (!petHiddenNow()) win.showInactive(); // 上次托盘点了「藏起来」：开机照样藏着（2026-10-27）
     win.webContents.send("hub:snapshot", hub.snapshot());
     win.webContents.send("pet:note-side", noteSide);
     syncNoteSide();
@@ -242,7 +242,7 @@ export function currentNoteSide(): "left" | "right" {
 /** 托盘的「详情 / 设置」要让界面开对应面板。 */
 export function sendPetCommand(command: "drawer" | "settings"): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.showInactive();
+  showMainWindow();
   mainWindow.webContents.send("pet:command", command);
 }
 
@@ -252,23 +252,48 @@ export function watchDisplayChanges(): void {
   screen.on("display-metrics-changed", keepWindowOnVisibleDisplay);
 }
 
+// 藏起来 / 显示记长久（2026-10-27 用户：选了藏就一直藏，放开就一直放开，开机关机不重置）。
+// 存在 preferences.json 的 hidden，跟幼苗位置一份文件；托盘「显示桌宠」、点托盘图标、叫回来、开详情都算放开。
+// 用到才读（模块一加载就读，数据夹可能还没定好）。
+let hiddenCache: boolean | null = null;
+function petHiddenNow(): boolean {
+  if (hiddenCache === null) hiddenCache = readPreferences().hidden === true;
+  return hiddenCache;
+}
+function rememberHidden(hidden: boolean): void {
+  if (petHiddenNow() === hidden) return;
+  hiddenCache = hidden;
+  savePreferences({ hidden });
+}
+
 export function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.showInactive();
+  rememberHidden(false);
 }
 
 export function hideMainWindow(): void {
   mainWindow?.hide();
+  rememberHidden(true);
+}
+
+function readPreferences(): { x?: unknown; y?: unknown; hidden?: unknown } {
+  try {
+    if (!existsSync(preferencesPath())) return {};
+    return JSON.parse(readFileSync(preferencesPath(), "utf8")) as { x?: unknown; y?: unknown; hidden?: unknown };
+  } catch {
+    return {};
+  }
+}
+
+/** 只改给的那几项，别的照旧（存位置别把「藏起来」冲掉）。 */
+function savePreferences(patch: { x?: number; y?: number; hidden?: boolean }): void {
+  writeJsonAtomic(preferencesPath(), { ...readPreferences(), ...patch });
 }
 
 function loadWindowBounds(): { x: number; y: number } | null {
-  try {
-    if (!existsSync(preferencesPath())) return null;
-    const value = JSON.parse(readFileSync(preferencesPath(), "utf8")) as { x?: unknown; y?: unknown };
-    return Number.isFinite(value.x) && Number.isFinite(value.y) ? { x: value.x as number, y: value.y as number } : null;
-  } catch {
-    return null;
-  }
+  const value = readPreferences();
+  return Number.isFinite(value.x) && Number.isFinite(value.y) ? { x: value.x as number, y: value.y as number } : null;
 }
 
 export function persistWindowPosition(): void {
@@ -277,7 +302,7 @@ export function persistWindowPosition(): void {
   // 存了它，下次启动就拿这个坐标去摆小窗口，幼苗开机即跑偏（2026-08-12 日志抓到的）。
   if (panelOpen) return;
   const { x, y } = mainWindow.getBounds();
-  writeJsonAtomic(preferencesPath(), { x, y });
+  savePreferences({ x, y });
 }
 
 // 整个窗口一律锁在工作区内。用户 2026-08-12 明确要求「框不要超出屏幕」——
@@ -354,7 +379,7 @@ export function recallPetWindow(): void {
   const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);
   const home = defaultWindowPosition(workArea, designSize(), margin);
   moveTo(home.x, home.y);
-  mainWindow.showInactive();
+  showMainWindow();
   persistWindowPosition();
 }
 
