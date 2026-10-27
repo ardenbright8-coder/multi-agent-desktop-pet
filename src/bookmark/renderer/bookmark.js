@@ -3255,6 +3255,9 @@ async function bmRunSearch() {
   try {
     const res = await window.bookmark.search(query);
     if (bmCurrentPage !== "groups") bmSwitchPage("groups");
+    // 找到的在收起的「更多 Agent」里：先展开，不然选不中
+    const inFold = res.ids.some((id) => { const r = bmDispatchRecords.find((x) => x.id === id); return r && bmFold.members.includes(r.assignee); });
+    if (inFold && !bmFold.open) bmFold = await window.bookmark.setFoldOpen(true);
     await bmRefresh();
     bmSelectedTasks.clear();
     for (const id of res.ids) if (document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)) bmSelectedTasks.add(id);
@@ -3265,6 +3268,8 @@ async function bmRunSearch() {
     const parts = [bmSelectedTasks.size ? `找到 ${bmSelectedTasks.size} 条，已选中：Ctrl+X 一起剪走，Esc 取消选中` : `没找到「${query}」`];
     if (away > 0) parts.push(`另有 ${away} 条在待定页`);
     if (res.projects.length) parts.push(`认成：${res.projects.join("、")}`);
+    if (res.byMeaning) parts.push(`按意思又找到 ${res.byMeaning} 条`);
+    if (res.vectorError) parts.push("按意思找没连上");
     if (res.modelError) parts.push("小模型没连上，只按字找了");
     bmToast(parts.join("；"), 6000);
   } catch (error) {

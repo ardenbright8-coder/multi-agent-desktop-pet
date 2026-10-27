@@ -38,6 +38,7 @@ import { registerBookmarkImageIpc } from "./image-ipc";
 import { imagesForAgent } from "./inline-images";
 import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
 import { readPiModels, setPiModel } from "./pi-model";
+import { vectorSearch } from "./vector-search";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
 import {
   activeModel, askSearchProjects, knownProjects, projectKey, searchByText, BUNDLE_NAME_RULES, buildCheckTask, buildGroupTask, buildItemTask, buildLedger, CHECK_RULES, checkModelInput, EFFORTS, groupsForOrganizer, hardRulesText,
@@ -1097,6 +1098,9 @@ function registerIpc(): void {
     const ids = new Set(searchByText(records, book, q));
     let projects: string[] = [];
     let modelError: string | null = null;
+    // 按意思找（2026-10-27）跟小模型认项目名一起跑，谁先回来都不等谁
+    const meaning = vectorSearch(q).then((found) => ({ found, error: null as string | null }),
+      (error: unknown) => ({ found: [] as string[], error: error instanceof Error ? error.message : String(error) }));
     try {
       projects = await askSearchProjects(q, knownProjects(book), readOrganizerConfig(), organizerFetch);
       const keys = new Set(projects.map(projectKey));
@@ -1104,7 +1108,12 @@ function registerIpc(): void {
     } catch (error) {
       modelError = error instanceof Error ? error.message : String(error);
     }
-    return { ids: [...ids], projects, modelError };
+    const { found, error: vectorError } = await meaning;
+    const live = new Set(records.map((r) => r.id));
+    const byMeaning = found.filter((id) => live.has(id) && !ids.has(id));
+    for (const id of byMeaning) ids.add(id);
+    if (vectorError) log.出事("看板按意思找没连上（按字找照常）", vectorError, "search");
+    return { ids: [...ids], projects, modelError, byMeaning: byMeaning.length, vectorError };
   });
   ipcMain.handle("bookmark:organizer:notes", () => {
     const records = requireStore().list();
