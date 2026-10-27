@@ -1027,6 +1027,14 @@ function bmBindDrag(opts) {
         if (!armed) return;
       }
       event.preventDefault();
+      // 拖出看板窗口边（2026-10-27 用户）：看板里挪位置这次作废，改走系统拖拽，带上这条单独文件那行字
+      if (opts.dragOut && bmOutsideWindow(event.clientX, event.clientY)) {
+        const id = opts.idOf(row);
+        finish(false);
+        delete row.dataset.swallow;
+        void bmStartDragOut(id, event.clientX, event.clientY, row);
+        return;
+      }
       paint(event.clientX, event.clientY);
     }
     function onUp() { finish(true); }
@@ -1041,6 +1049,77 @@ function bmBindDrag(opts) {
     event.preventDefault();
     event.stopPropagation();
     delete row.dataset.swallow;
+  }, true);
+}
+
+function bmOutsideWindow(x, y) {
+  return x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight;
+}
+
+/**
+ * 按住条目拖出看板（2026-10-27 用户）：拖进 Pi、Claude Code、浏览器，放下就是
+ * 「看板第 N 条的单独文件（只读这一份）：路径」这行字，AI 一看就知道是哪条。
+ * 网页里不能凭空起系统拖拽，做法：在窗口边上摆一个能拖的小块，让主进程假按一下、挪一下，
+ * 浏览器就对小块起系统拖拽；用户的左键本来就按着，系统接着跟真鼠标走，松手就放下。
+ * 不拖文件：文件拖进浏览器会直接打开。
+ */
+let bmDragOutActive = false;
+async function bmStartDragOut(id, x, y, row) {
+  if (!id || bmDragOutActive || !window.bookmark.itemLine || !window.bookmark.dragOutPress) return;
+  bmDragOutActive = true;
+  let line = "";
+  try {
+    line = await window.bookmark.itemLine(id);
+  } catch (error) {
+    bmDragOutActive = false;
+    bmShowError(bmErrorText(error));
+    return;
+  }
+  // 小块放在出界那一侧往里 20 像素，假挪往窗口里头走，别挪出去
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const cx = Math.min(Math.max(x, 20), w - 21);
+  const cy = Math.min(Math.max(y, 20), h - 21);
+  const dx = cx > w / 2 ? -1 : 1;
+  const carrier = document.createElement("div");
+  carrier.className = "drag-out-carrier";
+  carrier.draggable = true;
+  carrier.style.left = (cx - 15) + "px";
+  carrier.style.top = (cy - 15) + "px";
+  const width = Math.min(row.getBoundingClientRect().width, 360);
+  document.body.appendChild(carrier);
+  let started = false;
+  const cleanup = () => {
+    carrier.remove();
+    bmDragOutActive = false;
+  };
+  carrier.addEventListener("dragstart", (event) => {
+    started = true;
+    // 系统拖拽被别处取消时收不到 dragend：下次按鼠标顺手收掉
+    window.addEventListener("pointerdown", cleanup, { once: true, capture: true });
+    event.dataTransfer.setData("text/plain", line);
+    event.dataTransfer.effectAllowed = "copy";
+    // 拖着走的样子照旧是这一条（看板里的影子出了窗口就看不到，系统拖拽要自己的图）。
+    // 复制品去掉 id、截完图马上删，别让板上多出一条同号的被别处认成条目。
+    const image = row.cloneNode(true);
+    image.classList.remove("is-dragging", "drag-ghost");
+    image.classList.add("drag-out-image");
+    image.style.width = width + "px";
+    for (const el of [image, ...image.querySelectorAll("[data-id]")]) el.removeAttribute("data-id");
+    document.body.appendChild(image);
+    event.dataTransfer.setDragImage(image, 28, 18);
+    window.setTimeout(() => image.remove(), 0);
+  });
+  carrier.addEventListener("dragend", cleanup);
+  // 万一没起来（比如松手太快），一秒后收掉小块，别挡着点
+  window.setTimeout(() => { if (!started) cleanup(); }, 1000);
+  window.bookmark.dragOutPress({ x: cx, y: cy, dx });
+}
+
+// 拖出去又拖回看板上：看板不收这行字（别塞进改字框、别亮组头）
+for (const type of ["dragover", "drop"]) {
+  document.addEventListener(type, (event) => {
+    if (bmDragOutActive) event.stopPropagation();
   }, true);
 }
 
@@ -1161,14 +1240,8 @@ function bmBuildTask(record, groupKey, order) {
   num.className = "num";
   num.textContent = String(order).padStart(2, "0");
   // 点号码（2026-10-15 看板 Claude 01）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
-  num.title = "点一下复制这条的单独文件路径；按住拖进 Claude Code 等窗口直接贴路径，拖进文件夹复制一份";
-  // 按住序号拖出看板（2026-10-27 用户）：走系统的拖文件，不走看板里挪位置那套
-  num.draggable = true;
-  num.addEventListener("pointerdown", (event) => event.stopPropagation());
-  num.addEventListener("dragstart", (event) => {
-    event.preventDefault();
-    window.bookmark.dragOut?.(record.id);
-  });
+  // 按住序号跟按住条目一样：看板里挪，拖出窗口边带那行字（bmStartDragOut）
+  num.title = "点一下复制这条的单独文件路径；按住这条拖进 Pi、Claude Code、浏览器，放下就是这条的路径";
   num.addEventListener("click", async (event) => {
     event.stopPropagation();
     try {
@@ -1386,6 +1459,7 @@ function bmBuildTask(record, groupKey, order) {
     row: item,
     selfGroup: groupKey,
     reassign: true,
+    dragOut: true,
     bundleable: bmAgents.includes(groupKey),
     list: () => item.parentElement,
     accept: (el) => el.classList.contains("task"),

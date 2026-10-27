@@ -292,14 +292,7 @@ try {
     const t = await clip();
     return t.includes(b1.id) && t.includes(b2.id) ? t : "";
   }, 3000);
-  // ⑭ 按住序号拖出看板（2026-10-27）：交给系统拖的是这条的单独文件（后台按不了真鼠标，测到交出去这一步）
-  await app.evaluate(({ webContents }) => {
-    for (const wc of webContents.getAllWebContents()) wc.startDrag = (item) => { globalThis.__bmDragged = item.file; };
-  });
-  const numDraggable = await page.locator(`${T(claudeCard)} .num`).getAttribute("draggable");
-  await page.locator(`${T(claudeCard)} .num`).dispatchEvent("dragstart");
-  const dragged = await waitFor(() => app.evaluate(() => globalThis.__bmDragged ?? ""), 3000);
-  check("⑭ 按住序号拖出：交给系统拖的是这条的单独文件", numDraggable === "true" && Boolean(dragged) && dragged.includes(claudeCard.id) && existsSync(dragged), dragged);
+  // ⑭ 按住序号拖出看板：已并进整条那套（2026-10-27 第二窗），拖出去带那行字，单独验在 verify-bookmark-drag-out.mjs
 
   check("⑬ 大标题右键复制路径：这一捆两条的单独文件各一行", Boolean(bundleLines) && /这一捆 2 条/.test(bundleLines) && bundleLines.split("\n").length === 3, bundleLines.replace(/\n/g, " | "));
   await page.screenshot({ path: join(out, "结束.png") });

@@ -13,7 +13,7 @@
 import { basename, join } from "node:path";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeImage, net, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory, isIsolatedRun } from "../shared/paths";
@@ -1221,22 +1221,25 @@ function registerIpc(): void {
   });
   // 点号码（设定24）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
   ipcMain.handle("bookmark:item-file", (_event, id: unknown) => {
-    const record = requireStore().list().find((r) => r.id === String(id ?? ""));
-    if (!record) throw new Error("这条已经不在了");
-    const path = itemFileFor(record.id);
-    const line = `看板${rowName(boardRows(), record)}的单独文件（只读这一份，别翻整组）：${path}`;
+    const { path, line } = itemFileLine(id);
     clipboard.writeText(line);
     return { path, line };
   });
-  // 按住序号拖出看板（2026-10-27 用户）：拖的就是这条的单独文件——放进 Claude Code 等窗口贴路径，放进文件夹复制一份
-  ipcMain.on("bookmark:drag-out", (event, id: unknown) => {
-    try {
-      const path = itemFileFor(String(id ?? ""));
-      if (!existsSync(path)) return;
-      const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 32, height: 32 });
-      event.sender.startDrag({ file: path, icon });
-    } catch (error) {
-      log.出事("拖出看板失败（点序号照样能复制路径）", error, "window");
+  // 按住条目拖出看板（2026-10-27 用户）：拖的是同一行字，不动剪贴板
+  ipcMain.handle("bookmark:item-line", (_event, id: unknown) => itemFileLine(id).line);
+  // 网页里不能凭空起系统拖拽：在看板摆好的小块上假按一下、挪三下，浏览器就起系统拖拽，
+  // 用户左键本来按着，系统接着跟真鼠标走。坐标要乘字号（Ctrl 加减缩放过的）。
+  ipcMain.on("bookmark:drag-out-press", (event, at: unknown) => {
+    const raw = (at ?? {}) as { x?: unknown; y?: unknown; dx?: unknown };
+    const wc = event.sender;
+    const zoom = wc.getZoomFactor();
+    const x = Math.round(Number(raw.x) * zoom);
+    const y = Math.round(Number(raw.y) * zoom);
+    const dx = Number(raw.dx) < 0 ? -1 : 1;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
+    for (let i = 1; i <= 3; i += 1) {
+      wc.sendInputEvent({ type: "mouseMove", x: x + dx * i * 4, y, button: "left", modifiers: ["leftbuttondown"] });
     }
   });
   // 大标题右键「复制路径」（2026-10-27 看板 01）：这一捆每条的单独文件一行一条，贴给 AI 只读这几份。
@@ -1528,6 +1531,14 @@ function itemFileFor(id: string): string {
   const path = itemFilePath(itemFilesDirectory(), id);
   if (!existsSync(path)) throw new Error("这条已经不在了");
   return path;
+}
+
+/** 点号码复制、按住条目拖出去，给 AI 的都是这一行。 */
+function itemFileLine(id: unknown): { path: string; line: string } {
+  const record = requireStore().list().find((r) => r.id === String(id ?? ""));
+  if (!record) throw new Error("这条已经不在了");
+  const path = itemFileFor(record.id);
+  return { path, line: `看板${rowName(boardRows(), record)}的单独文件（只读这一份，别翻整组）：${path}` };
 }
 
 /** 条目 id → 屏幕上的组名和号码（跟看板、show 同一个数法）。 */

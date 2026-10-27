@@ -90,8 +90,9 @@ contextBridge.exposeInMainWorld("bookmark", {
   hoverGiveBack: () => ipcRenderer.invoke("bookmark:hover-give-back") as Promise<boolean>,
   // 点号码：复制这条那份单独小文件的路径（设定24）。
   itemFile: (id: string) => ipcRenderer.invoke("bookmark:item-file", id) as Promise<{ path: string; line: string }>,
-  // 按住序号拖出看板：拖的是这条的单独文件（2026-10-27）。
-  dragOut: (id: string) => ipcRenderer.send("bookmark:drag-out", id),
+  // 按住条目拖出看板：先拿那行字，再请主进程在小块上假按一下起系统拖拽（2026-10-27）。
+  itemLine: (id: string) => ipcRenderer.invoke("bookmark:item-line", id) as Promise<string>,
+  dragOutPress: (at: { x: number; y: number; dx: number }) => ipcRenderer.send("bookmark:drag-out-press", at),
   // 大标题右键复制路径：这一捆每条的单独文件（2026-10-27）。
   bundleFiles: (bundleId: string) => ipcRenderer.invoke("bookmark:bundle-files", bundleId) as Promise<{ line: string; count: number }>,
   // 启动 Agent 替用户贴完启动句（或没贴成）的结果。
