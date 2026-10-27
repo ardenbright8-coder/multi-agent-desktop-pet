@@ -2256,7 +2256,7 @@ function bmLaunchOptions(target, groupKey) {
     });
     return item;
   });
-  return isPi ? [bmPiModelPicker(state), ...buttons] : buttons;
+  return isPi ? [bmPiModelPicker(state, () => buttons[1].click()), ...buttons] : buttons;
 }
 
 // ── 派活单一键启动（设定23，2026-10-15）────────────────────
@@ -2270,8 +2270,11 @@ function bmDispatchLaunchable(record) {
   return mates.filter((r) => !r.claimedBy && !r.report).slice(0, 3);
 }
 
-/** 这批里有 Pi 的单子：列 Pi 能挑的模型，默认选上次挑的（Pi 自己记着的那个）。挑了＝开窗前替用户在 Pi 里按一次 Ctrl+E。 */
-function bmPiModelPicker(state) {
+/**
+ * 这批里有 Pi 的单子：列 Pi 能挑的模型，默认选上次挑的（Pi 自己记着的那个）。挑了＝开窗前替用户在 Pi 里按一次 Ctrl+E。
+ * 双击一个模型＝挑它并直接按「普通」启动（2026-10-27 看板 08：双击哪个模型就开哪个的窗口）。
+ */
+function bmPiModelPicker(state, launch) {
   const box = document.createElement("div");
   box.className = "ctx-models";
   const title = document.createElement("div");
@@ -2286,12 +2289,17 @@ function bmPiModelPicker(state) {
       chip.className = "ctx-model";
       chip.dataset.model = m;
       chip.textContent = m.slice(m.lastIndexOf("/") + 1);
-      chip.title = m;
+      chip.title = `${m}（双击直接启动）`;
       chip.classList.toggle("on", m === current);
       chip.addEventListener("click", (event) => {
         event.stopPropagation();
         state.model = m;
         for (const c of box.querySelectorAll(".ctx-model")) c.classList.toggle("on", c === chip);
+      });
+      chip.addEventListener("dblclick", (event) => {
+        event.stopPropagation();
+        state.model = m;
+        launch();
       });
       box.append(chip);
     }
@@ -2331,7 +2339,7 @@ function bmBatchLaunchOptions(record) {
     });
     return item;
   });
-  return hasPi ? [bmPiModelPicker(state), ...buttons] : buttons;
+  return hasPi ? [bmPiModelPicker(state, () => buttons[1].click()), ...buttons] : buttons;
 }
 
 /** 一键启动的结果说成一句话。 */

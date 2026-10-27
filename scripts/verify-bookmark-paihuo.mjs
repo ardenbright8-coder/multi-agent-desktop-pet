@@ -268,6 +268,18 @@ try {
   await page.locator("#ctx-menu .ctx-item", { hasText: "启动 Agent · 普通" }).click();
   const pi2 = await waitFor(() => (piNow().defaultModel === "z-ai/glm-5.3-flash" ? piNow() : null), 5000);
   check("⑪ 挑了再启动：替他换了 Pi 模型、思考档最高", Boolean(pi2) && pi2.defaultProvider === "commandcode" && pi2.defaultThinkingLevel === "max", JSON.stringify(piNow()).slice(0, 120));
+
+  // ⑫ 双击一个模型＝直接用它启动（2026-10-27 看板 08）
+  await waitFor(async () => !(await page.locator("#ctx-menu").isVisible()));
+  await page.locator(`${T(piCard)} .handle`).click();
+  await waitFor(async () => (await chips.count()) === 2);
+  await page.locator('#ctx-menu .ctx-model[data-model="openai-codex/gpt-6.1-sol"]').dblclick();
+  const pi3 = await waitFor(() => (piNow().defaultModel === "gpt-6.1-sol" ? piNow() : null), 5000);
+  const launchedToast = await waitFor(async () => {
+    const t = await page.locator("#bm-toast").innerText().catch(() => "");
+    return /已打开|启动句已复制/.test(t) ? t : "";
+  }, 5000);
+  check("⑫ 双击模型：换成它、直接启动、菜单收起", Boolean(pi3) && Boolean(launchedToast) && !(await page.locator("#ctx-menu").isVisible()), launchedToast || JSON.stringify(piNow()).slice(0, 80));
   await page.screenshot({ path: join(out, "结束.png") });
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {
