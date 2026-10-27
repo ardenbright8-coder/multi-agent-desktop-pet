@@ -48,8 +48,10 @@ export class AgentRoster {
     const existing = this.find(name);
     if (existing) return { list: [...this.agents], existed: true };
     if (this.agents.length >= MAX_AGENTS) throw new Error(`最多 ${MAX_AGENTS} 个分组，先删几个再加`);
+    const { members, open } = this.fold(); // 先读：第一次建折叠区时新加的这个还不在名单里
     this.agents.push(name);
     this.save();
+    this.writeFold([...members, name], open); // 新加的 Agent 自动收进「更多 Agent」（2026-10-27）
     return { list: [...this.agents], existed: false };
   }
 
@@ -59,12 +61,17 @@ export class AgentRoster {
     const name = this.find(rawName);
     const anchor = this.find(anchorRaw);
     if (!name || !anchor || name === anchor) return this.list();
+    const { members, open } = this.fold();
     const next = this.agents.filter((item) => item !== name);
     let index = next.indexOf(anchor);
     if (place === "below") index += 1;
     next.splice(index, 0, name);
     this.agents = next;
     this.save();
+    // 拖到哪一组旁边就跟它一边：旁边那组收在「更多 Agent」里就收进去，不在就拿出来（拖动不会被拉回去）
+    const joined = members.includes(anchor) ? [...members.filter((m) => m !== name), name] : members.filter((m) => m !== name);
+    this.writeFold(joined, open);
+    this.fold();
     return this.list();
   }
 
@@ -95,6 +102,7 @@ export class AgentRoster {
     if (this.loaded) return;
     this.agents = this.loadFromDisk();
     this.loaded = true;
+    this.fold();
   }
 
   private loadFromDisk(): string[] {
@@ -150,6 +158,72 @@ export class AgentRoster {
     } catch {
       return LEGACY_DEFAULTS;
     }
+  }
+
+  // ── 「更多 Agent」折叠区（2026-10-27 看板 01）──────────────────
+  // 不常用的组收在板上一条可折叠的横条下面，新加的 Agent 自动进来；展开收起、收了哪几组存 agents-fold.json，
+  // 重开、两套系统都记得。收进来的组在名单里挪到最后，号码顺序跟板上显示的一样。
+  // 第一次（没有这份文件）：Claude 下面的组都收进来（用户：Pi、Codex、Hermes 这些默认收到一个组里），名单原有顺序不动；
+  // 先展开着，他点一下收起就记住。
+
+  fold(): { members: string[]; open: boolean } {
+    this.ensureLoaded();
+    const raw = this.readFold();
+    const claudeAt = this.agents.findIndex((name) => name.toLowerCase() === "claude");
+    const members = raw
+      ? this.agents.filter((name) => raw.members.some((m) => m.toLowerCase() === name.toLowerCase()))
+      : claudeAt < 0 ? [] : this.agents.slice(claudeAt + 1);
+    if (!raw) this.writeFold(members, true);
+    // 收进来的组一律排在名单最后（拖动改了顺序也拉回来），号码才跟板上显示的顺序一样
+    const ordered = [...this.agents.filter((name) => !members.includes(name)), ...members];
+    if (ordered.some((name, i) => name !== this.agents[i])) {
+      this.agents = ordered;
+      this.save();
+    }
+    return { members, open: raw ? raw.open : true };
+  }
+
+  setFoldOpen(open: boolean): { members: string[]; open: boolean } {
+    this.writeFold(this.fold().members, open);
+    return this.fold();
+  }
+
+  /** 收进 / 拿出折叠区：收进挪到名单最后，拿出放到折叠区第一组的上面。 */
+  setFolded(rawName: string, on: boolean): { members: string[]; open: boolean } {
+    const { members, open } = this.fold();
+    const name = this.find(rawName);
+    if (!name || members.includes(name) === on) return { members, open };
+    const next = on ? [...members, name] : members.filter((m) => m !== name);
+    const rest = this.agents.filter((item) => item !== name);
+    if (on) rest.push(name);
+    else {
+      const at = rest.findIndex((item) => next.includes(item));
+      rest.splice(at < 0 ? rest.length : at, 0, name);
+    }
+    this.agents = rest;
+    this.save();
+    this.writeFold(next, open);
+    return this.fold();
+  }
+
+  private foldPath(): string {
+    return join(dirname(this.path), "agents-fold.json");
+  }
+
+  private readFold(): { members: string[]; open: boolean } | null {
+    if (!existsSync(this.foldPath())) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(this.foldPath(), "utf8")) as { 收起的组?: unknown; 展开?: unknown };
+      const members = Array.isArray(parsed.收起的组) ? parsed.收起的组.filter((item): item is string => typeof item === "string") : [];
+      return { members, open: parsed.展开 === true };
+    } catch (error) {
+      log.出事("agents-fold.json 读不出来，当没收任何组", error, "load");
+      return { members: [], open: false };
+    }
+  }
+
+  private writeFold(members: string[], open: boolean): void {
+    writeJsonAtomic(this.foldPath(), { 说明: "看板「更多 Agent」折叠区：收了哪几组、展开没有。新加的 Agent 自动收进来。", 收起的组: members, 展开: open });
   }
 
   private save(): void {

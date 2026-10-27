@@ -108,6 +108,10 @@ contextBridge.exposeInMainWorld("bookmark", {
   agents: () => ipcRenderer.invoke("bookmark:agents"),
   moveAgent: (name: string, anchor: string, place: "above" | "below") => ipcRenderer.invoke("bookmark:agents:move", { name, anchor, place }),
   addAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:add", name),
+  // 「更多 Agent」折叠区（2026-10-27）
+  fold: () => ipcRenderer.invoke("bookmark:fold") as Promise<{ members: string[]; open: boolean }>,
+  setFoldOpen: (open: boolean) => ipcRenderer.invoke("bookmark:fold:open", open) as Promise<{ members: string[]; open: boolean }>,
+  setFolded: (name: string, on: boolean) => ipcRenderer.invoke("bookmark:fold:set", { name, on }) as Promise<{ members: string[]; open: boolean }>,
   removeAgent: (name: string) => ipcRenderer.invoke("bookmark:agents:remove", name),
   reload: () => ipcRenderer.invoke("bookmark:reload"),
   codeStatus: () => ipcRenderer.invoke("bookmark:code-status"),

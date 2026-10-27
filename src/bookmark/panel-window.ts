@@ -955,6 +955,13 @@ function registerIpc(): void {
 
   // ── Agent 看板分组（2026-09-10 改版）：分组清单独立存 agents.json ──
   ipcMain.handle("bookmark:agents", () => requireRoster().list());
+  // 「更多 Agent」折叠区（2026-10-27）：收了哪几组、展开没有，存 agents-fold.json
+  ipcMain.handle("bookmark:fold", () => requireRoster().fold());
+  ipcMain.handle("bookmark:fold:open", (_event, open: unknown) => requireRoster().setFoldOpen(Boolean(open)));
+  ipcMain.handle("bookmark:fold:set", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { name?: unknown; on?: unknown };
+    return requireRoster().setFolded(String(raw.name ?? ""), Boolean(raw.on));
+  });
   // 外观设置（透明度）：读用在面板首渲染前，写由滑条防抖调（存 appearance.json）。
   ipcMain.handle("bookmark:appearance:get", () => readBoardOpacity());
   ipcMain.handle("bookmark:appearance:set", (_event, opacity: unknown) => writeBoardOpacity(Number(opacity)));

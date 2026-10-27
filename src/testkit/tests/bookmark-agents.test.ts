@@ -40,6 +40,28 @@ test("agent roster move reorders groups and persists", () => {
   }
 });
 
+test("「更多 Agent」折叠区：第一次收 Claude 下面的、新加的自动收、拖到哪组旁边跟哪边、收拿都记住", () => {
+  const { roster, path, root } = tempRoster();
+  try {
+    assert.deepEqual(roster.fold(), { members: ["ChatGPT", "Pi Agent", "Antigravity", "Hermes"], open: true });
+    roster.add("Gemini");
+    assert.deepEqual(roster.fold().members.at(-1), "Gemini");
+    roster.move("Pi Agent", "Claude", "above"); // 拖到 Claude 旁边＝拿出来
+    assert.deepEqual(roster.list(), ["Pi Agent", "Claude", "ChatGPT", "Antigravity", "Hermes", "Gemini"]);
+    assert.equal(roster.fold().members.includes("Pi Agent"), false);
+    roster.move("Claude", "Hermes", "below"); // 拖进折叠区那几组中间＝收进去，排在名单最后
+    assert.deepEqual(roster.fold().members.includes("Claude"), true);
+    assert.equal(roster.list()[0], "Pi Agent");
+    roster.setFolded("Claude", false);
+    roster.setFoldOpen(false);
+    const reloaded = new AgentRoster(path);
+    assert.deepEqual(reloaded.list(), ["Pi Agent", "Claude", "ChatGPT", "Antigravity", "Hermes", "Gemini"]);
+    assert.deepEqual(reloaded.fold(), { members: ["ChatGPT", "Antigravity", "Hermes", "Gemini"], open: false });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("agent roster dedupes case-insensitively and rejects empty or oversized names", () => {
   const { roster, root } = tempRoster();
   try {

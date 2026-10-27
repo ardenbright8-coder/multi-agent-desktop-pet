@@ -410,6 +410,25 @@ body {
   background: rgba(201, 165, 76, 0.16);
 }
 
+/* 「更多 Agent」折叠横条（2026-10-27）：点一下收起 / 展开，右键挑收哪几组 */
+.fold-bar {
+  display: block;
+  width: 100%;
+  margin: 6px 0 4px;
+  padding: 6px 10px;
+  border: 1px dashed rgba(111, 143, 95, 0.45);
+  border-radius: 10px;
+  background: rgba(111, 143, 95, 0.08);
+  color: inherit;
+  font: inherit;
+  font-size: 0.92em;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.fold-bar:hover { background: rgba(111, 143, 95, 0.16); opacity: 1; }
+.fold-bar.open { border-style: solid; }
+
 /* ── 设置按钮（左下角小齿轮）+ 浮层 ─────────── */
 
 #settings-btn {

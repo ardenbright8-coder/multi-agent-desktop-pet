@@ -310,6 +310,7 @@ async function bmRefresh() {
     bmDispatchBundles = new Map((dispatch.bundles || []).map(b => [b.id, b]));
     bmBundleMeta = meta || {};
     bmAgents = Array.isArray(agents) && agents.length ? agents.map(String) : [...BM_DEFAULT_ASSIGNEES];
+    if (window.bookmark.fold) bmFold = (await window.bookmark.fold().catch(() => null)) ?? bmFold;
     // 手里正按着一条时不重画（重画会把按着的那条换掉，影子收不回来留成残影），松手再补画。
     // 正在框里打字、语音输入时也不重画，离开这个框再补画（bmHoldForTyping）。
     if (bmDragActive || bmImagesBusy || bmHoldForTyping()) {
@@ -510,14 +511,69 @@ function bmRenderBoard(records) {
   } else if (bmCurrentPage === "projects") {
     void bmRenderProjects();
   } else {
+    // 收进「更多 Agent」的组在名单最后（主进程排好），号码顺序跟这里画的一样
+    const folded = bmAgents.filter((name) => bmFold.members.includes(name));
     for (const name of bmAgents) {
-      board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
+      if (!folded.includes(name)) board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
     }
+    board.appendChild(bmBuildFoldBar(folded, byAgent));
+    if (bmFold.open) for (const name of folded) board.appendChild(bmBuildGroup(name, name, byAgent.get(name) ?? []));
     // 交接单专区固定垫底：所有分组之后、底栏（＋加Agent）之前——别的位置不加。
     board.appendChild(bmBuildHandoffZone(handoffZone));
   }
   bmRestoreOpenComposer();
   bmRefreshDispatchSelection();
+}
+
+// ── 「更多 Agent」折叠区（2026-10-27 看板 01）──────────────
+// 不常用的组收在一条横条下面，新加的 Agent 自动进来。点横条收起 / 展开，右键勾哪几组收进来；都存在看板数据夹，重开也记得。
+let bmFold = { members: [], open: true };
+
+function bmBuildFoldBar(folded, byAgent) {
+  const bar = document.createElement("button");
+  bar.type = "button";
+  bar.className = "fold-bar" + (bmFold.open ? " open" : "");
+  const n = folded.reduce((sum, name) => sum + (byAgent.get(name)?.length ?? 0), 0);
+  bar.textContent = folded.length
+    ? `${bmFold.open ? "▾" : "▸"} 更多 Agent · ${folded.join("、")}${n ? ` · ${n} 条` : ""}`
+    : "更多 Agent · 右键挑哪几组收进来";
+  bar.title = "点一下收起 / 展开（会记住）；右键挑哪几组收在这里";
+  bar.addEventListener("click", async () => {
+    if (!folded.length) return;
+    try {
+      bmFold = await window.bookmark.setFoldOpen(!bmFold.open);
+    } catch (error) {
+      bmShowError(bmErrorText(error));
+    }
+    await bmRefresh();
+  });
+  bar.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    bmShowFoldMenu(bar);
+  });
+  return bar;
+}
+
+function bmShowFoldMenu(anchor) {
+  const menu = document.getElementById("ctx-menu");
+  menu.textContent = "";
+  const title = document.createElement("div");
+  title.className = "ctx-title";
+  title.textContent = "收在「更多 Agent」里 →";
+  menu.appendChild(title);
+  for (const name of bmAgents) {
+    const on = bmFold.members.includes(name);
+    menu.appendChild(bmCtxButton(`${on ? "✓ " : ""}${name}`, async () => {
+      bmFold = await window.bookmark.setFolded(name, !on);
+      await bmRefresh();
+    }));
+  }
+  menu.hidden = false;
+  const panelRect = document.getElementById("app").getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(rect.left - panelRect.left + 24, panelRect.width - 174))}px`;
+  menu.style.top = `${Math.max(6, Math.min(rect.bottom - panelRect.top + 4, panelRect.height - 40 - bmAgents.length * 30))}px`;
 }
 
 /** 切页签：改 active 态、重画 board、加Agent 按钮跟页走（待定页没它的事）。 */
