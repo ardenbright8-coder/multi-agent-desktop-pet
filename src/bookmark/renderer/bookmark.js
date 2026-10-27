@@ -24,8 +24,8 @@ let bmHints = new Map(); // 条目 id → AI 检查的提示（第四版：条�
 let bmNotes = {}; // 条目 id → { project, title, stale }：AI 读条目写的小标题（第五版：板上每条第一行；stale＝正在按新规矩重读，先用旧的顶着）
 // 剪切后拿着走（2026-10-13 用户）：Ctrl+X 记下哪条（或在捆标题上＝整捆），Ctrl+V 粘到鼠标上，按住左键拖、松开放下，右键或 Esc 不要了。
 // Ctrl+C 复制那套同天拆了（用户：用不到，只留 Ctrl+X）。
-let bmClip = null; // { id } 一条，或 { bundleId } 整捆
-let bmCarry = null; // 正拿着走：{ id | bundleId, kind, kinds, group, el, members, ghost, hit, pressed, scroll }
+let bmClip = null; // { id } 一条，或 { bundleId } 整捆，或 { ids } Ctrl 点选的好几条（2026-10-27）
+let bmCarry = null; // 正拿着走：{ id | bundleId | ids, kind, kinds, group, el, members, ghost, hit, pressed, scroll }
 let bmHoverTaskId = null;
 let bmPickedTaskId = null; // 点一下选中的那条（2026-10-15 看板 Claude 01：点一下＝选中，Ctrl+X 剪它，不用按住）
 let bmHoverBundleId = null;
@@ -522,7 +522,7 @@ function bmPlanDrop(list, row, y, x, bundleable, idOf, forId) {
   const id = forId || idOf(row);
   const blocks = [];
   for (const el of list.children) {
-    if (el === row) continue;
+    if (bmSkipped(row, el)) continue;
     if (el.classList.contains("bundle-head")) {
       blocks.push({ head: el, bundle: el.dataset.bundle || "", members: [] });
     } else if (el.classList.contains("task")) {
@@ -576,6 +576,11 @@ function bmPlanDrop(list, row, y, x, bundleable, idOf, forId) {
   return out(lastEl, "below", () => lastEl.classList.add(tail.loose ? "gap-below" : "gap-below-out"));
 }
 
+/** 拿着走的是不是这一块：skip 是一条（拖一条、剪一条），或一串（Ctrl 点选好几条一起剪）。 */
+function bmSkipped(skip, el) {
+  return Array.isArray(skip) ? skip.includes(el) : el === skip;
+}
+
 /** 条目能落进哪个组：交接单落 agent 组或交接单专区；普通条目落 agent 组。待定页是另一页，不在这里跨。 */
 function bmCanLand(kind, key) {
   if (key === BM_HANDOFF_ZONE_KEY) return kind === "handoff";
@@ -599,7 +604,7 @@ function bmTaskHitAt(x, y, info) {
   const section = under && under.closest ? under.closest(".group") : null;
   const key = section && section.dataset.group;
   if (!key) return none;
-  if (key !== info.selfGroup && !bmCanLand(info.kind, key)) return none;
+  if (key !== info.selfGroup && !(info.kinds || [info.kind]).every((k) => bmCanLand(k, key))) return none;
   const head = under.closest(".group-head");
   const toGroup = () => ({
     mark: () => section.querySelector(".group-head")?.classList.add("drag-target"),
@@ -607,7 +612,7 @@ function bmTaskHitAt(x, y, info) {
   });
   if (head && key !== info.selfGroup) return toGroup();
   const list = section.querySelector(".task-list");
-  const hasTasks = list && [...list.children].some((el) => el !== info.skip && (el.classList.contains("task") || el.classList.contains("bundle-head")));
+  const hasTasks = list && [...list.children].some((el) => !bmSkipped(info.skip, el) && (el.classList.contains("task") || el.classList.contains("bundle-head")));
   if (!hasTasks) return key === info.selfGroup ? none : toGroup();
   const plan = bmPlanDrop(list, info.skip, y, x, bmAgents.includes(key), (el) => el.dataset.id || "", info.id);
   if (!plan.hit || (info.skip && plan.hit.anchorId === info.id)) return { mark: plan.mark, hit: null };
@@ -1009,7 +1014,7 @@ function bmBuildTask(record, groupKey, order) {
   // 只认真单击：拖过的那一下不算选中（不然拖完再指着别条按 Ctrl+X，剪走的是刚拖的那条）。拖完的点击由 bmBindDrag 打上 swallow。
   item.addEventListener("click", () => { if (item.dataset.swallow !== "1") bmPickTask(record.id); }, true);
   if (bmPickedTaskId === record.id) item.classList.add("task-picked");
-  if (bmClip && (bmClip.id === record.id || (bmClip.bundleId && bmClip.bundleId === record.bundleId))) item.classList.add("clip-cut");
+  if (bmClip && (bmClip.id === record.id || (bmClip.bundleId && bmClip.bundleId === record.bundleId) || (bmClip.ids && bmClip.ids.includes(record.id)))) item.classList.add("clip-cut");
   item.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     // 选中了两条以上、在选中的条目上右键 = 捆成一捆（设定21）；别的情况照旧弹这一条的菜单。
@@ -3237,6 +3242,18 @@ function bmInitClipboard() {
       bmStartCarry();
       return;
     }
+    // Ctrl 点选了几条（绿底那几条）＝这几条一起剪（2026-10-27 用户：多选完 Ctrl+X 一块剪，拿去归类）。按板上从上到下的顺序记。
+    if (!editing && bmSelectedTasks.size) {
+      const els = [...document.querySelectorAll(".task[data-id]")].filter((n) => bmSelectedTasks.has(n.dataset.id));
+      if (els.length) {
+        event.preventDefault();
+        bmClip = { ids: els.map((n) => n.dataset.id) };
+        document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
+        els.forEach((n) => n.classList.add("clip-cut"));
+        bmToast(`剪下这 ${els.length} 条了：按 Ctrl+V 拿起来，按住左键拖到要放的地方松开；右键不要了`, 4000);
+        return;
+      }
+    }
     // 认谁：正在改的那条 → 点一下选中的那条 / 那捆 → 鼠标停着的那条 / 那捆
     const pickedEl = bmPickedTaskId ? document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`) : null;
     const pickedHead = !pickedEl && bmPickedBundleId ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bmPickedBundleId)}"]`) : null;
@@ -3266,6 +3283,10 @@ async function bmUndo() {
 
 function bmStartCarry() {
   const clip = bmClip;
+  if (clip.ids) {
+    bmStartCarryMany(clip);
+    return;
+  }
   const el = clip.bundleId
     ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(clip.bundleId)}"]`)
     : document.querySelector(`.task[data-id="${CSS.escape(clip.id)}"]`);
@@ -3299,6 +3320,44 @@ function bmStartCarry() {
   bmCarryPaint();
 }
 
+/** Ctrl 点选的好几条一起拿着走：影子是第一条，后面注明一共几条；落点规矩跟拿一条一样，松手按原来上下顺序一条接一条放。 */
+function bmStartCarryMany(clip) {
+  const els = clip.ids.map((id) => document.querySelector(`.task[data-id="${CSS.escape(id)}"]`));
+  if (els.some((n) => !n)) {
+    bmToast("剪下的有几条不在这一页：切回它们所在的那一页再按 Ctrl+V");
+    return;
+  }
+  bmHideCtxMenu();
+  const ghost = bmBundleGhost(els[0], els.length);
+  const count = ghost.querySelector(".bundle-ghost-count");
+  count.textContent = `一共 ${els.length} 条`;
+  count.classList.add("many");
+  els.forEach((n) => n.classList.add("is-dragging"));
+  bmDragActive = true;
+  const group = els[0].closest(".group")?.dataset.group || els[0].dataset.group || "";
+  bmCarry = { ids: clip.ids, kind: els[0].dataset.kind || "note", kinds: els.map((n) => n.dataset.kind || "note"), group, el: els[0], members: els.slice(1), ghost, hit: null, pressed: false, scroll: 0 };
+  bmCarry.scroll = window.setInterval(() => { if (bmCarry && bmCarry.pressed) bmDragScroll(bmMouse.y); }, 40);
+  document.body.classList.add("carrying");
+  window.addEventListener("pointerdown", bmCarryDown, true);
+  window.addEventListener("pointerup", bmCarryUp, true);
+  window.addEventListener("contextmenu", bmSwallowEvent, true);
+  bmCarryPaint();
+}
+
+/** 好几条一起放下：照落点换算成一次 moveMany，一步做完，Ctrl+Z 一步全回去。 */
+async function bmDropMany(hit, ids) {
+  if (!hit) return;
+  try {
+    const assignee = bmAssigneeOf(hit.reassignGroup !== undefined ? hit.reassignGroup : hit.group);
+    if (hit.reassignGroup !== undefined) await window.bookmark.moveMany(ids, { assignee });
+    else if (hit.bundleWith) await window.bookmark.moveMany(ids, { assignee, bundleWith: hit.bundleWith });
+    else if (hit.anchorId) await window.bookmark.moveMany(ids, { assignee, anchorId: hit.anchorId, place: hit.place, into: hit.into });
+  } catch (error) {
+    bmShowError(bmErrorText(error));
+  }
+  await bmRefresh();
+}
+
 function bmCarryPaint() {
   const c = bmCarry;
   if (!c) return;
@@ -3307,6 +3366,8 @@ function bmCarryPaint() {
   bmClearDropMarks();
   const r = c.bundleId
     ? bmBundleHitAt(bmMouse.x, bmMouse.y, { bundleId: c.bundleId, selfGroup: c.group, kinds: c.kinds })
+    : c.ids
+    ? bmTaskHitAt(bmMouse.x, bmMouse.y, { id: c.ids[0], kind: c.kind, kinds: c.kinds, selfGroup: c.group, skip: [c.el, ...c.members] })
     : bmTaskHitAt(bmMouse.x, bmMouse.y, { id: c.id, kind: c.kind, selfGroup: c.group, skip: c.el });
   r.mark();
   c.hit = r.hit;
@@ -3353,10 +3414,11 @@ function bmEndCarry(commit) {
   bmRefreshPending = false;
   bmClip = null; // 放下或不要了，都算用完
   bmPickTask(null); // 选中也一起用完，免得下次 Ctrl+X 又剪到它
+  if (c.ids) bmClearDispatchSelection(); // Ctrl 点选的那几条也用完了
   document.querySelectorAll(".clip-cut").forEach((n) => n.classList.remove("clip-cut"));
   const hit = commit ? c.hit : null;
   void (async () => {
-    if (hit) await (c.bundleId ? bmDropBundle(hit) : bmDropTask(hit));
+    if (hit) await (c.bundleId ? bmDropBundle(hit) : c.ids ? bmDropMany(hit, c.ids) : bmDropTask(hit));
     else await bmRefresh();
   })();
 }

@@ -763,6 +763,31 @@ export class BookmarkStore {
     return members.length;
   }
 
+  /** 批量剪切（2026-10-27 用户：Ctrl 点选好几条，Ctrl+X 一起剪、Ctrl+V 一起放，归类用）：按 ids 的顺序一条接一条放。
+   *  assignee：放进哪个组（null＝交接单专区／待定），跟原来同组的不动组；第一条照 anchorId＋place＋into 放（跟 move 一样，
+   *  没锚点＝只换组），后面的挨着前一条往下排；bundleWith：都放进这一条所在的捆（没捆就新起一捆）。
+   *  先查一遍都能动再动，免得挪到一半报错。返回挪了几条。 */
+  moveMany(ids: string[], target: { assignee: string | null; anchorId?: string | null; place?: "above" | "below"; into?: string | null; bundleWith?: string | null }): number {
+    this.ensureLoaded();
+    const list = ids.filter((id, i) => ids.indexOf(id) === i && id !== target.bundleWith && this.records.some((r) => r.id === id));
+    if (!list.length) return 0;
+    for (const id of [...list, target.anchorId, target.bundleWith]) {
+      const r = id ? this.records.find((x) => x.id === id) : undefined;
+      if (r) this.coordination.assertEditable(r.bundleId);
+    }
+    const anchorId = target.anchorId && !list.includes(target.anchorId) ? target.anchorId : null;
+    let prev: string | null = null;
+    for (const id of list) {
+      const record = this.records.find((r) => r.id === id)!;
+      if ((record.assignee ?? "").toLowerCase() !== (target.assignee ?? "").toLowerCase()) this.setAssignee(id, target.assignee);
+      if (target.bundleWith) this.bundleWith(id, target.bundleWith);
+      else if (prev) this.move(id, prev, "below", target.into ?? null);
+      else if (anchorId) this.move(id, anchorId, target.place ?? "above", target.into ?? null);
+      prev = id;
+    }
+    return list.length;
+  }
+
   /** 拖动时界面已经说清了进哪捆还是单独放：照办，再把位置理顺，免得一捆被插断成两截。 */
   private placeExplicitly(item: BookmarkRecord, into: string | null): void {
     const key = groupKeyOf(item);

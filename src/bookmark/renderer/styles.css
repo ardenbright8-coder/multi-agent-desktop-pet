@@ -1043,6 +1043,8 @@ body {
 .bundle-head { cursor: grab; }
 .bundle-head .bundle-no { flex: none; font-size: 11.5px; font-weight: 400; color: rgba(47, 62, 44, 0.42); }
 .bundle-ghost-count { flex: none; font-size: 11.5px; color: rgba(47, 62, 44, 0.55); padding-right: 4px; }
+/* Ctrl 点选好几条一起拿着走（2026-10-27）：影子左上角挂个绿角标「一共 N 条」，条目那一行没地方放字 */
+.drag-ghost .bundle-ghost-count.many { position: absolute; left: -6px; top: -10px; padding: 1px 7px; border-radius: 9px; background: #729e5d; color: #fff; font-size: 11.5px; }
 /* 拿着走的时候：整页都是「拿着」的手势 */
 body.carrying, body.carrying * { cursor: grabbing !important; }
 

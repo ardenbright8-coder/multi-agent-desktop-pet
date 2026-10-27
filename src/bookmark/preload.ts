@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld("bookmark", {
   /** 整捆搬家：group 不传＝还在原组；传了（null＝交接单专区）就换组。返回搬了几条。 */
   moveBundle: (bundleId: string, anchorId: string | null, place: "above" | "below", group?: string | null) =>
     ipcRenderer.invoke("bookmark:move-bundle", group === undefined ? { bundleId, anchorId, place } : { bundleId, anchorId, place, assignee: group }) as Promise<number>,
+  /** 批量剪切放下：ids 按顺序一条接一条放进 assignee 那个组（null＝交接单专区／待定）。返回挪了几条。 */
+  moveMany: (ids: string[], target: { assignee: string | null; anchorId?: string | null; place?: "above" | "below"; into?: string | null; bundleWith?: string | null }) =>
+    ipcRenderer.invoke("bookmark:move-many", { ids, ...target }) as Promise<number>,
   setAssignee: (id: string, assignee: string | null) => ipcRenderer.invoke("bookmark:set-assignee", { id, assignee }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
   updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),

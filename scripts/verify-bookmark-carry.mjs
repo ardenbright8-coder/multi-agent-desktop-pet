@@ -1,6 +1,6 @@
 // 隔离看板回归（2026-10-13）：跨组一步到位拖动；Ctrl+X → Ctrl+V 拿着走、按住左键拖、松开放下、右键不要；
 // 整捆搬家（按住捆标题拖、捆标题上 Ctrl+X）；Ctrl+C 不碰条目（复制一条那套拆了）；Ctrl+Z 撤回；单击详情就改；
-// 所有组、所有时候第一行都是标题（还没读的拿自己的字顶着）。官方 Playwright 后台驱动，截图在 .runtime/carry/。
+// 所有组、所有时候第一行都是标题（还没读的拿自己的字顶着）；Ctrl 点选好几条一起剪、一起放（2026-10-27）。官方 Playwright 后台驱动，截图在 .runtime/carry/。
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -214,6 +214,60 @@ try {
   await wait(600);
   check('⑩ Ctrl+Z：详情退回原来的', (await rec(ids.H)).detail === '交接单甲的详情', (await rec(ids.H)).detail);
   await page.screenshot({ path: join(out, '10-改详情再撤回.png') });
+
+  // ⑪ 批量剪切（2026-10-27 用户：Ctrl 点选好几条，Ctrl+X 一起剪、Ctrl+V 一起放，归类用）：跨组选两条 → 放到 Antigravity 组名上 → 都过去；Ctrl+Z 一步全回来
+  await page.locator('#titlebar .title').click();
+  ids.K = await page.evaluate(async () => { const r = await window.bookmark.add({ text: '条目K', assignee: 'Antigravity' }); await bmRefresh(); return r.id; });
+  await wait(400);
+  const claudeBefore = JSON.stringify(await order('Claude'));
+  await page.locator(`${task(ids.D)} .task-title`).click({ modifiers: ['Control'] });
+  await page.locator(`${task(ids.K)} .task-title`).click({ modifiers: ['Control'] });
+  check('⑪ Ctrl 点 D（Claude 组）和 K（Antigravity 组）：跨组也能选上两条', (await page.locator('.task.dispatch-selected').count()) === 2);
+  const dm = await box(task(ids.D));
+  await page.mouse.move(dm.x, dm.y);
+  await page.keyboard.press('Control+x');
+  await wait(150);
+  check('⑪ 按 Ctrl+X：选中的两条都变淡带虚线', (await page.locator('.task.clip-cut').count()) === 2 && (await page.locator(`${task(ids.D)}.clip-cut, ${task(ids.K)}.clip-cut`).count()) === 2);
+  await page.keyboard.press('Control+v');
+  await wait(150);
+  check('⑪ 按 Ctrl+V：拿起来了，影子写着一共 2 条', (await page.locator('.drag-ghost .bundle-ghost-count').textContent()) === '一共 2 条');
+  for (let i = 0; i < 3; i += 1) {
+    const ga = await box(`.group[data-group="Antigravity"] .group-head`);
+    await page.mouse.move(ga.x, ga.y, { steps: 6 });
+    await wait(200);
+  }
+  await page.screenshot({ path: join(out, '11-两条一起拿着走.png') });
+  {
+    const ga = await box(`.group[data-group="Antigravity"] .group-head`);
+    await page.mouse.move(ga.x, ga.y);
+  }
+  await page.mouse.down();
+  await page.mouse.up();
+  await wait(600);
+  check('⑪ 放到 Antigravity 组名上：两条都进了 Antigravity、选中也清了', (await rec(ids.D)).assignee === 'Antigravity' && (await rec(ids.K)).assignee === 'Antigravity' && (await page.locator('.task.dispatch-selected').count()) === 0, JSON.stringify(await order('Antigravity')));
+  await page.locator('#titlebar .title').click();
+  await page.keyboard.press('Control+z');
+  await wait(600);
+  check('⑪ Ctrl+Z 一步：D 回到 Claude 原位置、K 还在 Antigravity', JSON.stringify(await order('Claude')) === claudeBefore && (await rec(ids.K)).assignee === 'Antigravity', JSON.stringify(await order('Claude')));
+
+  // ⑫ 同组选两条一起剪、拿到捆里（整捆变绿）松手：两条都进捆，按原来上下顺序挨着
+  await page.locator(`${task(ids.D)} .task-title`).click({ modifiers: ['Control'] });
+  await page.locator(`${task(ids.E)} .task-title`).click({ modifiers: ['Control'] });
+  await page.keyboard.press('Control+x');
+  await page.keyboard.press('Control+v');
+  for (let i = 0; i < 3; i += 1) {
+    c = await box(task(ids.C));
+    await page.mouse.move(c.x, c.y, { steps: 6 });
+    await wait(200);
+  }
+  m = await marks();
+  check('⑫ 两条拿到捆里：整捆变绿', m.green >= 2, JSON.stringify(m));
+  await page.mouse.down();
+  await page.mouse.up();
+  await wait(600);
+  const de = await page.evaluate(async (x) => (await window.bookmark.list()).filter((r) => r.id === x.D || r.id === x.E).map((r) => r.bundleId), { D: ids.D, E: ids.E });
+  const cl2 = await order('Claude');
+  check('⑫ 松手：D、E 都进了捆一，挨着放', de.length === 2 && de.every((x) => x === bundle) && Math.abs(cl2.indexOf('D') - cl2.indexOf('E')) === 1, JSON.stringify(cl2));
 
   console.log(failed ? `结果：${failed} 项没过` : '结果：全部验证点通过');
 } finally {

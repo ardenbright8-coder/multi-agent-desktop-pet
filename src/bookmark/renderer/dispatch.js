@@ -34,12 +34,9 @@ function bmInitDispatch() {
     if (!record || !group) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (bmSelectedTasks.size && bmSelectedGroup !== group) {
-      bmToast('一次只选同一个分组的；先捆好这一批再选下一批');
-      return;
-    }
-    if (record.claimedBy || record.report || bmDispatchBundles.has(record.bundleId)) {
-      bmToast('这条在干、待审核或在多人派工捆里，先放回再捆');
+    // 2026-10-27 用户：选好几条 Ctrl+X 一起剪走归类，跨组、在干的也能选；只有「捆成一捆」才要同组、没在干（右键时再拦）。
+    if (bmDispatchBundles.has(record.bundleId)) {
+      bmToast('这条在多人派工捆里，先放回再选');
       return;
     }
     if (bmSelectedTasks.has(record.id)) bmSelectedTasks.delete(record.id);
@@ -54,6 +51,15 @@ function bmInitDispatch() {
 
 /** 选中两条以上、在选中的条目上右键：弹「捆成一捆」（菜单以后往这里加项）。 */
 function bmShowSelectionMenu(anchor, clientY) {
+  const picked = [...bmSelectedTasks].map(id => document.querySelector(`.task[data-id="${CSS.escape(id)}"]`));
+  if (new Set(picked.map(el => el?.dataset.group)).size > 1) {
+    bmToast('选的不在同一个组，捆不了；要挪到一起按 Ctrl+X 一起剪走');
+    return;
+  }
+  if ([...bmSelectedTasks].some(id => { const r = bmDispatchRecords.find(x => x.id === id); return r && (r.claimedBy || r.report); })) {
+    bmToast('选的里面有在干或待审核的，捆不了；先放回再捆');
+    return;
+  }
   const menu = document.getElementById('ctx-menu');
   menu.textContent = '';
   const title = document.createElement('div');

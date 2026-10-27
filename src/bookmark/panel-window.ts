@@ -890,6 +890,19 @@ function registerIpc(): void {
     const anchorId = typeof raw.anchorId === "string" && raw.anchorId ? raw.anchorId : null;
     return act("搬整捆", () => requireStore().moveBundle(String(raw.bundleId ?? ""), assignee, anchorId, raw.place === "below" ? "below" : "above"));
   });
+  // 批量剪切（2026-10-27）：Ctrl 点选的几条一起放下，一个 act 里挪完，Ctrl+Z 一步全回去。
+  ipcMain.handle("bookmark:move-many", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { ids?: unknown; assignee?: unknown; anchorId?: unknown; place?: unknown; into?: unknown; bundleWith?: unknown };
+    const ids = Array.isArray(raw.ids) ? raw.ids.map((x) => String(x)) : [];
+    const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+    return act(`挪 ${ids.length} 条`, () => requireStore().moveMany(ids, {
+      assignee: str(raw.assignee),
+      anchorId: str(raw.anchorId),
+      place: raw.place === "below" ? "below" : "above",
+      into: str(raw.into),
+      bundleWith: str(raw.bundleWith),
+    }));
+  });
   ipcMain.handle("bookmark:remove", (_event, id: unknown) => act("删掉一条", () => requireStore().remove(String(id))));
   // 大标题右键「删除这一捆」（2026-10-16）：整捆在一步里删，Ctrl+Z 一步全回来
   ipcMain.handle("bookmark:remove-bundle", (_event, bundleId: unknown) => act("删掉一捆", () => {
