@@ -266,6 +266,17 @@ function rememberHidden(hidden: boolean): void {
   savePreferences({ hidden });
 }
 
+/** 托盘「隐藏桌宠」勾选框读这个。 */
+export function isPetHidden(): boolean {
+  return petHiddenNow();
+}
+
+/** 托盘勾选框：勾上＝藏起来并记住，取消＝出来并记住。 */
+export function setPetHidden(hidden: boolean): void {
+  if (hidden) hideMainWindow();
+  else showMainWindow();
+}
+
 export function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.showInactive();

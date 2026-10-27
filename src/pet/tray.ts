@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Menu, Tray, app, nativeImage, shell } from "electron";
 import type { AgentHub } from "../events/hub";
 import { makeSimulationEvent } from "../events/simulation";
-import { flipNoteSide, hideMainWindow, recallPetWindow, sendPetCommand, setShuttingDown, showMainWindow } from "./window";
+import { flipNoteSide, hideMainWindow, isPetHidden, recallPetWindow, sendPetCommand, setPetHidden, setShuttingDown, showMainWindow } from "./window";
 import { logRoot } from "../shared/log";
 
 export interface PetTrayActions {
@@ -50,9 +50,9 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
   const rebuild = () => {
     const diagnostics = hub.diagnostics();
     appTray.setContextMenu(Menu.buildFromTemplate([
-      { label: "显示桌宠", click: actions.show },
-      { label: "把幼苗叫回来（回默认位置）", click: actions.recall },
-      { label: "藏起来", click: actions.hide },
+      // 隐藏是个开关（2026-10-27 用户）：勾上一直藏着、开机也不出来，取消勾才出来；勾没勾记在 preferences.json
+      { label: "隐藏桌宠", type: "checkbox", checked: isPetHidden(), click: (item) => { setPetHidden(item.checked); rebuild(); } },
+      { label: "把幼苗叫回来（回默认位置）", click: () => { actions.recall(); rebuild(); } },
       { type: "separator" },
       { label: "详情（事件与搜索）", click: actions.openDrawer },
       { label: "设置（大小与活泼程度）", click: actions.openSettings },
@@ -71,6 +71,7 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
   };
   rebuild();
   hub.on("snapshot", rebuild);
-  appTray.on("click", showMainWindow);
+  // 单击托盘图标：没勾「隐藏桌宠」才把幼苗叫到前面，勾着就不出来
+  appTray.on("click", () => { if (!isPetHidden()) showMainWindow(); });
   return appTray;
 }
