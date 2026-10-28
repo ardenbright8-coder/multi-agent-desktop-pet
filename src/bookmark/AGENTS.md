@@ -26,6 +26,7 @@
 | `board-index.ts` | 按号码读（2026-10-13 用户：说「第 7 条」「捆2」AI 只读点名的）：`indexBoard` 照看板同一个数法编号——2026-10-15 起全板统一（各组照组名单 → 交接单专区 → 待定，条目号、捆号一路往下接，一个号只有一条；🚨 跟 renderer `bmRenderBoard` 算起点 `bmNumberStart` + `bmFillTaskList` 一处两份，改一边必须改另一边）、`formatBrief`（list 不带 --json：只出号码和小标题）、`formatShow`（show：不用写组名，只吐点名那几条全文；写了组名号不在那组时提一句）、`parseShowSpec`（7 / 7-9 / 7,8,9 / 捆2）；CLI 端点 `GET /view`，数据由 panel-window 的 `boardNames` 适配器给（组名单、小标题、捆名） |
 | `dock.ts` | 纯函数：贴右缘几何（宽=工作区1/3顶到底）+ Win32 沉底常量；零依赖好单测 |
 | `templates.ts` | 要求模板（设定12/15）：列模板夹 `<appDataRoot>\bookmark\要求模板\` 里的 md、拼复制文字（模板＋「## 这次的事」＋这条）；「启动 Agent · 带编程」用其中的 `带编程.md`；纯函数＋只读 |
+| `checklist.ts` | 打勾清单（2026-10-28）：纯函数——`parseChecklist` 读 AI 交的 md（两层，编号按结构重排）、`toggleItem` 拨开关（勾上一层＝小项一起勾，小项全勾完上一层自动算完）、`checklistProgress` 按上一层数进度、`formatChecklist` / `formatPending`。存在条目的 `checklist` 栏，进度句子在 `progress` 栏（log 命令，原话 detail 不动）。store `setChecklist` / `tick`：全勾完 `closeWithLinks` 自动收掉连管着的条目、写数据夹「做完记录（最近50条·看板自动写）.md」。命令行 `清单` / `勾`（cli-server `handleChecklistRequest`，号码或 id 都认），勾的规矩只在 `checklistRules` 一处；副本分两份 `<id>.md`（清单）＋`<id>（原话）.md`（`formatItemFiles`）；看板上 `bmBuildChecklist` 小方框，IPC `bookmark:tick` 包 `act`（Ctrl+Z 能撤）。验证 `scripts/verify-bookmark-checklist.mjs` |
 | `inline-images.ts` / `image-ipc.ts` | 条目贴图（2026-09-24 设定16）：正文里存图片标记 `[图片:image-….png]`，真图存 `attachments\`；`image-ipc` 只收图片字节、解码后存 PNG、读图只认本夹文件名；交给 AI 时 `imagesForAgent` 把标记换成「图片文件：完整路径」；图片标注（设定16第三版）不烧原图，单独存 `<图>.marks.json`（marks＋整体说明 summary）＋ 带编号的 `<图>.marked.png`（`bookmark:image:marks:get/set`），交给 AI 时附整体说明和编号清单（`describeMarks`，标注只说大约这附近） |
 | `renderer\inline-images.js/.css` | 贴图编辑框：Ctrl+V 或框里右上角的小图片图标（不另占一行，设定16）贴进光标处，有图时换成可编辑的图文框、显示缩略图，点缩略图看大图（毛玻璃边框）、打开就能标（`bmBindMarks`：标注 / 框 / 箭头一套流水号，马卡龙橙红，整体说明框＋每个标注一行说明，自动存、没有保存钮，按住编号拖、Delete / Ctrl+Z）；贴图或开大图途中 `bmImagesBusy` 压住重画和失焦提交 |
 | `launch.ts` | 启动 Agent 开窗贴字（设定15第四版）：🚨 **开哪个程序在设置文件 `<看板数据夹>\启动哪个程序.json`**（2026-10-24，两套系统共用一份；没有就照 `DEFAULT_LAUNCH` 写出来；每次开窗现读）：每组一串候选按顺序找，「开」只写名字＝桌面快捷方式、完整路径＝就开那个文件（E 盘入口夹的启动器两套都有），每个候选自带新窗口 / 程序名 / 多等毫秒；新加一家填一组、不改代码。假桌面（`BOOKMARK_AGENT_SHORTCUT_DIR`）时完整路径一律不认，免得验证脚本开出真 AI 窗口。默认：`agentShortcutFor` 组名→候选（Claude→`Claude Code 一` 或 `Claude Code 根`、ChatGPT→`Codex`、Pi Agent→`Pi 编程智能体`、Antigravity→`Antigravity 反重力CLI`（`settleMs` 12 秒：开窗先登录）、Hermes→`Hermes`），桌面程序另带程序文件名 `app`（🚨 Codex 桌面版叫 `chatgpt.exe`，不是 codex.exe）；命令窗口走 `pasteIntoNewWindow` 认新窗口→等启动好→还在最前面才按一次 Ctrl+V，只往开窗前没有的窗口里贴；桌面程序走 `pasteIntoAppWindow` 按程序名认→连续在前面 5 秒→Ctrl+N 新开对话→Ctrl+V（Windows 能力由 panel-window `loadLaunchWin32` 传进来）。🚨 **只按 Ctrl+V / Ctrl+N，绝不按回车**；启动句在 Ctrl+N 时就进剪贴板（紧跟着写再贴会被剪贴板工具占住、贴空）。自测和验证脚本（带隔离数据夹 `AGENT_PET_HUB_HOME`）只报会怎么做、不真开，🚨 别改回只看「常驻」——验证脚本也常驻，2026-09-24 就这样误开了 11 个真 Claude 窗口；`BOOKMARK_AGENT_SHORTCUT_DIR` 指向假快捷方式夹时才真开（真机验证用） |
@@ -56,7 +57,7 @@ BookmarkStore（testkit 单测用）
 - 🚨 **热键 F1 在 testMode 不注册（app.ts 传 `hotkey: !testMode`），常驻显示同理（`resident: !testMode`），Ctrl+R 整程序重开同理（`liveRestart: !testMode`），别把守卫拆了**——自测会跟真机抢全局热键/弹窗捣乱，也会把测试进程重启掉。
 - 🚨 **Ctrl+R＝「升级」（2026-10-24）**：标题栏版本号旁的「升级」钮和 Ctrl+R 同一条路。`relaunchWithNewCode` 用 spawn 后台跑 `scripts/upgrade-build.mjs`（不用 spawnSync：以前编译那几秒整个桌宠卡死、按键攒着连编三遍），编译中再按接着等同一次；看板和桌宠小窗口（app.ts 挂的 before-input-event）都走它，进度一律发看板 `bookmark:reload-progress`。🚨 跑它的是桌宠自带的 `node_modules\electron\dist\electron.exe` 加 `ELECTRON_RUN_AS_NODE=1`，别换回 `npm run build`：电脑上的 node 是碰巧装的（根这边只有 Hermes 带的 22.23）。先编到 `.runtime\dist-next`，编过了才整夹换掉 dist（换不了退成逐个盖），编不过 dist 一个字不动、旧的照用。🚨 `scripts/copy-assets.mjs` 不许用 `fs.cpSync`：根这边唯一的 Node（Hermes 自带 22.23）碰中文路径就崩，Ctrl+R 每次「换新失败」。
 - 🚨 **开机加载完就显示（2026-10-24）**：`initBookmarkPanel` 页面没加载完要设 `pendingShow`，以前漏了，开机每次干等 6 秒兜底。验证脚本（`isIsolatedRun`）故意不设、照旧 6 秒：一加载完就显示的话测试窗口马上沉到真桌面底下，截图常卡死（原因没挖到底）。
-- 🚨 **真机看板里 Ctrl+R = 编译源码 + 整程序重开**（跟脑图一样，等几秒正常），不是刷新当前页面。开机和手点必须走项目根 `入口（开发版·跑源码）` 那个门面，不许再指 `release-0.1.xx`。
+- 🚨 **真机看板里 Ctrl+R = 编译源码 + 整程序重开**（跟脑图一样，等几秒正常），不是刷新当前页面。开机和手点必须走程序夹 `入口\` 那个门面（唯一入口）。
 - 🚨 **看板永远常驻显示（改版三 2026-09-11 拍板）**：旧 F3/托盘的显示/收起逻辑已撤，别加回收起路径；托盘「书签台」入口现在的动作 = F1 同款置顶开关（提上来/沉回去）。
 - 🚨 **F1 置顶必须走 SetWindowPos(HWND_TOPMOST)，别碰 Electron alwaysOnTop**——置顶样式和桌宠窗口的 alwaysOnTop(floating) 是两套机制，混用会抢层级打架；沉回时先 NOTOPMOST 摘样式再 BOTTOM。🚨 **置顶期间 2 秒沉底兜底和失焦沉底都不许发 BOTTOM**：微软文档原话，对置顶窗口发 HWND_BOTTOM 会直接摘掉置顶、沉到最底——2026-10-13 前「F1 提上来鼠标一动就没了」就是这个。现在置顶时兜底跳过，点了看板外面（失焦）走 toggleBoardPin 收起；F1 置顶顺手 focus，失焦才认得出来。
 - 🚨 **右键菜单、设置浮层在外面一按下就收（2026-10-13，设定12）**：挂 `window` 的 pointerdown 抓最外层，左键右键都算，窗口失焦也收。别改回 document 的 click——点条目文字会被「进改字」的 stopPropagation 截走，菜单就关不掉了。
@@ -99,7 +100,7 @@ BookmarkStore（testkit 单测用）
 ## 验收
 
 **只改了本块，就只跑下面这几关**；桌宠自己的 `controls` / `smoke` / `screenshot` / `lifecycle` 不用陪跑。
-动了两边共用的（`src\app.ts`、`src\shared\`、打包、`入口（开发版·跑源码）`、Ctrl+R 重开）才两边都跑。
+动了两边共用的（`src\app.ts`、`src\shared\`、`入口\`、Ctrl+R 重开）才两边都跑。
 已知基线（2026-10-13 重跑，改之前就红，不算新红）：`verify-bookmark-handoff.mjs` 2 项——①「专区是最后一块、＋加Agent 按钮在它上方」（＋加Agent 早挪进页签栏的「＋组」，脚本还在找旧按钮）、⑦「专区空态提示在」（空态提示早拿掉了）。脚本没跟上界面，不是功能坏了。
 
 1. `npm run build` 过

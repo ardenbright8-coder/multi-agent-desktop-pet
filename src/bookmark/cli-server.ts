@@ -16,6 +16,10 @@ import { composeForAgent } from "./templates";
 import { parseDispatchArgs, type DispatchInput } from "./dispatch-cli";
 import { formatBrief, formatShow, indexBoard, parseShowSpec, type BoardNames } from "./board-index";
 import { imagesForAgent } from "./inline-images";
+import { checklistProgress, formatPending, lastProgress, parseChecklist, type ChecklistItem } from "./checklist";
+
+/** bookmark-cli.mjs 交清单前先在本地查格式，写错了不用连看板就报。 */
+export { parseChecklist };
 
 const log = createLogger("bookmark");
 
@@ -33,6 +37,9 @@ export interface CliRecord {
   forSystem?: string | null;
   /** 交接单管着哪几条（条目 id，2026-10-28）：done 时一起删。 */
   links?: string[];
+  /** 打勾清单 / 边干边记的进度（2026-10-28）；老适配器可以不给。 */
+  checklist?: ChecklistItem[];
+  progress?: string[];
   /** list 出口会把文件名展开成 attachmentsRoot 下的完整路径。 */
   attachments: string[];
   createdAt: string;
@@ -60,6 +67,11 @@ export interface CliStoreAdapter {
   heldHandoff?(by: string): CliRecord | undefined;
   supersede?(oldId: string, newId: string): void;
   appendProgress?(id: string, by: string, text: string): CliRecord;
+  /** 打勾清单（2026-10-28）：交一份整理好的清单 / 勾一项（拨开关，全勾完自动收掉）。 */
+  setChecklist?(id: string, items: ChecklistItem[], by: string): CliRecord;
+  tick?(id: string, no: string, by: string | null): { record: CliRecord; done: number; total: number; closed: boolean; linksRemoved: number };
+  /** 「原话」那份副本的完整路径（有清单才有）；没有返回 null。 */
+  originalFile?(id: string): string | null;
   list(): CliRecord[];
   /** 删除一条（交接完自删用）；没找到返回 false。 */
   remove(id: string): boolean;
@@ -108,7 +120,9 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "log" | "dispatch" | "show" | "paihuo" | "launch";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "log" | "checklist" | "tick" | "dispatch" | "show" | "paihuo" | "launch";
+  /** tick 要勾的项号（可以一次几个：勾 <单号> 2.1 2.2）。 */
+  nos?: string[];
   /** handoff 的 --closes：这张交接单管着哪几条（号码或 id，逗号隔开），done 时一起删。 */
   closes?: string;
   /** launch 的 Pi 模型（「供应商/模型」，不写就用 Pi 上次记的）。 */
@@ -144,6 +158,7 @@ const CLI_USAGE =
   '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <号码：7 / 7-9 / 7,8,9 / 捆2>（号码全板统一，只读点名的全文）| '
   + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
   + 'handoff "标题" [--to Agent名] [--detail 详情] [--for 系统名：交给另一套 Windows（根／燊一修）时才写] [--by 你的窗口名：你领着交接单时写，新单顶掉旧单] [--closes 号码,号码：这张管着的条目，done 时一起删] | log <条目id> --by 窗口名 --text "一句进度" | remove <条目id> | '
+  + '清单 <单号或id> --file 清单.md --by 窗口名（交整理好的打勾清单：- [ ] 1 那件事 ／ 缩进 - [ ] 1.1 小项）| 勾 <单号或id> 2.1 [2.2 …]（拨开关，再勾一次取消；全勾完单子自动收掉）| '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
   + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名 | '
   + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）| '
@@ -184,6 +199,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     return { command, target, model, coding, json: argv.includes("--json"), attach: [] };
   }
   if (command === "next" || command === "done" || command === "release" || command === "report" || command === "log") return parseClaimArgs(command, argv);
+  if (command === "清单" || command === "checklist" || command === "勾" || command === "tick") return parseChecklistArgs(command === "清单" || command === "checklist" ? "checklist" : "tick", argv);
   if (command === "show") {
     // 号码全板统一（2026-10-15）：直接写号码就行；前面多写一个组名也认（不在那组时会提一句）
     const rest = argv.slice(1).filter((a) => a !== "--json");
@@ -329,6 +345,44 @@ function parseClaimArgs(command: "next" | "done" | "release" | "report" | "log",
   return args;
 }
 
+/** 打勾清单两个命令（2026-10-28）：清单 <单号> --file 清单.md --by 窗口名；勾 <单号> 2.1 [2.2 …] [--by 窗口名]。
+ *  单号是屏幕上的号码或条目 id，看板那边换。 */
+function parseChecklistArgs(command: "checklist" | "tick", argv: string[]): CliArgs {
+  const name = command === "checklist" ? "清单" : "勾";
+  let target: string | undefined;
+  let by: string | undefined;
+  let file: string | undefined;
+  const nos: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    const flag = argv[i];
+    if (flag === "--by") {
+      by = argv[++i]?.trim();
+      if (!by) throw new Error("--by 后面要跟你的窗口名（领活时起的，如 Claude-3）");
+    } else if (flag === "--file" && command === "checklist") {
+      file = argv[++i];
+      if (!file) throw new Error("--file 后面要跟清单文件路径（md，一行一项 - [ ] 1 那件事）");
+    } else if (flag === "--json") {
+      continue;
+    } else if (flag.startsWith("--")) {
+      throw new Error(`不认识的参数 ${flag}。写法：${command === "checklist" ? "清单 <单号> --file 清单.md --by 窗口名" : "勾 <单号> 2.1 [2.2 …]"}`);
+    } else if (target == null) {
+      target = flag;
+    } else if (command === "tick") {
+      nos.push(...flag.split(/[,，、]/).map((x) => x.trim()).filter(Boolean));
+    } else {
+      throw new Error(`多了一个参数 ${flag}。写法：清单 <单号> --file 清单.md --by 窗口名`);
+    }
+  }
+  if (!target) throw new Error(`${name} 后面要跟单号（屏幕上的号码，或领活那段话里的条目 id）`);
+  if (command === "checklist") {
+    if (!file) throw new Error("清单 缺 --file 清单.md：先把整理好的清单写成文件（一行一项 - [ ] 1 那件事，小项缩进两格 - [ ] 1.1）");
+    if (!by) throw new Error("清单 缺 --by 窗口名（领活那段话里有，比如 --by Claude-3）");
+    return { command, target, by, file, json: argv.includes("--json"), attach: [] };
+  }
+  if (!nos.length) throw new Error("勾 后面要跟项号：勾 <单号> 2.1（一次几项写 2.1 2.2）");
+  return { command, target, by, nos, json: argv.includes("--json"), attach: [] };
+}
+
 /** 派活单文件（设定23）：JSON，一个数组或 { cards: [...] }，每张 { text 标题, detail 完整单子, to 组名 }（也认 标题/详情/组）。
  *  每张必须写一行「只许动：文件a；文件b」（不改文件写「只许动：无」），一键启动前靠它查两张单子撞没撞文件。 */
 export function parsePaihuoCards(raw: string, defaultTo?: string): { text: string; detail: string | null; assignee: string }[] {
@@ -356,7 +410,7 @@ export function parsePaihuoCards(raw: string, defaultTo?: string): { text: strin
 
 /** 领到活以后给 AI 看的整段话。🚨 所有 AI（Claude/Codex/Pi/Hermes）看到的都是这一份，规矩只在这里写一次。 */
 export function formatClaimMessage(
-  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep"; cooperation?: boolean; bundleId?: string; coordinator?: string; itemFile?: string | null },
+  reply: { item: CliRecord | null; prompt: string | null; position: number; total: number; remaining: number; busy: string[]; mode?: "day" | "sleep"; cooperation?: boolean; bundleId?: string; coordinator?: string; itemFile?: string | null; originalFile?: string | null; lastProgress?: string | null },
   ctx: { cli: string; target?: string; group?: string; by: string; coding: boolean },
 ): string {
   // 长路径只给一次（2026-10-15 省字模板：原来同一条路径每段重复 4 遍），下面命令都写「看板 …」
@@ -386,11 +440,17 @@ export function formatClaimMessage(
   }
   const id = reply.item.id;
   const forSystem = reply.item.forSystem;
+  const checklist = reply.item.checklist?.length ? reply.item.checklist : null;
   const handoffTip = reply.item.kind === "handoff"
-    ? `【交接单接力】每干完一步记一句：${run(`log ${id} --by ${ctx.by} --text "干完了啥、下一步啥"`)}（不用读整张）。干不完要交接：${run(`handoff "标题" --by ${ctx.by} --detail "…"`)}，新单自动顶掉这张。${reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，done 时一起删。` : ""}`
+    ? `【交接单接力】每干完一步记一句：${run(`log ${id} --by ${ctx.by} --text "干完了啥、下一步啥"`)}（不用读整张）。干不完要交接：${run(`handoff "标题" --by ${ctx.by} --detail "…"`)}，新单自动顶掉这张。${reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，${checklist ? "全勾完" : "done"} 时一起删。` : ""}`
+    : "";
+  // 口语单子还没有清单（2026-10-28 用户：理解完整理成结构化的，跟我对齐后替换进去）
+  const organizeTip = reply.item.kind === "handoff" && !checklist
+    ? `【先整理清单】这张还没有打勾清单。先读下面的原话，整理成有编号的两层清单（一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事），在对话里给用户看一眼，他点头后写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}，再一项项干。`
     : "";
   const fileLine = [
     handoffTip,
+    organizeTip,
     forSystem ? `【交给 ${forSystem}】这张是写给「${forSystem}」那套 Windows 的。先认清你在哪套上（看你的底层设定或家目录），不是 ${forSystem} 就别干，照最后一条放回去，跟用户说一声。` : "",
     reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "",
   ].filter(Boolean).join(String.fromCharCode(10));
@@ -422,6 +482,23 @@ export function formatClaimMessage(
   const where = group
     ? `${group} 组的第 ${reply.position}/${reply.total} 条`
     : reply.total > 1 ? `这一捆的第 ${reply.position}/${reply.total} 条` : "这一条";
+  // 有打勾清单（2026-10-28）：只吐没勾的几行＋最后一句进度，不吐整张、不吐原话。全勾完自动收，不用 done。
+  if (checklist && !sleep) {
+    const { done, total } = checklistProgress(checklist);
+    return [
+      `【看板领活】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
+      ...(fileLine ? [fileLine] : []),
+      alias,
+      "",
+      `【打勾清单 ${done}/${total}】还没勾的：`,
+      formatPending(checklist),
+      ...(reply.lastProgress ? [`最后一句进度：${reply.lastProgress}`] : []),
+      "",
+      ...checklistRules(id),
+      ...(reply.originalFile ? [`4. 原话平时不用读，清单对不上、出了问题才翻：${reply.originalFile}`] : []),
+      `${reply.originalFile ? 5 : 4}. 干不下去、要换人：${run(`release ${id} --by ${ctx.by}`)}`,
+    ].join("\n");
+  }
   if (sleep) {
     return [
       `【看板领活 · 🌙 睡觉档】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
@@ -646,7 +723,10 @@ export function handleCliRequest(
   if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report" || path === "/log")) {
     return handleClaimRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
-  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /launch | /remove | /next | /done | /release | /report | GET /list | /view）" } };
+  if (method === "POST" && (path === "/checklist" || path === "/tick")) {
+    return handleChecklistRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
+  }
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /launch | /remove | /next | /done | /release | /report | /log | /checklist | /tick | GET /list | /view）" } };
 }
 
 /** 命令行 launch（2026-10-16）：开窗要等一个个贴完，是异步的，单独一个口子；token 照样查。 */
@@ -726,6 +806,8 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
           bundleId: got.bundleId,
           coordinator: got.coordinator,
           itemFile: got.record ? safeItemFile(store, got.record.id) : null,
+          originalFile: got.record?.checklist?.length ? safeOriginalFile(store, got.record.id) : null,
+          lastProgress: got.record ? lastProgress(got.record) : null,
         },
       };
     }
@@ -768,9 +850,94 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
   }
 }
 
+/** 单号认法：屏幕上的号码按看板现在的数法换成那条，条目 id 原样认。 */
+function resolveRecord(ctx: CliRequestContext, token: string): CliRecord | undefined {
+  const all = ctx.store.list();
+  if (/^\d+$/.test(token)) {
+    return indexBoard(all, ctx.store.boardNames?.().agents ?? []).flatMap((g) => g.rows).find((row) => row.no === Number(token))?.record;
+  }
+  return all.find((r) => r.id === token);
+}
+
+/** 打勾清单两个口子（2026-10-28）。store 抛的错（不是你领的、项号对不上）原样回给 AI，400。 */
+function handleChecklistRequest(path: string, raw: Record<string, unknown>, ctx: CliRequestContext): CliReply {
+  const store = ctx.store;
+  const token = String(raw.id ?? "").trim();
+  if (!token) return { status: 400, body: { ok: false, error: "缺单号（屏幕上的号码或条目 id）" } };
+  const record = resolveRecord(ctx, token);
+  if (!record) return { status: 404, body: { ok: false, error: `看板上找不到 ${token}（全勾完的单子会自动收掉；先 list 看号码）` } };
+  const changed = () => {
+    try {
+      ctx.onChanged?.();
+    } catch {
+      /* 刷新失败无所谓 */
+    }
+  };
+  try {
+    if (path === "/checklist") {
+      if (!store.setChecklist) return { status: 500, body: { ok: false, error: "看板还不支持打勾清单（看板里点「升级」换新版）" } };
+      const by = String(raw.by ?? "").trim();
+      if (!by) return { status: 400, body: { ok: false, error: "缺 --by 窗口名" } };
+      const items = parseChecklist(String(raw.md ?? ""));
+      const saved = store.setChecklist(record.id, items, by);
+      changed();
+      const { done, total } = checklistProgress(saved.checklist);
+      return { status: 200, body: { ok: true, id: saved.id, done, total, items: saved.checklist?.length ?? 0 } };
+    }
+    if (!store.tick) return { status: 500, body: { ok: false, error: "看板还不支持打勾（看板里点「升级」换新版）" } };
+    const nos = (Array.isArray(raw.nos) ? raw.nos : [raw.no]).map((x) => String(x ?? "").trim()).filter(Boolean);
+    if (!nos.length) return { status: 400, body: { ok: false, error: "缺项号：勾 <单号> 2.1" } };
+    const by = typeof raw.by === "string" && raw.by.trim() ? raw.by.trim() : null;
+    const flips: { no: string; on: boolean }[] = [];
+    let last: ReturnType<NonNullable<CliStoreAdapter["tick"]>> | null = null;
+    for (const no of nos) {
+      last = store.tick(record.id, no, by);
+      flips.push({ no, on: Boolean(last.record.checklist?.find((x) => x.no === no)?.done) });
+      if (last.closed) break;
+    }
+    changed();
+    return { status: 200, body: { ok: true, flips, done: last!.done, total: last!.total, closed: last!.closed, linksRemoved: last!.linksRemoved } };
+  } catch (error) {
+    return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
+/** 有清单的单子怎么干（2026-10-28 用户拍板）：领活和交清单回的都是这几行，规矩只写这一处。 */
+function checklistRules(id: string): string[] {
+  return [
+    "—— 干活规矩（有清单的单子，所有 AI 都一样）——",
+    "1. 照没勾的一项项干。干完一项马上勾（拨开关，勾错了再敲一次取消）：",
+    `   看板 勾 ${id} 2.1`,
+    "2. 中途改了主意（原来那项不走了、换了办法）＝那一项的目的已达到，直接勾掉；不重写清单、不改原话。",
+    "3. 全勾完单子自动收掉、管着的条目一起删，不用 done、不用问用户；跟他一句话说干完了就行。",
+  ];
+}
+
+/** 交完清单的回话：交了几项，接着怎么干。 */
+export function formatChecklistSaved(data: { id: string; done: number; total: number; items: number }): string {
+  return [`☑ 清单交进去了：${data.total} 件事、共 ${data.items} 项（${data.done}/${data.total}）。`, ...checklistRules(data.id)].join("\n");
+}
+
+/** 打勾的回话：一行说清勾了啥、进度几；全勾完说一声收掉了。 */
+export function formatTickResult(data: { flips: { no: string; on: boolean }[]; done: number; total: number; closed: boolean; linksRemoved: number }): string {
+  if (data.closed) {
+    return `✅ 全勾完了（${data.total}/${data.total}），单子已自动收掉${data.linksRemoved ? `，管着的 ${data.linksRemoved} 条一起删了` : ""}，记进了做完记录。跟用户一句话说干完了就行，不用 done。`;
+  }
+  const what = data.flips.map((f) => `${f.on ? "✔" : "○"} ${f.no}${f.on ? "" : " 取消勾"}`).join("  ");
+  return `${what}（${data.done}/${data.total}）`;
+}
+
 function safeItemFile(store: CliStoreAdapter, id: string): string | null {
   try {
     return store.itemFile?.(id) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function safeOriginalFile(store: CliStoreAdapter, id: string): string | null {
+  try {
+    return store.originalFile?.(id) ?? null;
   } catch {
     return null;
   }

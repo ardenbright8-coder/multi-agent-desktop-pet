@@ -128,6 +128,44 @@ function bmClock(ms) {
   const d = new Date(Number(ms) || 0);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+// 打勾清单（2026-10-28 用户：清单显示成能点的小方框，我也能点着勾）：一项一行，小项缩进；点一下拨开关，点错 Ctrl+Z。
+// 小项全勾完上一层自己勾上；全勾完这张自动收掉（跟 AI 敲「勾」同一条路）。
+function bmBuildChecklist(record) {
+  const box = document.createElement("div");
+  box.className = "task-checklist";
+  const tops = record.checklist.filter((x) => !x.no.includes("."));
+  const head = document.createElement("div");
+  head.className = "checklist-head";
+  head.textContent = `打勾清单 ${tops.filter((x) => x.done).length}/${tops.length}`;
+  box.appendChild(head);
+  for (const it of record.checklist) {
+    const row = document.createElement("div");
+    row.className = `checklist-item${it.no.includes(".") ? " sub" : ""}${it.done ? " done" : ""}`;
+    const mark = document.createElement("span");
+    mark.className = "checklist-box";
+    mark.textContent = it.done ? "✓" : "";
+    const no = document.createElement("span");
+    no.className = "checklist-no";
+    no.textContent = it.no;
+    const text = document.createElement("span");
+    text.className = "checklist-text";
+    text.textContent = it.text;
+    row.append(mark, no, text);
+    row.title = it.done ? `${it.by || ""} ${it.at ? bmClock(Date.parse(it.at)) : ""} 勾的，点一下取消` : "点一下勾上";
+    row.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        const res = await window.bookmark.tick(record.id, it.no);
+        if (res.closed) bmToast("全勾完了，这张自动收掉了（点错了按 Ctrl+Z 拿回来）", 4000);
+        void bmRefresh();
+      } catch (error) {
+        bmShowError(bmErrorText(error));
+      }
+    });
+    box.appendChild(row);
+  }
+  return box;
+}
 function bmReportJustRelaunched() {
   const key = "bm-just-relaunched";
   const justAt = Number(window.localStorage.getItem(key) || 0);
@@ -1390,6 +1428,8 @@ function bmBuildTask(record, groupKey, order) {
       fold.textContent = detail.hidden ? "▸ 详情" : "▾ 收起";
     });
   }
+  // 打勾清单（2026-10-28）：一直露着，原话照旧收在小标题下面
+  if (record.checklist && record.checklist.length) body.appendChild(bmBuildChecklist(record));
   // 睡觉档干完待审（设定18）：AI 的大白话报告挂在条目下面，用户早上看，点「可以，删掉」才删。
   if (record.report) {
     item.classList.add("reported");

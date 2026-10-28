@@ -43,6 +43,18 @@ if (args.command === "paihuo") {
   }
 }
 
+// 1c. 打勾清单（2026-10-28）：先读清单文件、查格式，写错了不用连看板就报
+let checklistMd = null;
+if (args.command === "checklist") {
+  if (!existsSync(args.file)) die(`清单文件找不到：${args.file}`, 2);
+  checklistMd = readFileSync(args.file, "utf8");
+  try {
+    cli.parseChecklist(checklistMd);
+  } catch (error) {
+    die(`清单不对：${error?.message ?? error}`, 2);
+  }
+}
+
 // 2. 端口发现：桌宠没运行就短退出
 if (!existsSync(portFile)) die("看板没开（桌宠没运行）。先把桌宠跑起来再用 CLI。");
 let cfg;
@@ -135,6 +147,17 @@ try {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5_000),
     });
+  } else if (args.command === "checklist" || args.command === "tick") {
+    // 单号（屏幕号码或条目 id）由看板那边换成条目
+    const payload = args.command === "checklist"
+      ? { id: args.target, by: args.by, md: checklistMd }
+      : { id: args.target, by: args.by ?? null, nos: args.nos };
+    res = await fetch(`${base}/${args.command}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    });
   } else if (args.command === "show" || (args.command === "list" && !args.json)) {
     // 按号码读（2026-10-13）：list 不带 --json 只列号码和标题；show 只吐点名那几条的全文
     const params = new URLSearchParams();
@@ -207,6 +230,10 @@ if (args.command === 'dispatch') {
   console.log(args.json ? JSON.stringify(data) : text);
 } else if (args.command === "log") {
   console.log(args.json ? JSON.stringify(data) : "📝 记上了。");
+} else if (args.command === "checklist") {
+  console.log(args.json ? JSON.stringify(data) : cli.formatChecklistSaved(data));
+} else if (args.command === "tick") {
+  console.log(args.json ? JSON.stringify(data) : cli.formatTickResult(data));
 } else if (args.command === "release") {
   console.log(args.json ? JSON.stringify(data) : "↩️ 已放回去，别的窗口可以领了。");
 } else if (args.command === "show" || !args.json) {

@@ -80,6 +80,8 @@ test("边干边记：领着的窗口追加一句进度，不是它领的报错",
     const id = store.add({ text: "单子", kind: "handoff", detail: "原来的详情" }).id;
     store.claimNext(id, "Claude-3");
     assert.equal(post(store, "/log", { id, by: "Claude-3", text: "改好了菜单" }).status, 200);
-    assert.match(store.list()[0].detail ?? "", /^原来的详情\n【进度 \d+-\d+ \d\d:\d\d】改好了菜单$/);
+    // 进度单独一栏（2026-10-28 打勾清单：原话不动）
+    assert.equal(store.list()[0].detail, "原来的详情");
+    assert.match(store.list()[0].progress?.[0] ?? "", /^\d+-\d+ \d\d:\d\d Claude-3：改好了菜单$/);
     assert.equal(post(store, "/log", { id, by: "Claude-5", text: "乱记" }).status, 400);
   }));

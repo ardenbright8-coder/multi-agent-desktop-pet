@@ -2,13 +2,14 @@
 // 坏档不挡路：挪到 .corrupt-<时间戳> 存证后空库重来（照 events\event-journal 的先例）。
 
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { createLogger } from "../shared/log";
 import { attachmentsRoot, bookmarksDataPath } from "../shared/paths";
 
 import { reconcileImages } from "./inline-images";
+import { checklistAllDone, checklistProgress, normalizeChecklist, toggleItem, type ChecklistItem } from "./checklist";
 import { CoordinationStore } from "./coordination";
 import type { TaskBundle } from "./coordination";
 
@@ -60,6 +61,10 @@ export interface BookmarkRecord {
   forSystem: string | null;
   /** 交接单管着哪几条（2026-10-28 用户：干完了单子还挂着、越堆越多）：done 这张时连这几条一起删。没有就不带这个字段。 */
   links?: string[];
+  /** 打勾清单（2026-10-28）：干活的 AI 整理好交进来，一项项勾，全勾完这张自动收掉。没有就不带这个字段。 */
+  checklist?: ChecklistItem[];
+  /** 边干边记的进度（log 命令，一句一行「月-日 时:分 窗口名：一句」，最多留 30 句）。跟原话分开放，原话不动。 */
+  progress?: string[];
   /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
   attachments: string[];
   /** 捆号（2026-09-24 设定15）：同组里挨着的几条捆成一捆，一捆交给一个 AI 窗口。null = 没捆。 */
@@ -701,11 +706,72 @@ export class BookmarkStore {
     if (!record) throw new Error("没找到这条（可能已经删了）");
     if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     if (!String(userOk ?? "").trim()) throw new Error("缺用户确认：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进 --ok");
-    // 交接单管着的那几条一起删（2026-10-28 用户：干完了别让我一条条删）；别的窗口正领着的不动。
-    const linked = new Set(record.links ?? []);
-    this.records = this.records.filter((r) => r.id !== id && !(linked.has(r.id) && (!r.claimedBy || r.claimedBy === record.claimedBy)));
+    this.closeWithLinks(record);
     this.save();
     return record;
+  }
+
+  /** 删掉这张，连它管着的那几条（2026-10-28 用户：干完了别让我一条条删）；别的窗口正领着的不动。返回管着的删了几条。 */
+  private closeWithLinks(record: BookmarkRecord): number {
+    const linked = new Set(record.links ?? []);
+    const before = this.records.length;
+    this.records = this.records.filter((r) => r.id !== record.id && !(linked.has(r.id) && (!r.claimedBy || r.claimedBy === record.claimedBy)));
+    return before - this.records.length - 1;
+  }
+
+  /** 交打勾清单（2026-10-28）：AI 读完原话整理好、跟用户对齐后交进来，整份替换。原话（正文、详情）不动。
+   *  别的窗口领着的不许换；by 是交的窗口名。 */
+  setChecklist(id: string, items: ChecklistItem[], by: string): BookmarkRecord {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了）");
+    const who = String(by ?? "").trim();
+    if (record.claimedBy && record.claimedBy !== who) throw new Error(`这条是 ${record.claimedBy} 领着的，不是你的，清单交不进去`);
+    const list = normalizeChecklist(items);
+    if (!list) throw new Error("清单是空的");
+    record.checklist = list;
+    this.save();
+    return record;
+  }
+
+  /** 勾一项（拨开关，再勾一次取消）。by 不写＝领着它的窗口（看板上点的写「用户」）。
+   *  全勾完：这张自动收掉、管着的条目一起删，不用等用户说可以（2026-10-28 用户拍板），写一行进做完记录。 */
+  tick(id: string, no: string, by?: string | null): { record: BookmarkRecord; done: number; total: number; closed: boolean; linksRemoved: number } {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了：全勾完的单子会自动收掉）");
+    if (!record.checklist?.length) throw new Error("这条还没有打勾清单：先整理好、跟用户对齐，再用「清单」命令交进来");
+    const who = String(by ?? "").trim() || record.claimedBy || "AI";
+    record.checklist = toggleItem(record.checklist, no, who, new Date().toISOString());
+    const { done, total } = checklistProgress(record.checklist);
+    if (!checklistAllDone(record.checklist)) {
+      this.save();
+      return { record, done, total, closed: false, linksRemoved: 0 };
+    }
+    const linksRemoved = this.closeWithLinks(record);
+    this.save();
+    this.writeDoneLog(record, who, total, linksRemoved);
+    if (record.dedupeKey) this.rememberRemoved(record.dedupeKey);
+    return { record, done, total, closed: true, linksRemoved };
+  }
+
+  /** 做完记录（2026-10-28 用户：全勾完自动收，写一行就行，只留最近的，不用我删）：看板数据夹里一份 md，新的在上面。 */
+  private writeDoneLog(record: BookmarkRecord, by: string, total: number, linksRemoved: number): void {
+    try {
+      const file = doneLogPath(this.path);
+      const old = existsSync(file) ? readFileSync(file, "utf8").replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.startsWith("- ")) : [];
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const when = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const title = record.text.replace(IMAGE_MARK, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+      const line = `- ${when} 「${title}」${total} 项全勾完，${by} 勾的最后一项，自动收掉${linksRemoved ? `（连管着的 ${linksRemoved} 条）` : ""}`;
+      const lines = [line, ...old].slice(0, DONE_LOG_MAX);
+      const head = `# 做完记录（看板自动写·只留最近 ${DONE_LOG_MAX} 条）\n\n打勾清单全勾完、自动收掉的单子记在这。新的在上面，旧的自己掉出去，不用删。\n\n`;
+      writeFileSync(`${file}.tmp`, head + lines.join("\n") + "\n", "utf8");
+      renameSync(`${file}.tmp`, file);
+    } catch (error) {
+      log.出事("做完记录写不下来（单子已经收掉了）", error, "store");
+    }
   }
 
   /** 新交接单顶掉旧的（2026-10-28 用户：交接单越堆越多）：接着干的窗口写新单时，它手里领着的那张旧单删掉，旧单管的那几条并给新单。 */
@@ -732,7 +798,8 @@ export class BookmarkStore {
     if (!words) throw new Error("记的那句是空的");
     const d = new Date();
     const stamp = `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    record.detail = `${record.detail ? `${record.detail}\n` : ""}【进度 ${stamp}】${words}`;
+    // 进度单独一栏（2026-10-28 打勾清单：原话收着不动，干活只看清单和最后一句进度）
+    record.progress = [...(record.progress ?? []), `${stamp} ${record.claimedBy}：${words}`].slice(-MAX_PROGRESS);
     this.save();
     return record;
   }
@@ -1023,7 +1090,15 @@ export class BookmarkStore {
           reportedAt: typeof record.reportedAt === "string" ? record.reportedAt : null,
           sortedAt: typeof record.sortedAt === "string" ? record.sortedAt : null,
           userPinned: record.userPinned === true,
-        }));
+          checklist: normalizeChecklist(record.checklist),
+          progress: Array.isArray(record.progress) ? record.progress.filter((x): x is string => typeof x === "string").slice(-MAX_PROGRESS) : undefined,
+        }))
+        .map((record) => {
+          // 没有的就不带这两个字段（跟 links 一样），存出去的 JSON 不多两个空字段
+          if (!record.checklist) delete record.checklist;
+          if (!record.progress?.length) delete record.progress;
+          return record;
+        });
     } catch (error) {
       const backup = `${this.path}.corrupt-${Date.now()}`;
       try {
@@ -1096,6 +1171,16 @@ export class BookmarkStore {
   }
 
   private metaDirty = false;
+}
+
+/** 进度最多留几句。 */
+const MAX_PROGRESS = 30;
+/** 做完记录最多留几条。 */
+const DONE_LOG_MAX = 50;
+
+/** 做完记录那份 md：跟 bookmarks.json 同夹。 */
+export function doneLogPath(storePath: string): string {
+  return join(dirname(storePath), "做完记录（最近50条·看板自动写）.md");
 }
 
 /** 看板上在同一组的判据：派给谁（大小写不敏感）；没派的交接单一组、没派的普通条目一组。 */

@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   setForSystem: (id: string, name: string | null) => ipcRenderer.invoke("bookmark:set-for-system", { id, name }),
   // 输入行自动存档（改版三）：草稿已入库后边写边改同一条。
   updateText: (id: string, text: string, url: string | null) => ipcRenderer.invoke("bookmark:update-text", { id, text, url }),
+  /** 勾打勾清单的一项（拨开关）；全勾完 closed＝这张自动收掉了。 */
+  tick: (id: string, no: string) => ipcRenderer.invoke("bookmark:tick", { id, no }) as Promise<{ done: number; total: number; closed: boolean; linksRemoved: number }>,
   /** 改详情（交接单展开的那段）；清空＝不要详情了。 */
   updateDetail: (id: string, detail: string) => ipcRenderer.invoke("bookmark:update-detail", { id, detail }),
   /** Ctrl+Z 撤回看板上最近一步；返回撤的是哪一步，没得撤是 null。 */

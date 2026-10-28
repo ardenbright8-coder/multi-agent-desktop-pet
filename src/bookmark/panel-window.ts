@@ -36,7 +36,7 @@ import {
 } from "./launch";
 import { registerBookmarkImageIpc } from "./image-ipc";
 import { imagesForAgent } from "./inline-images";
-import { findFileConflicts, formatItemFile, itemFilePath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
+import { findFileConflicts, formatItemFiles, itemFilePath, itemOriginalPath, ITEM_FILES_DIR, parseAllowedFiles, syncItemFiles } from "./item-files";
 import { readPiModels, setPiModel } from "./pi-model";
 import { scheduleVectorReindex, vectorSearch } from "./vector-search";
 import { parseBoardMode, type BoardMode } from "./sleep-mode";
@@ -482,6 +482,18 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           log.记(`新交接单顶掉旧单 ${oldId}`, "cli");
         },
         appendProgress: (id, by, text) => requireStore().appendProgress(id, by, text),
+        // 打勾清单（2026-10-28）：交清单、勾一项；全勾完 store 自己收掉这张
+        setChecklist: (id, items, by) => requireStore().setChecklist(id, items, by),
+        tick: (id, no, by) => {
+          const res = requireStore().tick(id, no, by);
+          if (res.closed) log.记(`打勾清单全勾完，自动收掉「${res.record.text.slice(0, 30)}」`, "cli");
+          return res;
+        },
+        originalFile: (id) => {
+          itemFileFor(id);
+          const path = itemOriginalPath(itemFilesDirectory(), id);
+          return existsSync(path) ? path : null;
+        },
         // 睡觉档（设定18）：按组领、干完写大白话报告、告诉 AI 现在是哪一档。
         claimInGroup: (group, by) => requireStore().claimInGroup(group, by),
         report: (id, by, text) => {
@@ -938,6 +950,12 @@ function registerIpc(): void {
       return act("改字", () => requireStore().updateText(String(id), String(text ?? ""), url ? String(url) : null), textKey);
     },
   );
+  // 打勾清单（2026-10-28 用户：看板上他也能点着勾）：包 act，点错 Ctrl+Z；全勾完一样自动收掉
+  ipcMain.handle("bookmark:tick", (_event, payload: unknown) => {
+    const { id, no } = (payload ?? {}) as { id?: unknown; no?: unknown };
+    const res = act("勾清单", () => requireStore().tick(String(id ?? ""), String(no ?? ""), "用户"));
+    return { done: res.done, total: res.total, closed: res.closed, linksRemoved: res.linksRemoved };
+  });
   ipcMain.handle("bookmark:update-detail", (_event, payload: unknown) => {
     const { id, detail } = (payload ?? {}) as { id?: unknown; detail?: unknown };
     return act("改详情", () => requireStore().updateDetail(String(id ?? ""), String(detail ?? "")), (r) => (r ? `detail:${r.id}` : null));
@@ -1520,7 +1538,7 @@ function syncItemFilesNow(): void {
   syncItemFiles(
     itemFilesDirectory(),
     store.list(),
-    (r) => formatItemFile(r, { group: groupLabelOf(r), title: titles[r.id]?.title ?? null, images: (t) => imagesForAgent(t) }),
+    (r) => formatItemFiles(r, { group: groupLabelOf(r), title: titles[r.id]?.title ?? null, images: (t) => imagesForAgent(t) }),
     itemFileCache,
   );
 }
