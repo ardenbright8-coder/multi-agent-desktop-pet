@@ -900,6 +900,13 @@ function bmBindBundleDrag(head, bundleId, groupKey) {
         if (!armed) return;
       }
       ev.preventDefault();
+      // 捆标题拖出看板窗口边（2026-10-28 用户）：看板里挪这次作废，整捆每条的单独文件一起拖出去
+      if (bmOutsideWindow(ev.clientX, ev.clientY)) {
+        const ids = members.map((m) => m.dataset.id).filter(Boolean);
+        finish(false);
+        void bmStartDragOut(ids);
+        return;
+      }
       ghost.style.left = (ev.clientX - 28) + "px";
       ghost.style.top = (ev.clientY - 18) + "px";
       bmClearDropMarks();
@@ -1070,7 +1077,7 @@ function bmBindDrag(opts) {
         const id = opts.idOf(row);
         finish(false);
         delete row.dataset.swallow;
-        void bmStartDragOut(id, event.clientX, event.clientY, row);
+        void bmStartDragOut([id]);
         return;
       }
       paint(event.clientX, event.clientY);
@@ -1095,69 +1102,30 @@ function bmOutsideWindow(x, y) {
 }
 
 /**
- * 按住条目拖出看板（2026-10-27 用户）：拖进 Pi、Claude Code、浏览器，放下就是
- * 「看板第 N 条的单独文件（只读这一份）：路径」这行字，AI 一看就知道是哪条。
- * 网页里不能凭空起系统拖拽，做法：在窗口边上摆一个能拖的小块，让主进程假按一下、挪一下，
- * 浏览器就对小块起系统拖拽；用户的左键本来就按着，系统接着跟真鼠标走，松手就放下。
- * 不拖文件：文件拖进浏览器会直接打开。
+ * 按住条目或捆标题拖出看板（2026-10-28 用户：拖不动，vivo 能拖）：拖的是这几条的单独文件，
+ * 走 Electron 自带的拖文件（vivo 补丁同一条路）。放进 Claude Code、Pi 贴路径，放进聊天框当附件。
+ * 主进程等松手才回来，回来前拖回看板上的东西一律不收。
  */
 let bmDragOutActive = false;
-async function bmStartDragOut(id, x, y, row) {
-  if (!id || bmDragOutActive || !window.bookmark.itemLine || !window.bookmark.dragOutPress) return;
+async function bmStartDragOut(ids) {
+  const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+  if (!list.length || bmDragOutActive || !window.bookmark.dragOutFiles) return;
   bmDragOutActive = true;
-  let line = "";
   try {
-    line = await window.bookmark.itemLine(id);
+    await window.bookmark.dragOutFiles(list);
   } catch (error) {
-    bmDragOutActive = false;
     bmShowError(bmErrorText(error));
-    return;
-  }
-  // 小块放在出界那一侧往里 20 像素，假挪往窗口里头走，别挪出去
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const cx = Math.min(Math.max(x, 20), w - 21);
-  const cy = Math.min(Math.max(y, 20), h - 21);
-  const dx = cx > w / 2 ? -1 : 1;
-  const carrier = document.createElement("div");
-  carrier.className = "drag-out-carrier";
-  carrier.draggable = true;
-  carrier.style.left = (cx - 15) + "px";
-  carrier.style.top = (cy - 15) + "px";
-  const width = Math.min(row.getBoundingClientRect().width, 360);
-  document.body.appendChild(carrier);
-  let started = false;
-  const cleanup = () => {
-    carrier.remove();
+  } finally {
     bmDragOutActive = false;
-  };
-  carrier.addEventListener("dragstart", (event) => {
-    started = true;
-    // 系统拖拽被别处取消时收不到 dragend：下次按鼠标顺手收掉
-    window.addEventListener("pointerdown", cleanup, { once: true, capture: true });
-    event.dataTransfer.setData("text/plain", line);
-    event.dataTransfer.effectAllowed = "copy";
-    // 拖着走的样子照旧是这一条（看板里的影子出了窗口就看不到，系统拖拽要自己的图）。
-    // 复制品去掉 id、截完图马上删，别让板上多出一条同号的被别处认成条目。
-    const image = row.cloneNode(true);
-    image.classList.remove("is-dragging", "drag-ghost");
-    image.classList.add("drag-out-image");
-    image.style.width = width + "px";
-    for (const el of [image, ...image.querySelectorAll("[data-id]")]) el.removeAttribute("data-id");
-    document.body.appendChild(image);
-    event.dataTransfer.setDragImage(image, 28, 18);
-    window.setTimeout(() => image.remove(), 0);
-  });
-  carrier.addEventListener("dragend", cleanup);
-  // 万一没起来（比如松手太快），一秒后收掉小块，别挡着点
-  window.setTimeout(() => { if (!started) cleanup(); }, 1000);
-  window.bookmark.dragOutPress({ x: cx, y: cy, dx });
+  }
 }
 
-// 拖出去又拖回看板上：看板不收这行字（别塞进改字框、别亮组头）
+// 拖出去又拖回看板上：看板不收这几个文件（别塞进改字框、别亮组头，也别让窗口把文件打开）
 for (const type of ["dragover", "drop"]) {
   document.addEventListener(type, (event) => {
-    if (bmDragOutActive) event.stopPropagation();
+    if (!bmDragOutActive) return;
+    event.stopPropagation();
+    event.preventDefault();
   }, true);
 }
 

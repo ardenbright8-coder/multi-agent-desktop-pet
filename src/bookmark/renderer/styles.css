@@ -258,8 +258,6 @@ body {
   transform: scale(1.02);
 }
 /* 拖出看板（2026-10-27）：假按的小块看不见；拖着走的那张图摆在窗口外，只给系统拖拽截图用 */
-.drag-out-carrier { position: fixed; z-index: 9999; width: 30px; height: 30px; opacity: 0; }
-.drag-out-image { position: fixed; left: 0; top: -2000px; pointer-events: none; }
 
 .task {
   display: flex;

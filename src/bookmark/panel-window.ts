@@ -13,7 +13,7 @@
 import { basename, join } from "node:path";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, net, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, nativeImage, net, screen, shell } from "electron";
 import { createLogger } from "../shared/log";
 import { writeJsonAtomic } from "../shared/atomic-file";
 import { attachmentsRoot, bookmarkAppearancePath, bookmarkDataDirectory, isIsolatedRun } from "../shared/paths";
@@ -1250,22 +1250,18 @@ function registerIpc(): void {
     clipboard.writeText(line);
     return { path, line };
   });
-  // 按住条目拖出看板（2026-10-27 用户）：拖的是同一行字，不动剪贴板
-  ipcMain.handle("bookmark:item-line", (_event, id: unknown) => itemFileLine(id).line);
-  // 网页里不能凭空起系统拖拽：在看板摆好的小块上假按一下、挪三下，浏览器就起系统拖拽，
-  // 用户左键本来按着，系统接着跟真鼠标走。坐标要乘字号（Ctrl 加减缩放过的）。
-  ipcMain.on("bookmark:drag-out-press", (event, at: unknown) => {
-    const raw = (at ?? {}) as { x?: unknown; y?: unknown; dx?: unknown };
-    const wc = event.sender;
-    const zoom = wc.getZoomFactor();
-    const x = Math.round(Number(raw.x) * zoom);
-    const y = Math.round(Number(raw.y) * zoom);
-    const dx = Number(raw.dx) < 0 ? -1 : 1;
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    wc.sendInputEvent({ type: "mouseDown", x, y, button: "left", clickCount: 1 });
-    for (let i = 1; i <= 3; i += 1) {
-      wc.sendInputEvent({ type: "mouseMove", x: x + dx * i * 4, y, button: "left", modifiers: ["leftbuttondown"] });
-    }
+  // 按住条目／捆标题拖出看板（2026-10-28 用户：拖不动，vivo 能拖）：走 Electron 自带的拖文件（vivo 补丁同一条路），
+  // 拖的是这几条的单独文件——放进 Claude Code、Pi 贴路径，放进聊天框当附件。
+  // 🚫 别改回「假按一下起拖一行字」（sendInputEvent）：系统根本不认，2026-10-28 真机拖进接收窗口一次都没进来。
+  // startDrag 一直等到松手才返回，界面等它回来再收尾。
+  ipcMain.handle("bookmark:drag-out-files", (event, ids: unknown) => {
+    const list = (Array.isArray(ids) ? ids : [ids]).map((id) => String(id ?? "")).filter(Boolean);
+    const files = list.map((id) => itemFileFor(id)).filter((p) => existsSync(p));
+    if (!files.length) throw new Error("这条已经不在了");
+    const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 32, height: 32 });
+    event.sender.startDrag({ file: files[0], files, icon });
+    log.记(`拖出看板：${files.length} 个文件`, "window");
+    return files.length;
   });
   // 大标题右键「复制路径」（2026-10-27 看板 01）：这一捆每条的单独文件一行一条，贴给 AI 只读这几份。
   ipcMain.handle("bookmark:bundle-files", (_event, bundleId: unknown) => {
