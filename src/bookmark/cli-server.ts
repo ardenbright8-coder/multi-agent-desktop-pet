@@ -495,6 +495,25 @@ export function formatClaimMessage(
       ...(reply.originalFile ? [`5. 原话平时不读，清单对不上、出了问题才翻：${reply.originalFile}`] : []),
     ].join("\n");
   }
+  // 睡觉档 + 有清单（2026-10-28 审）：照样只吐没勾的、一项项勾；他在睡觉没人商量，汇报用 report 挂在条目下面，接着领下一条
+  if (checklist && sleep) {
+    const { done, total } = checklistProgress(checklist);
+    return [
+      `【看板领活 · 🌙 睡觉档】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
+      ...(fileLine ? [fileLine] : []),
+      alias,
+      "",
+      `【打勾清单 ${done}/${total}】还没勾的：`,
+      formatPending(checklist),
+      ...(reply.lastProgress ? [`最后一句进度：${reply.lastProgress}`] : []),
+      "",
+      "—— 干活规矩（睡觉档、有清单的单子）——",
+      `1. 照没勾的一项项干，干完一项马上勾：${run(`勾 ${id} ${firstPending(checklist)}`)}。卡住的项不勾，跳过接着干别的；碰到要他拍板、有风险的事（删东西、动系统、花钱、发出去）也当卡住。`,
+      `2. 全勾完单子自动收掉，直接领下一条。没勾完的：照清单两层结构写汇报（✅ 做完 / ⏸ 做到一半 / ⛔ 做不了和原因，末尾写建议下一步），挂上等他早上看：${run(`report ${id} --by ${ctx.by} --text "汇报"`)}`,
+      `3. 接着领下一条，一直干到没有可领的：${run(`${nextCmd}${coding}`)}`,
+      `4. 额度快完、上下文快满：这张单子本身就是交接单。${run(`log ${id} --by ${ctx.by} --text "停在哪、下一步"`)}，再 ${run(`release ${id} --by ${ctx.by}`)}，然后停。`,
+    ].join("\n");
+  }
   if (sleep) {
     return [
       `【看板领活 · 🌙 睡觉档】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,

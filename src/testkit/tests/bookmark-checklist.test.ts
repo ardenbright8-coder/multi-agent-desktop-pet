@@ -146,6 +146,21 @@ test("领活：有清单只吐没勾的几行＋最后一句进度，不吐原�
     assert.match(msg, /D:\/x（原话）\.md/);
   }));
 
+test("睡觉档领有清单的单子：只吐没勾的、一项项勾，汇报用 report，接着领下一条", () =>
+  withStore((store) => {
+    const id = store.add({ text: "单子", assignee: "Claude", detail: "原话里的秘密细节" }).id;
+    const claim = store.claimInGroup("Claude", "C-夜");
+    store.setChecklist(id, parseChecklist(MD), "C-夜");
+    const rec = store.list().find((r) => r.id === claim.record!.id)!;
+    const msg = formatClaimMessage({ item: rec, prompt: "原话里的秘密细节", position: 1, total: 1, remaining: 0, busy: [], mode: "sleep" }, { cli: "x.mjs", group: "Claude", by: "C-夜", coding: false });
+    assert.match(msg, /🌙 睡觉档/);
+    assert.match(msg, /【打勾清单 0\/3】/);
+    assert.doesNotMatch(msg, /秘密细节/);
+    assert.match(msg, /看板 勾 \S+ 1\.1/);
+    assert.match(msg, /看板 report \S+ --by C-夜/);
+    assert.match(msg, /看板 next --to "Claude" --by C-夜/);
+  }));
+
 test("领着有清单的单子再写交接单：不顶掉、整张不写，叫它 log 再 release", () =>
   withStore((store) => {
     const id = store.add({ text: "有清单的单子", kind: "handoff" }).id;

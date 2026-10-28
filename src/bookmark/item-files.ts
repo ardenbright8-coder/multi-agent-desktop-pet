@@ -67,7 +67,7 @@ export function formatItemFiles(
   }
   const { done, total } = checklistProgress(record.checklist);
   lines.push(
-    `> 打勾清单：看板照数据现生成，别手改。干完一项敲 \`勾 ${record.id} 2.1\`（再敲一次取消）；全勾完这张自动收掉。原话收在同夹 \`${record.id}${ORIGINAL_SUFFIX}.md\`，平时不用读，清单对不上、出了问题才翻。`,
+    `> 打勾清单：看板照数据现生成，别手改。干完一项敲 \`看板 勾 ${record.id} <项号>\`（再敲一次取消），怎么干照领活时吐的规矩。原话收在同夹 \`${record.id}${ORIGINAL_SUFFIX}.md\`，平时不用读，清单对不上、出了问题才翻。`,
     "",
     `## 打勾清单（${done}/${total}）`,
     "",

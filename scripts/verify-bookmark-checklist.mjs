@@ -65,6 +65,28 @@ try {
   check('① 副本分两份：清单那份带方框、原话那份收着原话',
     /- \[x\] 1\.1 找到点了没反应的原因/.test(readFileSync(join(files, `${card2.id}.md`), 'utf8')) && /他说的一大段原话/.test(readFileSync(join(files, `${card2.id}（原话）.md`), 'utf8')));
 
+  // ①b 换窗口（2026-10-28 全面审）：有清单的单子本身就是交接单——写新单被拦，log＋release，新窗口接手看到最后一句进度
+  const before = (await page.evaluate(() => window.bookmark.list())).length;
+  const wrong = cli('handoff', '接着干', '--by', 'T-1', '--detail', 'x');
+  check('①b 领着有清单的单子再写交接单：被拦下、叫它 log 再 release、一张没多', /本身就是交接单/.test(wrong) && (await page.evaluate(() => window.bookmark.list())).length === before, wrong.trim().slice(0, 60));
+  cli('log', card2.id, '--by', 'T-1', '--text', '停在 1.2，等他拖');
+  cli('release', card2.id, '--by', 'T-1');
+  const take = cli('next', card2.id, '--by', 'T-2');
+  check('①b 新窗口接手：看到最后一句进度和没勾的，清单还在', /最后一句进度：.+T-1：停在 1\.2，等他拖/.test(take) && /【打勾清单 0\/3】/.test(take));
+  // ①c 钩子记下「这个窗口 → 这张单」，状态栏照着排点；放回去以后收起（钩子和状态栏在 E 盘装备夹，没有就跳过）
+  const gear = 'E:/个人AI资源管理/60_公用资源（钩子·skill·搜索引擎·可后期扩展）/Claude Code装备（键位·状态栏·外观·权限·两套共用）/02_状态栏（额度和上下文常驻显示）';
+  if (existsSync(join(gear, 'statusline.js'))) {
+    const sid = `verify-checklist-${Date.now()}`;
+    execFileSync(process.execPath, [join(gear, '看板领活-记下这窗口的单子.cjs')], { input: JSON.stringify({ session_id: sid, tool_input: { command: `node bookmark-cli.mjs next ${card2.id} --by T-2` }, tool_response: { stdout: take } }) });
+    const bar = () => execFileSync(process.execPath, [join(gear, 'statusline.js')], { input: JSON.stringify({ session_id: sid, model: { display_name: 'x' }, context_window: { used_percentage: 1 } }), env: { ...process.env, COLUMNS: '150' }, encoding: 'utf8' }).replace(/\x1b\[[0-9;]*m/g, '');
+    const shown = bar();
+    check('①c 状态栏：看板任务 0/3，一后面两个点（1.1 勾了）、二三各一个', /看板任务 0\/3 {4}一 ● ● {4}二 ● {4}三 ●/.test(shown), shown.split('\n')[1]);
+    cli('release', card2.id, '--by', 'T-2');
+    await new Promise((r) => setTimeout(r, 800)); // 看板存盘后约 0.3 秒才对齐单子文件
+    check('①c 放回去以后状态栏收起', !/看板任务/.test(bar()));
+    cli('next', card2.id, '--by', 'T-1');
+  }
+
   // ② 看板上：小方框，点着勾
   await page.evaluate(() => bmRefresh());
   await page.locator('#tab-groups').click();
