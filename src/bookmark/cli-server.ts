@@ -444,13 +444,11 @@ export function formatClaimMessage(
   const handoffTip = reply.item.kind === "handoff"
     ? `【交接单接力】每干完一步记一句：${run(`log ${id} --by ${ctx.by} --text "干完了啥、下一步啥"`)}（不用读整张）。干不完要交接：${run(`handoff "标题" --by ${ctx.by} --detail "…"`)}，新单自动顶掉这张。${reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，${checklist ? "全勾完" : "done"} 时一起删。` : ""}`
     : "";
-  // 口语单子还没有清单（2026-10-28 用户：理解完整理成结构化的，跟我对齐后替换进去）
-  const organizeTip = reply.item.kind === "handoff" && !checklist
-    ? `【先整理清单】这张还没有打勾清单。先读下面的原话，整理成有编号的两层清单（一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事），在对话里给用户看一眼，他点头后写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}，再一项项干。`
-    : "";
+  // 口语单子还没有清单（2026-10-28 用户：理解完整理成结构化的，跟我对齐后替换进去）。
+  // 放进干活规矩当第一步、不再给 done 那套：Haiku 模拟时它夹在开头说明里，被后面的老规矩盖过去、直接开干了
+  const organizeFirst = reply.item.kind === "handoff" && !checklist;
   const fileLine = [
     handoffTip,
-    organizeTip,
     forSystem ? `【交给 ${forSystem}】这张是写给「${forSystem}」那套 Windows 的。先认清你在哪套上（看你的底层设定或家目录），不是 ${forSystem} 就别干，照最后一条放回去，跟用户说一声。` : "",
     reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "",
   ].filter(Boolean).join(String.fromCharCode(10));
@@ -521,13 +519,29 @@ export function formatClaimMessage(
       "5. 碰到要他拍板、有风险的事（删东西、动系统、花钱、发出去）：别干，写进报告等他早上定，接着领下一条。",
     ].join(String.fromCharCode(10));
   }
-  return [
+  const head = [
     `【看板领活】你是 ${ctx.by}。领到${where}，看板上已经标成「${ctx.by} 在干」，别的窗口领不走。`,
     ...(fileLine ? [fileLine] : []),
     alias,
     "",
     reply.prompt ?? "",
+    // 进度单独一栏以后不在原话里了，换窗口接手要看到上一个窗口干到哪
+    ...(reply.lastProgress ? ["", `最后一句进度：${reply.lastProgress}`] : []),
     "",
+  ];
+  if (organizeFirst) {
+    return [
+      ...head,
+      "—— 【先整理清单】这张还没有打勾清单，先做这一步，别的活等它 ——",
+      "1. 读上面的原话，整理成有编号的两层清单：一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事。",
+      "2. 在对话里贴给用户看一眼，等他点头。",
+      `3. 他点头后写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}`,
+      "4. 交进去以后照「清单」命令回的规矩一项项干、一项项勾；全勾完单子自动收掉，不用 done。",
+      `5. 干不下去、要换人：${run(`release ${id} --by ${ctx.by}`)}`,
+    ].join("\n");
+  }
+  return [
+    ...head,
     "—— 干活规矩（所有 AI 都一样）——",
     `1. 一次只干这一条${group ? "，这组里别的条先别碰" : reply.total > 1 ? "，这一捆里别的条先别碰" : ""}。`,
     "2. 干完先别删：把做了什么、改了哪些、怎么验，讲给用户听，请他自己验一下。",

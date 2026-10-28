@@ -126,6 +126,7 @@ test("领活：有清单只吐没勾的几行＋最后一句进度，不吐原�
     const bare = formatClaimMessage({ item: claim.record, prompt: "原话里的秘密细节", position: 1, total: 1, remaining: 0, busy: [] }, { cli: "x.mjs", target: card, by: "Claude-3", coding: false });
     assert.match(bare, /【先整理清单】/);
     assert.match(bare, /看板 清单 .+ --file 清单\.md --by Claude-3/);
+    assert.doesNotMatch(bare, / done /, "整理清单是第一步，不再给 done 那套（Haiku 模拟时被老规矩盖过去）");
 
     store.setChecklist(card, parseChecklist(MD), "Claude-3");
     store.tick(card, "1", "Claude-3");
