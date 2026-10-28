@@ -1538,7 +1538,7 @@ function syncItemFilesNow(): void {
   syncItemFiles(
     itemFilesDirectory(),
     store.list(),
-    (r) => formatItemFiles(r, { group: groupLabelOf(r), title: titles[r.id]?.title ?? null, images: (t) => imagesForAgent(t) }),
+    (r) => formatItemFiles(r, { group: groupLabelOf(r), title: titles[r.id]?.title ?? null, project: titles[r.id]?.project ?? null, images: (t) => imagesForAgent(t) }),
     itemFileCache,
   );
 }

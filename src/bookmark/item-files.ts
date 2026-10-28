@@ -38,7 +38,7 @@ const KIND_LABEL: Record<BookmarkRecord["kind"], string> = { note: "普通条目
  *  没清单：一份，原文、详情、进度全在里面。有清单：main 只放清单和最近几句进度，原文详情挪进 original。 */
 export function formatItemFiles(
   record: BookmarkRecord,
-  opts: { group: string; title?: string | null; images?: (text: string) => string },
+  opts: { group: string; title?: string | null; project?: string | null; images?: (text: string) => string },
 ): ItemFiles {
   const nl = String.fromCharCode(10);
   const fix = opts.images ?? ((t: string) => t);
@@ -50,6 +50,8 @@ export function formatItemFiles(
     `> 看板「${opts.group}」组的一条${KIND_LABEL[record.kind]} · id ${record.id} · ${status}`,
     "> 这是看板自动写的副本：只读这一份就够，别去翻整组。要改内容、领活、交报告，照旧走看板命令（bookmark-cli.mjs），别改这个文件——改了也会被盖掉。",
   ];
+  // 项目名（看板读条目时认出来的）：状态栏进度那行打头用它，比整句小标题短
+  if (opts.project && opts.project !== "认不出") lines.push(`> 项目：${opts.project}`);
   if (record.forSystem) lines.push(`> 交给 ${record.forSystem}：这张是写给「${record.forSystem}」那套 Windows 的，不是那套就别接。`);
   if (record.kind === "dispatch") {
     lines.push("> 派活单：强模型拆好的活，同一批的几张会被一键同时开出去。只动单子里「只许动」写的文件；干完 report 交报告，等调度审、用户测，别自己 done。");
@@ -80,7 +82,7 @@ export function formatItemFiles(
 /** 只要主文件那一份（老调用、单测用）。 */
 export function formatItemFile(
   record: BookmarkRecord,
-  opts: { group: string; title?: string | null; images?: (text: string) => string },
+  opts: { group: string; title?: string | null; project?: string | null; images?: (text: string) => string },
 ): string {
   return formatItemFiles(record, opts).main;
 }
