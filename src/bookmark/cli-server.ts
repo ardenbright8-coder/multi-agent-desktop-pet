@@ -31,6 +31,8 @@ export interface CliRecord {
   batchId?: string | null;
   /** 交给哪套系统（根／燊一修，2026-10-27）；没标是 null，老适配器可以不给。 */
   forSystem?: string | null;
+  /** 交接单管着哪几条（条目 id，2026-10-28）：done 时一起删。 */
+  links?: string[];
   /** list 出口会把文件名展开成 attachmentsRoot 下的完整路径。 */
   attachments: string[];
   createdAt: string;
@@ -53,7 +55,11 @@ export interface CliClaim {
 }
 
 export interface CliStoreAdapter {
-  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff"; attachments?: string[]; forSystem?: string | null }): CliRecord;
+  add(input: { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail?: string | null; kind?: "note" | "handoff"; attachments?: string[]; forSystem?: string | null; links?: string[] }): CliRecord;
+  /** 交接单接力（2026-10-28）：这个窗口领着的交接单 / 新单顶掉旧单 / 边干边记一句。 */
+  heldHandoff?(by: string): CliRecord | undefined;
+  supersede?(oldId: string, newId: string): void;
+  appendProgress?(id: string, by: string, text: string): CliRecord;
   list(): CliRecord[];
   /** 删除一条（交接完自删用）；没找到返回 false。 */
   remove(id: string): boolean;
@@ -102,7 +108,9 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "dispatch" | "show" | "paihuo" | "launch";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "log" | "dispatch" | "show" | "paihuo" | "launch";
+  /** handoff 的 --closes：这张交接单管着哪几条（号码或 id，逗号隔开），done 时一起删。 */
+  closes?: string;
   /** launch 的 Pi 模型（「供应商/模型」，不写就用 Pi 上次记的）。 */
   model?: string;
   /** paihuo 的单子文件路径（JSON，CLI 脚本自己读）。 */
@@ -135,7 +143,7 @@ export interface CliArgs {
 const CLI_USAGE =
   '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <号码：7 / 7-9 / 7,8,9 / 捆2>（号码全板统一，只读点名的全文）| '
   + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
-  + 'handoff "标题" [--to Agent名] [--detail 详情] [--for 系统名：交给另一套 Windows（根／燊一修）时才写] | remove <条目id> | '
+  + 'handoff "标题" [--to Agent名] [--detail 详情] [--for 系统名：交给另一套 Windows（根／燊一修）时才写] [--by 你的窗口名：你领着交接单时写，新单顶掉旧单] [--closes 号码,号码：这张管着的条目，done 时一起删] | log <条目id> --by 窗口名 --text "一句进度" | remove <条目id> | '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
   + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名 | '
   + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）| '
@@ -175,7 +183,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (!target) throw new Error("launch 后面要跟这批里任一张的号码（或条目 id）：launch 18 --model openai-codex/gpt-6.1-sol");
     return { command, target, model, coding, json: argv.includes("--json"), attach: [] };
   }
-  if (command === "next" || command === "done" || command === "release" || command === "report") return parseClaimArgs(command, argv);
+  if (command === "next" || command === "done" || command === "release" || command === "report" || command === "log") return parseClaimArgs(command, argv);
   if (command === "show") {
     // 号码全板统一（2026-10-15）：直接写号码就行；前面多写一个组名也认（不在那组时会提一句）
     const rest = argv.slice(1).filter((a) => a !== "--json");
@@ -191,7 +199,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   const args: CliArgs = {
     command, text: undefined, to: undefined, url: undefined,
-    detail: undefined, id: undefined, handoffOnly: false, json: false, attach: [], forSystem: undefined,
+    detail: undefined, id: undefined, handoffOnly: false, json: false, attach: [],
   };
   const positional: string[] = [];
   for (let i = 1; i < argv.length; i++) {
@@ -216,6 +224,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
       args.attach.push(value);
     } else if (flag === "--handoff") {
       args.handoffOnly = true;
+    } else if (flag === "--by" && command === "handoff") {
+      const value = argv[++i];
+      if (value == null || !value.trim()) throw new Error("--by 后面要跟你的窗口名（领活时起的，如 Claude-3）");
+      args.by = value.trim();
+    } else if (flag === "--closes" && command === "handoff") {
+      const value = argv[++i];
+      if (value == null || !value.trim()) throw new Error("--closes 后面要跟这张管着的号码，逗号隔开，如 --closes 01,08");
+      args.closes = value.trim();
     } else if (flag === "--for" && command === "handoff") {
       const value = argv[++i];
       if (value == null || !value.trim()) throw new Error("--for 后面要跟交给哪套系统（根 / 燊一修），只写名字");
@@ -244,7 +260,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
 
 /** 领活几件套的参数：一个位置参数（捆号或条目 id）+ --by（必填）+ done 的 --ok（必填，用户原话）+ next 的 --coding / --to 组名
  *  + report 的 --text（必填，大白话报告）。--ok、--text 后面可以跟好几个词，拼成一句。 */
-function parseClaimArgs(command: "next" | "done" | "release" | "report", argv: string[]): CliArgs {
+function parseClaimArgs(command: "next" | "done" | "release" | "report" | "log", argv: string[]): CliArgs {
   let target: string | undefined;
   let by: string | undefined;
   let to: string | undefined;
@@ -271,7 +287,7 @@ function parseClaimArgs(command: "next" | "done" | "release" | "report", argv: s
     } else if (flag === "--ok") {
       inOk = true;
       inText = false;
-    } else if (flag === "--text" && command === "report") {
+    } else if (flag === "--text" && (command === "report" || command === "log")) {
       inText = true;
       inOk = false;
     } else if (flag === "--coding") {
@@ -295,6 +311,11 @@ function parseClaimArgs(command: "next" | "done" | "release" | "report", argv: s
   if (!target && !to) throw new Error(`${command} 缺捆号或条目 id（启动那句话里有）。${CLI_USAGE}`);
   if (!by) throw new Error(`${command} 缺 --by 窗口名（启动那句话里有，比如 --by Claude-3）`);
   const args: CliArgs = target ? { command, target, by, coding, json, attach: [] } : { command, to, by, coding, json, attach: [] };
+  if (command === "log") {
+    const text = textWords.join(" ").trim();
+    if (!text) throw new Error('log 缺 --text "一句进度"：刚干完了啥、下一步干啥');
+    args.text = text;
+  }
   if (command === "report") {
     const text = textWords.join(" ").trim();
     if (!text) throw new Error('report 缺 --text "大白话报告"：做了啥、改了哪些、怎么验的、还有啥没弄完');
@@ -365,7 +386,11 @@ export function formatClaimMessage(
   }
   const id = reply.item.id;
   const forSystem = reply.item.forSystem;
+  const handoffTip = reply.item.kind === "handoff"
+    ? `【交接单接力】每干完一步记一句：${run(`log ${id} --by ${ctx.by} --text "干完了啥、下一步啥"`)}（不用读整张）。干不完要交接：${run(`handoff "标题" --by ${ctx.by} --detail "…"`)}，新单自动顶掉这张。${reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，done 时一起删。` : ""}`
+    : "";
   const fileLine = [
+    handoffTip,
     forSystem ? `【交给 ${forSystem}】这张是写给「${forSystem}」那套 Windows 的。先认清你在哪套上（看你的底层设定或家目录），不是 ${forSystem} 就别干，照最后一条放回去，跟用户说一声。` : "",
     reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "",
   ].filter(Boolean).join(String.fromCharCode(10));
@@ -521,6 +546,23 @@ export function handleCliRequest(
     const raw = (body ?? {}) as Record<string, unknown>;
     const text = String(raw.text ?? "").trim();
     if (!text) return { status: 400, body: { ok: false, error: "交接单标题不能为空（两行内说清做了啥、交了啥）" } };
+    // 管哪几条（2026-10-28）：号码按看板现在的数法换成 id，id 原样认；对不上的整张不写，报回去
+    const all = ctx.store.list();
+    const links: string[] = [];
+    const tokens = String(raw.closes ?? "").split(/[,，、\s]+/).filter(Boolean);
+    if (tokens.length) {
+      const rows = indexBoard(all, ctx.store.boardNames?.().agents ?? []).flatMap((g) => g.rows);
+      const bad: string[] = [];
+      for (const t of tokens) {
+        const hit = /^\d+$/.test(t) ? rows.find((row) => row.no === Number(t))?.record : all.find((r) => r.id === t);
+        if (hit) links.push(hit.id);
+        else bad.push(t);
+      }
+      if (bad.length) return { status: 400, body: { ok: false, error: `--closes 里这些对不上看板：${bad.join("、")}（先 list 看号码）` } };
+    }
+    // 接力（2026-10-28 用户：交接单越堆越多）：写单的窗口手里领着交接单，新单顶掉它
+    const by = typeof raw.by === "string" ? raw.by.trim() : "";
+    const old = by && ctx.store.heldHandoff ? ctx.store.heldHandoff(by) : undefined;
     const record = ctx.store.add({
       text,
       url: null,
@@ -529,13 +571,15 @@ export function handleCliRequest(
       kind: "handoff",
       detail: raw.detail ? String(raw.detail) : null,
       forSystem: typeof raw.forSystem === "string" && raw.forSystem.trim() ? raw.forSystem.trim() : null,
+      links,
     });
+    if (old && ctx.store.supersede) ctx.store.supersede(old.id, record.id);
     try {
       ctx.onChanged?.();
     } catch {
       /* 刷新失败无所谓 */
     }
-    return { status: 200, body: { ok: true, id: record.id, kind: record.kind } };
+    return { status: 200, body: { ok: true, id: record.id, kind: record.kind, replaced: old ? old.text.slice(0, 40) : null, links: links.length } };
   }
   // 派活单（设定23）：强模型一次写 1～3 张，同一个批号；用户点其中一张的「一键启动」就一起开。
   if (method === "POST" && path === "/paihuo") {
@@ -599,7 +643,7 @@ export function handleCliRequest(
       .map(withAttachmentPaths);
     return { status: 200, body: { ok: true, items } };
   }
-  if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report")) {
+  if (method === "POST" && (path === "/next" || path === "/done" || path === "/release" || path === "/report" || path === "/log")) {
     return handleClaimRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
   return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /launch | /remove | /next | /done | /release | /report | GET /list | /view）" } };
@@ -687,6 +731,12 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
     }
     const id = String(raw.id ?? "").trim();
     if (!id) return { status: 400, body: { ok: false, error: "缺条目 id" } };
+    if (path === "/log") {
+      if (!store.appendProgress) return { status: 500, body: { ok: false, error: "看板还不支持 log（看板里点「升级」换新版）" } };
+      store.appendProgress(id, by, String(raw.text ?? ""));
+      changed();
+      return { status: 200, body: { ok: true } };
+    }
     if (path === "/report") {
       if (!store.report) return { status: 500, body: { ok: false, error: "看板还不支持 report（主进程未接线）" } };
       const text = String(raw.text ?? "").trim();

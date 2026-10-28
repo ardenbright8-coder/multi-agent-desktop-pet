@@ -110,10 +110,10 @@ try {
     res = await fetch(`${base}/handoff`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
-      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null, forSystem: args.forSystem ?? null }),
+      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null, forSystem: args.forSystem ?? null, by: args.by ?? null, closes: args.closes ?? null }),
       signal: AbortSignal.timeout(5_000),
     });
-  } else if (args.command === "next" || args.command === "done" || args.command === "release" || args.command === "report") {
+  } else if (args.command === "next" || args.command === "done" || args.command === "release" || args.command === "report" || args.command === "log") {
     // 领活几件套（设定15、18）：next 领下一条（--to 按组领）/ done 用户说可以才删 / report 睡觉档写报告 / release 放回去
     // next 直接认屏幕上的号码（2026-10-15）：先按号码查出 id，省掉「先 show 再 next」那一趟
     if (args.command === "next" && /^\d+$/.test(args.target ?? "")) {
@@ -189,7 +189,8 @@ if (args.command === 'dispatch') {
 } else if (args.command === "add") {
   console.log(args.json ? JSON.stringify(data) : `✅ 已进看板（${data.id}）`);
 } else if (args.command === "handoff") {
-  console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）；接手的 AI 先 next 标在干，用户说完工再 done 消掉`);
+  const extra = [data.replaced ? `顶掉了你手里那张旧单「${data.replaced}」` : "", data.links ? `管着 ${data.links} 条，done 时一起删` : ""].filter(Boolean).join("；");
+  console.log(args.json ? JSON.stringify(data) : `📋 交接单已写进看板（${data.id}）${extra ? `；${extra}` : ""}；接手的 AI 先 next 标在干，用户说完工再 done 消掉`);
 } else if (args.command === "remove") {
   console.log(args.json ? JSON.stringify(data) : "✅ 已删");
 } else if (args.command === "next") {
@@ -204,6 +205,8 @@ if (args.command === 'dispatch') {
     ? `报告已交给 ${data.coordinator}，原任务留待审核，整捆仍由你负责。继续只领本捆：node "${self}" next ${data.bundleId} --by "${args.by}"`
     : '✅ 报告挂上了，这条标成「干完待审」，等用户早上看。接着按上面第 3 步 next 领下一条。';
   console.log(args.json ? JSON.stringify(data) : text);
+} else if (args.command === "log") {
+  console.log(args.json ? JSON.stringify(data) : "📝 记上了。");
 } else if (args.command === "release") {
   console.log(args.json ? JSON.stringify(data) : "↩️ 已放回去，别的窗口可以领了。");
 } else if (args.command === "show" || !args.json) {

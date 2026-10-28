@@ -475,6 +475,13 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           return record;
         },
         release: (id) => requireStore().release(id),
+        // 交接单接力（2026-10-28）：窗口手里领着的交接单、新单顶掉旧单、边干边记一句
+        heldHandoff: (by) => requireStore().list().find((r) => r.kind === "handoff" && r.claimedBy === by),
+        supersede: (oldId, newId) => {
+          requireStore().supersede(oldId, newId);
+          log.记(`新交接单顶掉旧单 ${oldId}`, "cli");
+        },
+        appendProgress: (id, by, text) => requireStore().appendProgress(id, by, text),
         // 睡觉档（设定18）：按组领、干完写大白话报告、告诉 AI 现在是哪一档。
         claimInGroup: (group, by) => requireStore().claimInGroup(group, by),
         report: (id, by, text) => {
@@ -1975,8 +1982,8 @@ function notifyInboxChanged(): void {
   }
 }
 
-function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail: string | null; kind: "note" | "handoff"; forSystem: string | null } {
-  const raw = (input ?? {}) as { text?: unknown; url?: unknown; assignee?: unknown; dedupeKey?: unknown; detail?: unknown; kind?: unknown; forSystem?: unknown };
+function normalizeInput(input: unknown): { text: string; url: string | null; assignee: string | null; dedupeKey: string | null; detail: string | null; kind: "note" | "handoff"; forSystem: string | null; links?: string[] } {
+  const raw = (input ?? {}) as { text?: unknown; url?: unknown; assignee?: unknown; dedupeKey?: unknown; detail?: unknown; kind?: unknown; forSystem?: unknown; links?: unknown };
   const text = String(raw.text ?? "").trim();
   if (!text) throw new Error("书签内容不能为空");
   return {
@@ -1987,6 +1994,7 @@ function normalizeInput(input: unknown): { text: string; url: string | null; ass
     detail: raw.detail ? String(raw.detail) : null,
     kind: raw.kind === "handoff" ? "handoff" : "note",
     forSystem: normalizeForSystem(raw.forSystem),
+    ...(Array.isArray(raw.links) && raw.links.length ? { links: raw.links.map(String) } : {}),
   };
 }
 

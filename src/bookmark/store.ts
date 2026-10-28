@@ -38,6 +38,8 @@ export interface BookmarkInput {
   batchId?: string | null;
   /** 交给哪套系统（2026-10-27 用户：根和燊一修两套 Windows 互相交接，一眼分清这张是给谁的）。只写名字，没有就是 null。 */
   forSystem?: string | null;
+  /** 交接单管着哪几条（条目 id）：done 这张时一起删。 */
+  links?: string[];
   /** 贴图文件名（不含路径）；真文件在 attachments\。创建时传入就按原样落盘，不拷贝。 */
   attachments?: string[];
 }
@@ -56,6 +58,8 @@ export interface BookmarkRecord {
   batchId: string | null;
   /** 交给哪套系统（根／燊一修）：看板上挂醒目名牌。旧库无此字段读入时回落 null。 */
   forSystem: string | null;
+  /** 交接单管着哪几条（2026-10-28 用户：干完了单子还挂着、越堆越多）：done 这张时连这几条一起删。没有就不带这个字段。 */
+  links?: string[];
   /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
   attachments: string[];
   /** 捆号（2026-09-24 设定15）：同组里挨着的几条捆成一捆，一捆交给一个 AI 窗口。null = 没捆。 */
@@ -475,6 +479,7 @@ export class BookmarkStore {
       kind: normalizeKind(input.kind),
       batchId: normalizeKind(input.kind) === "dispatch" && input.batchId ? String(input.batchId) : null,
       forSystem: normalizeForSystem(input.forSystem),
+      ...(input.links?.length ? { links: [...new Set(input.links.map(String))] } : {}),
       attachments: reconcileImages(normalizeAttachmentNames(input.attachments), "", text),
       bundleId: null,
       claimedBy: null,
@@ -696,7 +701,38 @@ export class BookmarkStore {
     if (!record) throw new Error("没找到这条（可能已经删了）");
     if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     if (!String(userOk ?? "").trim()) throw new Error("缺用户确认：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进 --ok");
-    this.records = this.records.filter((r) => r.id !== id);
+    // 交接单管着的那几条一起删（2026-10-28 用户：干完了别让我一条条删）；别的窗口正领着的不动。
+    const linked = new Set(record.links ?? []);
+    this.records = this.records.filter((r) => r.id !== id && !(linked.has(r.id) && (!r.claimedBy || r.claimedBy === record.claimedBy)));
+    this.save();
+    return record;
+  }
+
+  /** 新交接单顶掉旧的（2026-10-28 用户：交接单越堆越多）：接着干的窗口写新单时，它手里领着的那张旧单删掉，旧单管的那几条并给新单。 */
+  supersede(oldId: string, newId: string): void {
+    this.ensureLoaded();
+    const old = this.records.find((r) => r.id === oldId);
+    const fresh = this.records.find((r) => r.id === newId);
+    if (!old || !fresh || old === fresh) return;
+    const links = [...new Set([...(fresh.links ?? []), ...(old.links ?? [])])].filter((x) => x !== oldId && x !== newId);
+    if (links.length) fresh.links = links;
+    const at = this.records.indexOf(old);
+    this.records = this.records.filter((r) => r !== old && r !== fresh);
+    this.records.splice(Math.min(at, this.records.length), 0, fresh); // 新单站到旧单原来的位置
+    this.save();
+  }
+
+  /** 边干边记一句（2026-10-28 用户：额度、上下文断了也接得上，又别每次读整张）：追加到详情最后，不用先读。只许领着它的窗口记。 */
+  appendProgress(id: string, by: string, text: string): BookmarkRecord {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了）");
+    if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
+    const words = String(text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!words) throw new Error("记的那句是空的");
+    const d = new Date();
+    const stamp = `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    record.detail = `${record.detail ? `${record.detail}\n` : ""}【进度 ${stamp}】${words}`;
     this.save();
     return record;
   }
