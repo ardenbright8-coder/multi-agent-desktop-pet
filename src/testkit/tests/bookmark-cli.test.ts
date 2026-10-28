@@ -285,7 +285,7 @@ test("handleCliRequest：/done 不是自己领的 400、缺用户原话 400；/r
   assert.equal(handleCliRequest("POST", "/done", { id: "id-9", by: "Claude-3", ok: "可以，验过了" }, "Bearer secret", ctx).status, 200);
 });
 
-test("formatClaimMessage：所有 AI 看到同一套规矩——一次一条、先给用户验、带原话才 done、再 next", () => {
+test("formatClaimMessage：普通条目没清单也先整理清单（2026-10-28 用户：所有领活都走这个标准），不给 done 那套", () => {
   const msg = formatClaimMessage(
     { item: { id: "id-9" } as CliRecord, prompt: "搜索框看不见", position: 1, total: 2, remaining: 1, busy: [] },
     { cli: "X:/bookmark-cli.mjs", target: "b-1", by: "Claude-3", coding: true },
@@ -293,17 +293,10 @@ test("formatClaimMessage：所有 AI 看到同一套规矩——一次一条、�
   assert.match(msg, /你是 Claude-3/);
   assert.match(msg, /第 1\/2 条/);
   assert.match(msg, /搜索框看不见/);
-  assert.match(msg, /一次只干这一条/);
-  assert.match(msg, /用户.*说「可以」/);
-  assert.match(msg, /看板 done id-9 --by Claude-3 --ok "/);
-  assert.match(msg, /看板 next b-1 --by Claude-3 --coding/);
+  assert.match(msg, /【先整理清单】/);
+  assert.match(msg, /看板 清单 id-9 --file 清单\.md --by Claude-3/);
+  assert.doesNotMatch(msg, / done /);
   assert.equal(msg.split("X:/bookmark-cli.mjs").length - 1, 1, "长路径只给一次，命令都写「看板 …」");
-  const single = formatClaimMessage(
-    { item: { id: "id-1" } as CliRecord, prompt: "单独一条", position: 1, total: 1, remaining: 0, busy: [] },
-    { cli: "X:/bookmark-cli.mjs", target: "id-1", by: "Claude-3", coding: false },
-  );
-  assert.doesNotMatch(single, /看板 next/, "单独领一条、后面没有了，不叫 AI 接着领");
-  assert.match(single, /4\. 干不下去/);
   assert.match(msg, /release id-9 --by Claude-3/);
   const none = formatClaimMessage(
     { item: null, prompt: null, position: 0, total: 2, remaining: 0, busy: ["Claude-1"] },

@@ -443,9 +443,6 @@ export function formatClaimMessage(
   const checklist = reply.item.checklist?.length ? reply.item.checklist : null;
   // 怎么记进度、怎么换窗口只在规矩里说一次（2026-10-28 审：原来开头一行、规矩里各说一遍，还互相打架）
   const linksLine = reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，单子收掉时一起删。` : "";
-  // 口语单子还没有清单（2026-10-28 用户：理解完整理成结构化的，跟我对齐后替换进去）。
-  // 放进干活规矩当第一步、不再给 done 那套：Haiku 模拟时它夹在开头说明里，被后面的老规矩盖过去、直接开干了
-  const organizeFirst = reply.item.kind === "handoff" && !checklist;
   const fileLine = [
     linksLine,
     forSystem ? `【交给 ${forSystem}】这张是写给「${forSystem}」那套 Windows 的。先认清你在哪套上（看你的底层设定或家目录），不是 ${forSystem} 就别干，照最后一条放回去，跟用户说一声。` : "",
@@ -475,7 +472,6 @@ export function formatClaimMessage(
   const group = ctx.group ?? (sleep ? reply.item.assignee ?? "" : "");
   const nextCmd = group ? `next --to "${group}" --by ${ctx.by}` : `next ${ctx.target} --by ${ctx.by}`;
   const coding = ctx.coding ? " --coding" : "";
-  const hasNext = Boolean(group) || reply.remaining > 0;
   const where = group
     ? `${group} 组的第 ${reply.position}/${reply.total} 条`
     : reply.total > 1 ? `这一捆的第 ${reply.position}/${reply.total} 条` : "这一条";
@@ -546,30 +542,16 @@ export function formatClaimMessage(
     ...(reply.lastProgress ? ["", `最后一句进度：${reply.lastProgress}`] : []),
     "",
   ];
-  if (organizeFirst) {
-    return [
-      ...head,
-      "—— 【先整理清单】这张还没有打勾清单，先做这一步，别的活等它 ——",
-      "1. 读上面的原话，整理成有编号的两层清单：一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事。每项写详细：动哪个文件或哪一块、做到什么算完——接手的窗口只看清单、不看原话。",
-      "2. 在对话里给用户看简述版（一项一句，编号跟清单一样），等他点头。",
-      `3. 他点头后把详细版写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}`,
-      "4. 交进去以后照「清单」命令回的规矩干。",
-      `5. 干不下去、要换人：${run(`release ${id} --by ${ctx.by}`)}`,
-    ].join("\n");
-  }
+  // 日常档没清单（2026-10-28 用户：所有领活都走这个标准，不只交接单——普通条目干完没人消，板上堆了 30 多条）：
+  // 先整理清单当第一步、不给 done 那套（Haiku 模拟时老规矩会盖过它、直接开干）。全勾完自动收。派活单上面已单独返回。
   return [
     ...head,
-    "—— 干活规矩（所有 AI 都一样）——",
-    `1. 一次只干这一条${group ? "，这组里别的条先别碰" : reply.total > 1 ? "，这一捆里别的条先别碰" : ""}。`,
-    "2. 干完先别删：把做了什么、改了哪些、怎么验，讲给用户听，请他自己验一下。",
-    "3. 用户亲口说「可以」以后，把他的原话放进 --ok，敲：",
-    `   ${run(`done ${id} --by ${ctx.by} --ok "他的原话"`)}`,
-    // 单独领一条、后面没有了，就不给「接着领下一条」（2026-10-15：原来会叫 AI 再 next 同一条）
-    ...(hasNext
-      ? [`4. 删完接着领下一条（${group ? `${group} 组` : "这一捆"}还剩 ${reply.remaining} 条没人领）：`, `   ${run(`${nextCmd}${coding}`)}`]
-      : []),
-    `${hasNext ? 5 : 4}. 干不下去、要换人：`,
-    `   ${run(`release ${id} --by ${ctx.by}`)}`,
+    "—— 【先整理清单】这张还没有打勾清单，先做这一步，别的活等它 ——",
+    "1. 读上面的原话，整理成有编号的两层清单：一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事。每项写详细：动哪个文件或哪一块、做到什么算完——接手的窗口只看清单、不看原话。",
+    "2. 在对话里给用户看简述版（一项一句，编号跟清单一样），等他点头。",
+    `3. 他点头后把详细版写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}`,
+    "4. 交进去以后照「清单」命令回的规矩干。",
+    `5. 干不下去、要换人：${run(`release ${id} --by ${ctx.by}`)}`,
   ].join("\n");
 }
 

@@ -174,6 +174,6 @@ test("formatClaimMessage 睡觉档：不等用户说可以、写大白话 report
     { item: { id: "id-9", assignee: "Claude" } as CliRecord, prompt: "x", position: 1, total: 1, remaining: 0, busy: [], mode: "day" },
     { cli: "X:/bookmark-cli.mjs", target: "", group: "Claude", by: "Claude-3", coding: false },
   );
-  assert.match(day, /done id-9 --by Claude-3 --ok "/);
-  assert.match(day, /next --to "Claude" --by Claude-3/, "日常档用组名领的，下一条也按组领");
+  assert.match(day, /【先整理清单】/, "日常档没清单先整理清单（2026-10-28 用户：所有领活都走这个标准）");
+  assert.doesNotMatch(day, / done /);
 });
