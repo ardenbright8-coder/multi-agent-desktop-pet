@@ -139,9 +139,25 @@ test("领活：有清单只吐没勾的几行＋最后一句进度，不吐原�
     assert.doesNotMatch(msg, /秘密细节/, "原话不吐");
     assert.doesNotMatch(msg, /【先整理清单】/);
     assert.match(msg, /【打勾清单 1\/3】还没勾的：\n- \[ \] 2 改规矩\n- \[ \] 3 收尾\n最后一句进度：10-28 01:00 Claude-3：数据做完了/);
-    assert.match(msg, /看板 勾 .+ 2\.1/);
+    assert.match(msg, /看板 勾 \S+ 2（勾错/, "命令例子写第一个没勾的号");
+    assert.equal((msg.match(/^\d\. /gm) ?? []).length, new Set(msg.match(/^\d\. /gm)).size, "规矩编号不重");
+    assert.doesNotMatch(msg, /交接单接力|handoff /, "有清单不另写新单");
     assert.doesNotMatch(msg, /done /, "有清单不用 done");
     assert.match(msg, /D:\/x（原话）\.md/);
+  }));
+
+test("领着有清单的单子再写交接单：不顶掉、整张不写，叫它 log 再 release", () =>
+  withStore((store) => {
+    const id = store.add({ text: "有清单的单子", kind: "handoff" }).id;
+    store.claimNext(id, "Claude-3");
+    store.setChecklist(id, parseChecklist(MD), "Claude-3");
+    const res = handleCliRequest("POST", "/handoff", { text: "新单", by: "Claude-3" }, "Bearer t", {
+      token: "t",
+      store: { ...adapter(store), heldHandoff: (by: string) => store.list().find((r) => r.kind === "handoff" && r.claimedBy === by) } as CliStoreAdapter,
+    });
+    assert.equal(res.status, 400);
+    assert.match(String((res.body as { error: string }).error), /本身就是交接单.+log.+release/);
+    assert.deepEqual(store.list().map((r) => r.text), ["有清单的单子"], "新单没写进去，旧单和清单都在");
   }));
 
 test("副本文件：有清单分两份（清单＋原话），清单收掉两份一起删", () =>

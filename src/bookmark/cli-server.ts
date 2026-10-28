@@ -441,14 +441,13 @@ export function formatClaimMessage(
   const id = reply.item.id;
   const forSystem = reply.item.forSystem;
   const checklist = reply.item.checklist?.length ? reply.item.checklist : null;
-  const handoffTip = reply.item.kind === "handoff"
-    ? `【交接单接力】每干完一步记一句：${run(`log ${id} --by ${ctx.by} --text "干完了啥、下一步啥"`)}（不用读整张）。干不完要交接：${run(`handoff "标题" --by ${ctx.by} --detail "…"`)}，新单自动顶掉这张。${reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，${checklist ? "全勾完" : "done"} 时一起删。` : ""}`
-    : "";
+  // 怎么记进度、怎么换窗口只在规矩里说一次（2026-10-28 审：原来开头一行、规矩里各说一遍，还互相打架）
+  const linksLine = reply.item.links?.length ? `这张管着 ${reply.item.links.length} 条原始条目，单子收掉时一起删。` : "";
   // 口语单子还没有清单（2026-10-28 用户：理解完整理成结构化的，跟我对齐后替换进去）。
   // 放进干活规矩当第一步、不再给 done 那套：Haiku 模拟时它夹在开头说明里，被后面的老规矩盖过去、直接开干了
   const organizeFirst = reply.item.kind === "handoff" && !checklist;
   const fileLine = [
-    handoffTip,
+    linksLine,
     forSystem ? `【交给 ${forSystem}】这张是写给「${forSystem}」那套 Windows 的。先认清你在哪套上（看你的底层设定或家目录），不是 ${forSystem} 就别干，照最后一条放回去，跟用户说一声。` : "",
     reply.itemFile ? `这条的单独文件（以后要再看，只读这一份）：${reply.itemFile}` : "",
   ].filter(Boolean).join(String.fromCharCode(10));
@@ -492,9 +491,8 @@ export function formatClaimMessage(
       formatPending(checklist),
       ...(reply.lastProgress ? [`最后一句进度：${reply.lastProgress}`] : []),
       "",
-      ...checklistRules(id),
-      ...(reply.originalFile ? [`4. 原话平时不用读，清单对不上、出了问题才翻：${reply.originalFile}`] : []),
-      `${reply.originalFile ? 5 : 4}. 干不下去、要换人：${run(`release ${id} --by ${ctx.by}`)}`,
+      ...checklistRules(id, ctx.by, firstPending(checklist)),
+      ...(reply.originalFile ? [`5. 原话平时不读，清单对不上、出了问题才翻：${reply.originalFile}`] : []),
     ].join("\n");
   }
   if (sleep) {
@@ -533,10 +531,10 @@ export function formatClaimMessage(
     return [
       ...head,
       "—— 【先整理清单】这张还没有打勾清单，先做这一步，别的活等它 ——",
-      "1. 读上面的原话，整理成有编号的两层清单：一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事。",
-      "2. 在对话里贴给用户看一眼，等他点头。",
-      `3. 他点头后写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}`,
-      "4. 交进去以后照「清单」命令回的规矩一项项干、一项项勾；全勾完单子自动收掉，不用 done。",
+      "1. 读上面的原话，整理成有编号的两层清单：一件事 - [ ] 1，下挂小项缩进两格 - [ ] 1.1，按包含关系分、不分大事小事。每项写详细：动哪个文件或哪一块、做到什么算完——接手的窗口只看清单、不看原话。",
+      "2. 在对话里给用户看简述版（一项一句，编号跟清单一样），等他点头。",
+      `3. 他点头后把详细版写成文件交进去：${run(`清单 ${id} --file 清单.md --by ${ctx.by}`)}`,
+      "4. 交进去以后照「清单」命令回的规矩干。",
       `5. 干不下去、要换人：${run(`release ${id} --by ${ctx.by}`)}`,
     ].join("\n");
   }
@@ -654,6 +652,9 @@ export function handleCliRequest(
     // 接力（2026-10-28 用户：交接单越堆越多）：写单的窗口手里领着交接单，新单顶掉它
     const by = typeof raw.by === "string" ? raw.by.trim() : "";
     const old = by && ctx.store.heldHandoff ? ctx.store.heldHandoff(by) : undefined;
+    if (old?.checklist?.length) {
+      return { status: 400, body: { ok: false, error: `你领着的「${old.text.slice(0, 30)}」有打勾清单，它本身就是交接单，不用另写新单：看板 log ${old.id} --by ${by} --text "停在哪、下一步"，再 看板 release ${old.id} --by ${by}` } };
+    }
     const record = ctx.store.add({
       text,
       url: null,
@@ -896,7 +897,7 @@ function handleChecklistRequest(path: string, raw: Record<string, unknown>, ctx:
       const saved = store.setChecklist(record.id, items, by);
       changed();
       const { done, total } = checklistProgress(saved.checklist);
-      return { status: 200, body: { ok: true, id: saved.id, done, total, items: saved.checklist?.length ?? 0 } };
+      return { status: 200, body: { ok: true, id: saved.id, done, total, items: saved.checklist?.length ?? 0, by, next: firstPending(saved.checklist) } };
     }
     if (!store.tick) return { status: 500, body: { ok: false, error: "看板还不支持打勾（看板里点「升级」换新版）" } };
     const nos = (Array.isArray(raw.nos) ? raw.nos : [raw.no]).map((x) => String(x ?? "").trim()).filter(Boolean);
@@ -917,27 +918,30 @@ function handleChecklistRequest(path: string, raw: Record<string, unknown>, ctx:
 }
 
 /** 有清单的单子怎么干（2026-10-28 用户拍板）：领活和交清单回的都是这几行，规矩只写这一处。 */
-function checklistRules(id: string): string[] {
+function checklistRules(id: string, by: string, next: string): string[] {
   return [
     "—— 干活规矩（有清单的单子，所有 AI 都一样）——",
-    "1. 照没勾的一项项干。干完一项马上勾（拨开关，勾错了再敲一次取消）：",
-    `   看板 勾 ${id} 2.1`,
-    "2. 中途改了主意（原来那项不走了、换了办法）＝那一项的目的已达到，直接勾掉；不重写清单、不改原话。",
-    "3. 某项卡住干不下去（缺东西、要到另一套系统上干、问题还没解决）：不勾、不停下问，跳过它接着干别的项。",
-    "4. 一轮干到底（能干的都干完了）再汇报一次：照清单原样的两层结构列出来，每项前面标 ✅ 做完 / ⏸ 做到一半（写到哪一步）/ ⛔ 做不了（一句原因），末尾写建议下一步怎么办，等用户一起商量。中途不一项一项汇报。",
-    "5. 全勾完单子自动收掉、管着的条目一起删，不用 done，照第 4 条汇报一次。碰上突发情况整张做不下去，照规矩写交接单。",
+    `1. 照没勾的一项项干，干完一项马上勾：看板 勾 ${id} ${next}（勾错了再敲一次取消）。勾了就是记了进度，不用另外 log。`,
+    "2. 中途改了主意（原来那项不走了、换了办法）＝那项的目的已达到，直接勾掉，不重写清单、不改原话。卡住的项（缺东西、要到另一套系统上干、问题还没解决）不勾，跳过它接着干别的，不停下来问。",
+    "3. 能干的都干完了再汇报一次（全勾完的话单子已自动收掉、管着的条目一起删，不用 done）：照清单的两层结构列，每项前面标 ✅ 做完 / ⏸ 做到一半（写到哪一步）/ ⛔ 做不了（一句原因），末尾写建议下一步，等用户一起商量。这份就是收尾清单，不另写；中途不逐项汇报。",
+    `4. 要换窗口、换人（上下文快满、额度快完、整张做不下去）：这张单子本身就是交接单，不另写新单。先记一句停在哪：看板 log ${id} --by ${by} --text "停在哪、下一步"，再放回去：看板 release ${id} --by ${by}`,
   ];
 }
 
+/** 第一个还没勾的项号（命令例子用它，别写成已经勾过的号）。 */
+function firstPending(items: ChecklistItem[] | undefined): string {
+  return items?.find((x) => !x.done && (x.no.includes(".") || !items.some((y) => y.no.startsWith(`${x.no}.`))))?.no ?? "1";
+}
+
 /** 交完清单的回话：交了几项，接着怎么干。 */
-export function formatChecklistSaved(data: { id: string; done: number; total: number; items: number }): string {
-  return [`☑ 清单交进去了：${data.total} 件事、共 ${data.items} 项（${data.done}/${data.total}）。`, ...checklistRules(data.id)].join("\n");
+export function formatChecklistSaved(data: { id: string; done: number; total: number; items: number; by: string; next: string }): string {
+  return [`☑ 清单交进去了：${data.total} 件事、共 ${data.items} 项（${data.done}/${data.total}）。`, ...checklistRules(data.id, data.by, data.next)].join("\n");
 }
 
 /** 打勾的回话：一行说清勾了啥、进度几；全勾完说一声收掉了。 */
 export function formatTickResult(data: { flips: { no: string; on: boolean }[]; done: number; total: number; closed: boolean; linksRemoved: number }): string {
   if (data.closed) {
-    return `✅ 全勾完了（${data.total}/${data.total}），单子已自动收掉${data.linksRemoved ? `，管着的 ${data.linksRemoved} 条一起删了` : ""}，记进了做完记录。跟用户一句话说干完了就行，不用 done。`;
+    return `✅ 全勾完了（${data.total}/${data.total}），单子已自动收掉${data.linksRemoved ? `，管着的 ${data.linksRemoved} 条一起删了` : ""}，记进了做完记录。照领活规矩第 3 条汇报一次，不用 done。`;
   }
   const what = data.flips.map((f) => `${f.on ? "✔" : "○"} ${f.no}${f.on ? "" : " 取消勾"}`).join("  ");
   return `${what}（${data.done}/${data.total}）`;

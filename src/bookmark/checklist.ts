@@ -16,7 +16,7 @@ export interface ChecklistItem {
 
 /** 一张单子最多几项、每项最长几个字：清单是拿来勾的，不是写文章。 */
 export const MAX_CHECKLIST_ITEMS = 60;
-export const MAX_CHECKLIST_TEXT = 200;
+export const MAX_CHECKLIST_TEXT = 300;
 
 const LINE = /^(\s*)[-*+]\s+\[( |x|X|✓|✔)\]\s*(.*)$/;
 const NUMBER = /^(\d+)(?:[.．、](\d+))?[.．、)）]?\s+/;
@@ -38,7 +38,7 @@ export function parseChecklist(md: string): ChecklistItem[] {
     if (num) text = text.slice(num[0].length).trim();
     text = text.replace(/\s+/g, " ");
     if (!text) continue;
-    if (text.length > MAX_CHECKLIST_TEXT) throw new Error(`第 ${out.length + 1} 项太长了（${text.length} 字，最多 ${MAX_CHECKLIST_TEXT}）：清单一项一句话，细节留在原话里`);
+    if (text.length > MAX_CHECKLIST_TEXT) throw new Error(`第 ${out.length + 1} 项太长了（${text.length} 字，最多 ${MAX_CHECKLIST_TEXT}）：写清动哪、做到什么算完就够，背景留在原话里`);
     const done = m[2] !== " ";
     if (child) {
       if (!top) throw new Error(`「${text.slice(0, 20)}」是小项，但前面没有上一层的那件事：先写 - [ ] 1 那件事，再缩进写小项`);
