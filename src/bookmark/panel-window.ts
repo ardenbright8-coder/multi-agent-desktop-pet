@@ -28,7 +28,7 @@ import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
-import { createProjectFolder, createProjectMarkdown, ensureProjectsRoot, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
+import { createKitEntry, createProjectFolder, createProjectMarkdown, editProjectKit, ensureProjectsRoot, kitCandidates, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
 import {
   agentShortcutFor, formatLaunchConfig, isAbsoluteTarget, LAUNCH_CONFIG_FILE, launchKey, parseLaunchConfig, pasteIntoAppWindow, pasteIntoNewWindow,
@@ -1012,6 +1012,21 @@ function registerIpc(): void {
     ensureProjectsRoot();
     return reorderProjects(projectsRoot(), String(raw.parent ?? ""), String(raw.moving ?? ""), String(raw.anchor ?? ""), place);
   });
+  // 项目行尾那排小按钮（2026-10-29）：加（挑已有的 / 新建 md / 新建夹）、拿掉（只是不显示，文件不删）、左右换位置。
+  ipcMain.handle("bookmark:projects:kit", (_event, payload: unknown) => {
+    const raw = (payload ?? {}) as { op?: unknown; project?: unknown; name?: unknown; anchor?: unknown; place?: unknown; kind?: unknown };
+    const root = projectsRoot();
+    const project = String(raw.project ?? "");
+    const name = String(raw.name ?? "");
+    ensureProjectsRoot();
+    if (raw.op === "candidates") return kitCandidates(root, project);
+    if (raw.op === "create") return createKitEntry(root, project, raw.kind === "dir" ? "dir" : "md", name);
+    if (raw.op === "add" || raw.op === "remove") return editProjectKit(root, project, { op: raw.op, name });
+    if (raw.op === "move") {
+      return editProjectKit(root, project, { op: "move", name, anchor: String(raw.anchor ?? ""), place: raw.place === "below" ? "below" : "above" });
+    }
+    throw new Error("小按钮：不认识的操作");
+  });
   ipcMain.handle("bookmark:projects:open", async (_event, relative: unknown) => {
     // 先过安全闸（越界拒绝），再交系统默认程序（用户 md 关联了脑图应用）。
     ensureProjectsRoot();
@@ -1245,9 +1260,19 @@ function registerIpc(): void {
     }
   });
   // 点号码（设定24）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
+  // 交出去了（2026-10-29 用户：接没接活程序自己判）：复制单独文件路径、拖出窗口＝要交给 AI，先标「已交出」，
+  // AI 头一个用看板命令碰它就换成它的窗口名。已有窗口在干的不动；包 act，Ctrl+Z 能撤。
+  const handOut = (ids: string[]) => {
+    try {
+      if (act("交给 AI", () => requireStore().handOut(ids))) notifyInboxChanged();
+    } catch (error) {
+      log.出事("标「已交出」没成（不影响拖和复制）", error, "window");
+    }
+  };
   ipcMain.handle("bookmark:item-file", (_event, id: unknown) => {
     const { path, line } = itemFileLine(id);
     clipboard.writeText(line);
+    handOut([String(id ?? "")]);
     return { path, line };
   });
   // 按住条目／捆标题拖出看板（2026-10-28 用户：拖不动，vivo 能拖）：走 Electron 自带的拖文件（vivo 补丁同一条路），
@@ -1261,6 +1286,7 @@ function registerIpc(): void {
     const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 32, height: 32 });
     event.sender.startDrag({ file: files[0], files, icon });
     log.记(`拖出看板：${files.length} 个文件`, "window");
+    handOut(list);
     return files.length;
   });
   // 大标题右键「复制路径」（2026-10-27 看板 01）：这一捆每条的单独文件一行一条，贴给 AI 只读这几份。
@@ -1270,6 +1296,7 @@ function registerIpc(): void {
     if (!members.length) throw new Error("这一捆已经不在了");
     const line = [`看板这一捆 ${members.length} 条的单独文件（只读这几份，别翻整组）：`, ...members.map((r) => `${rowName(rows, r)}：${itemFileFor(r.id)}`)].join("\n");
     clipboard.writeText(line);
+    handOut(members.map((r) => r.id));
     return { line, count: members.length };
   });
   // 两档仅决定领活后的报告流程；执行窗口一律由用户自己开，不挂自动开窗计时器。

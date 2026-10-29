@@ -24,6 +24,9 @@ export function normalizeKind(value: unknown): BookmarkKind {
 }
 /** 派活单一批最多几张（2026-10-15 用户：一键最多开三个，多了以后再设计）。 */
 export const MAX_DISPATCH_BATCH = 3;
+/** 接活自动标（2026-10-29 用户：AI 老忘了标在干，让程序自己判）：看板看见条目被交出去（拖出窗口、复制单独文件路径）先占这个名字；
+ *  哪个窗口头一个拿自己的名字用看板命令碰它（next、log、清单、勾、done、report），就换成那个窗口名。 */
+export const HANDED_OUT = "已交出";
 
 export interface BookmarkInput {
   text: string;
@@ -683,8 +686,10 @@ export class BookmarkStore {
   private claimFrom(all: BookmarkRecord[], who: string): ClaimResult {
     const candidates = all.filter((r) => !r.report);
     const total = candidates.length;
+    // 「已交出」的算空着：交出去还没人认，谁来领就是谁的
+    const free = (r: BookmarkRecord) => !r.claimedBy || r.claimedBy === HANDED_OUT;
     const mine = candidates.find((r) => r.claimedBy === who);
-    const pick = mine ?? candidates.find((r) => !r.claimedBy) ?? null;
+    const pick = mine ?? candidates.find(free) ?? null;
     if (pick && !mine) {
       pick.claimedBy = who;
       pick.claimedAt = new Date().toISOString();
@@ -694,9 +699,32 @@ export class BookmarkStore {
       record: pick,
       position: pick ? candidates.indexOf(pick) + 1 : 0,
       total,
-      remaining: candidates.filter((r) => !r.claimedBy).length,
-      busy: [...new Set(candidates.filter((r) => r.claimedBy && r.claimedBy !== who).map((r) => r.claimedBy as string))],
+      remaining: candidates.filter(free).length,
+      busy: [...new Set(candidates.filter((r) => !free(r) && r.claimedBy !== who).map((r) => r.claimedBy as string))],
     };
+  }
+
+  /** 交出去了（2026-10-29）：没人领、没交报告的标成「已交出」，已经有窗口在干的不动；多人派工捆归调度管，不碰。返回标了几条。 */
+  handOut(ids: string[]): number {
+    this.ensureLoaded();
+    const want = new Set(ids);
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const r of this.records) {
+      if (!want.has(r.id) || r.claimedBy || r.report || this.coordination.get(r.bundleId)) continue;
+      r.claimedBy = HANDED_OUT;
+      r.claimedAt = now;
+      n += 1;
+    }
+    if (n) this.save();
+    return n;
+  }
+
+  /** 「已交出」的条目：头一个拿窗口名碰它的窗口接走（不用先 next）。 */
+  private takeOver(record: BookmarkRecord, who: string): void {
+    if (record.claimedBy !== HANDED_OUT || !who || who === HANDED_OUT) return;
+    record.claimedBy = who;
+    record.claimedAt = new Date().toISOString();
   }
 
   /** 干完：只有领它的窗口能删，而且必须带上用户说「可以」的原话。删掉返回那条。 */
@@ -704,6 +732,7 @@ export class BookmarkStore {
     this.ensureLoaded();
     const record = this.records.find((r) => r.id === id);
     if (!record) throw new Error("没找到这条（可能已经删了）");
+    this.takeOver(record, String(by ?? "").trim());
     if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     if (!String(userOk ?? "").trim()) throw new Error("缺用户确认：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进 --ok");
     this.closeWithLinks(record);
@@ -726,6 +755,7 @@ export class BookmarkStore {
     const record = this.records.find((r) => r.id === id);
     if (!record) throw new Error("没找到这条（可能已经删了）");
     const who = String(by ?? "").trim();
+    this.takeOver(record, who);
     if (record.claimedBy && record.claimedBy !== who) throw new Error(`这条是 ${record.claimedBy} 领着的，不是你的，清单交不进去`);
     const list = normalizeChecklist(items);
     if (!list) throw new Error("清单是空的");
@@ -741,6 +771,7 @@ export class BookmarkStore {
     const record = this.records.find((r) => r.id === id);
     if (!record) throw new Error("没找到这条（可能已经删了：全勾完的单子会自动收掉）");
     if (!record.checklist?.length) throw new Error("这条还没有打勾清单：先整理好、跟用户对齐，再用「清单」命令交进来");
+    if (by && by.trim() !== "用户") this.takeOver(record, by.trim());
     const who = String(by ?? "").trim() || record.claimedBy || "AI";
     record.checklist = toggleItem(record.checklist, no, who, new Date().toISOString());
     const { done, total } = checklistProgress(record.checklist);
@@ -793,6 +824,7 @@ export class BookmarkStore {
     this.ensureLoaded();
     const record = this.records.find((r) => r.id === id);
     if (!record) throw new Error("没找到这条（可能已经删了）");
+    this.takeOver(record, String(by ?? "").trim());
     if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     const words = String(text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
     if (!words) throw new Error("记的那句是空的");
@@ -810,6 +842,7 @@ export class BookmarkStore {
     const record = this.records.find((r) => r.id === id);
     if (!record) throw new Error("没找到这条（可能已经删了）");
     const who = String(by ?? "").trim();
+    this.takeOver(record, who);
     if (record.claimedBy !== who) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     const words = String(text ?? "").trim();
     if (!words) throw new Error("报告是空的：用大白话写做了啥、改了哪些、怎么验的、还有啥没弄完");

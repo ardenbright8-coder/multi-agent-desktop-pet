@@ -7,8 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  createKitEntry,
   createProjectFolder,
   createProjectMarkdown,
+  editProjectKit,
+  kitCandidates,
   listProjects,
   moveInOrder,
   reorderProjects,
@@ -103,6 +106,39 @@ test("listProjects：文件夹优先、只列 md、隐藏文件不进看板", ()
   const sub = listProjects(root, "甲项目");
   assert.equal(sub.dirs.length, 0);
   assert.equal(sub.files.length, 0);
+});
+
+test("项目小按钮：没记过账＝默认三块；只有项目根那层的夹带，子夹不带", () => {
+  const root = tempRoot();
+  createProjectFolder(root, "", "中医");
+  const top = listProjects(root, "").dirs[0];
+  assert.deepEqual(top.kit?.map((c) => c.label), ["设计思路", "执行过程", "资源包"]);
+  assert.equal(top.kit?.[2].isDir, true);
+  assert.equal(top.kit?.[0].relPath, "中医/设计思路.md");
+  const inner = listProjects(root, "中医").dirs[0];
+  assert.equal(inner.name, "资源包");
+  assert.equal(inner.kit, undefined, "子夹不挂小按钮");
+});
+
+test("项目小按钮：挑已有的加上、新建 md 和夹顺手加上、左右换位置、拿掉不删文件", () => {
+  const root = tempRoot();
+  createProjectFolder(root, "", "中医");
+  writeFileSync(join(root, "中医", "药方.md"), "# 药方", "utf8");
+  assert.deepEqual(kitCandidates(root, "中医"), ["药方.md"]);
+  editProjectKit(root, "中医", { op: "add", name: "药方.md" });
+  assert.deepEqual(kitCandidates(root, "中医"), []);
+  createKitEntry(root, "中医", "md", "笔记");
+  const kit = createKitEntry(root, "中医", "dir", "图片");
+  assert.deepEqual(kit.map((c) => c.name), ["设计思路.md", "执行过程.md", "资源包", "药方.md", "笔记.md", "图片"]);
+  assert.ok(existsSync(join(root, "中医", "图片")) && !existsSync(join(root, "中医", "图片", "设计思路.md")), "新建的夹是空夹，不套项目三块");
+  // 把执行过程挪到设计思路前面
+  const moved = editProjectKit(root, "中医", { op: "move", name: "执行过程.md", anchor: "设计思路.md", place: "above" });
+  assert.deepEqual(moved.slice(0, 2).map((c) => c.label), ["执行过程", "设计思路"]);
+  const removed = editProjectKit(root, "中医", { op: "remove", name: "药方.md" });
+  assert.equal(removed.some((c) => c.name === "药方.md"), false);
+  assert.ok(existsSync(join(root, "中医", "药方.md")), "拿掉只是不显示");
+  assert.deepEqual(listProjects(root, "").dirs[0].kit?.map((c) => c.label), ["执行过程", "设计思路", "资源包", "笔记", "图片"], "刷新还是这个顺序");
+  assert.throws(() => editProjectKit(root, "中医", { op: "add", name: "没这个.md" }), /不在这个项目夹里/);
 });
 
 test("listProjects：越界相对路径抛错、不存在的目录回落空列表", () => {

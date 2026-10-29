@@ -166,7 +166,8 @@ export function formatShow(groups: BoardGroup[], names: BoardNames, groupName: s
       continue;
     }
     const g = hits[0].g;
-    out.push("", `【捆${b} · ${g.name} 组】${bundleName(g.rows, hits[0].row.record.bundleId!, names)}（${hits.length} 条：${hits.map((x) => pad(x.row.no)).join(" ")}）`, ...note(g));
+    // 末尾带捆号：命令行 `next 捆2` 靠它换成捆号（2026-10-29 接活自动标）
+    out.push("", `【捆${b} · ${g.name} 组】${bundleName(g.rows, hits[0].row.record.bundleId!, names)}（${hits.length} 条：${hits.map((x) => pad(x.row.no)).join(" ")}）· 捆号 ${hits[0].row.record.bundleId}`, ...note(g));
     for (const { row } of hits) {
       if (shown.has(row.record.id)) continue;
       shown.add(row.record.id);

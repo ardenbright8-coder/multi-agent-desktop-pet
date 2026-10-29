@@ -1437,7 +1437,8 @@ function bmBuildTask(record, groupKey, order) {
   // 在干标记（设定15）：哪个 AI 窗口领走了，一眼看到；别的窗口领不走。干完交了报告＝等你审（报告挂在条目下面）。
   if (record.claimedBy) {
     item.classList.add("claimed");
-    const claim = bmStatusBadge("busy", `${record.claimedBy} 在干`);
+    // 「已交出」＝拖出去或复制了路径、还没哪个窗口认（2026-10-29 接活自动标），AI 一敲看板命令就换成它的窗口名
+    const claim = bmStatusBadge("busy", record.claimedBy === "已交出" ? "已交给 AI，等它认领（右键能放回去）" : `${record.claimedBy} 在干`);
     claim.classList.add("claim");
     item.appendChild(claim);
   } else if (record.report) {
@@ -1614,36 +1615,8 @@ function bmBuildProjectRow(entry) {
   name.textContent = entry.name;
   row.appendChild(name);
 
-  if (entry.isDir) {
-    const kit = document.createElement("span");
-    kit.className = "proj-kit";
-    const kits = [
-      { label: "设计思路", rel: entry.relPath + "/设计思路.md", kind: "file" },
-      { label: "执行过程", rel: entry.relPath + "/执行过程.md", kind: "file" },
-      { label: "资源包", rel: entry.relPath + "/资源包", kind: "dir" },
-    ];
-    for (const item of kits) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "proj-kit-btn";
-      chip.textContent = item.kind === "dir" ? "📁 资源包" : item.label;
-      chip.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (item.kind === "file") {
-          void window.bookmark.projectsOpen(item.rel);
-          return;
-        }
-        void bmShowProjPop({ name: "资源包", relPath: item.rel, isDir: true }, chip);
-      });
-      chip.addEventListener("mouseenter", (event) => {
-        event.stopPropagation();
-        if (item.kind !== "dir") return;
-        void bmShowProjPop({ name: "资源包", relPath: item.rel, isDir: true }, chip);
-      });
-      kit.appendChild(chip);
-    }
-    row.appendChild(kit);
-  }
+  // 行尾小按钮（2026-10-29 用户：每个项目都能「＋」加、按住左右拖换位置）：只有项目根那层的夹带 kit
+  if (entry.isDir && entry.kit) row.appendChild(bmBuildProjKit(entry));
 
   if (entry.isDir) {
     // 悬停自动弹目录预览（用户原话：鼠标碰到就弹，不用点）；半秒延迟防乱弹。
@@ -1675,6 +1648,215 @@ function bmBuildProjectRow(entry) {
     },
   });
   return row;
+}
+
+/** 一个项目那排小按钮：点 md 打开、碰到夹弹目录；按住左右拖换位置；右键拿掉；末尾「＋」加。 */
+function bmBuildProjKit(entry) {
+  const kit = document.createElement("span");
+  kit.className = "proj-kit";
+  kit.dataset.project = entry.relPath;
+  for (const item of entry.kit) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "proj-kit-btn";
+    chip.dataset.name = item.name;
+    chip.textContent = item.isDir ? "📁 " + item.label : item.label;
+    chip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (chip.dataset.swallow) {
+        delete chip.dataset.swallow;
+        return;
+      }
+      if (!item.isDir) {
+        void window.bookmark.projectsOpen(item.relPath);
+        return;
+      }
+      void bmShowProjPop({ name: item.label, relPath: item.relPath, isDir: true }, chip);
+    });
+    chip.addEventListener("mouseenter", (event) => {
+      event.stopPropagation();
+      if (!item.isDir || bmDragActive) return;
+      void bmShowProjPop({ name: item.label, relPath: item.relPath, isDir: true }, chip);
+    });
+    chip.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      bmShowKitChipMenu(entry.relPath, item, chip);
+    });
+    bmBindKitDrag(chip, kit, entry.relPath);
+    kit.appendChild(chip);
+  }
+  const plus = document.createElement("button");
+  plus.type = "button";
+  plus.className = "proj-kit-btn proj-kit-plus";
+  plus.textContent = "＋";
+  plus.title = "加一个小按钮：新建 md、新建文件夹，或挑这个项目里已有的";
+  plus.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void bmShowKitAddMenu(entry.relPath, kit, plus);
+  });
+  kit.appendChild(plus);
+  return kit;
+}
+
+/** 把菜单贴在某个按钮下面（右键菜单同一个框）。 */
+function bmPlaceCtxMenu(menu, anchor) {
+  menu.hidden = false;
+  const panelRect = document.getElementById("app").getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(rect.left - panelRect.left, panelRect.width - 174))}px`;
+  menu.style.top = `${Math.max(6, Math.min(rect.bottom - panelRect.top + 4, panelRect.height - 160))}px`;
+}
+
+/** 「＋」：新建 md / 新建文件夹 / 挑夹里已有的（像桌面右键「新建」那样一张小菜单）。 */
+async function bmShowKitAddMenu(project, kit, plus) {
+  bmHideProjPop();
+  const menu = document.getElementById("ctx-menu");
+  menu.textContent = "";
+  menu.appendChild(bmCtxButton("📄 新建 .md", () => bmKitNameInput(project, kit, plus, "md")));
+  menu.appendChild(bmCtxButton("📁 新建文件夹", () => bmKitNameInput(project, kit, plus, "dir")));
+  let names = [];
+  try {
+    names = await window.bookmark.projectsKit({ op: "candidates", project });
+  } catch (error) {
+    bmShowError("读不出这个项目夹： " + bmErrorText(error));
+  }
+  if (names.length) {
+    const sep = document.createElement("div");
+    sep.className = "ctx-sep";
+    menu.appendChild(sep);
+    for (const name of names) {
+      menu.appendChild(bmCtxButton(`加上「${name.replace(/\.md$/i, "")}」`, async () => {
+        await window.bookmark.projectsKit({ op: "add", project, name });
+        await bmRenderProjects();
+      }));
+    }
+  }
+  bmPlaceCtxMenu(menu, plus);
+}
+
+/** 右键小按钮：从这排拿掉（只是不显示，文件不删）。 */
+function bmShowKitChipMenu(project, item, chip) {
+  bmHideProjPop();
+  const menu = document.getElementById("ctx-menu");
+  menu.textContent = "";
+  menu.appendChild(bmCtxButton("从这排拿掉（文件不删）", async () => {
+    await window.bookmark.projectsKit({ op: "remove", project, name: item.name });
+    await bmRenderProjects();
+  }));
+  bmPlaceCtxMenu(menu, chip);
+}
+
+/** 新建时「＋」原地变成起名框：回车建好、Esc 或点别处作罢。 */
+function bmKitNameInput(project, kit, plus, kind) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 60;
+  input.className = "proj-kit-input";
+  input.placeholder = kind === "dir" ? "文件夹名字" : "md 名字（自动补 .md）";
+  let done = false;
+  const close = () => {
+    if (done) return;
+    done = true;
+    void bmRenderProjects();
+  };
+  for (const type of ["click", "pointerdown"]) input.addEventListener(type, (event) => event.stopPropagation());
+  input.addEventListener("keydown", async (event) => {
+    if (event.key === "Escape") close();
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) return close();
+    try {
+      await window.bookmark.projectsKit({ op: "create", project, kind, name });
+      bmShowError("");
+      close();
+    } catch (error) {
+      bmShowError("建失败了： " + bmErrorText(error));
+    }
+  });
+  input.addEventListener("blur", () => window.setTimeout(close, 150));
+  plus.replaceWith(input);
+  window.requestAnimationFrame(() => input.focus());
+}
+
+/** 小按钮按住左右拖（2026-10-29 用户）：跟看板条目同一个手感——按下挪过 5 像素就是拖，没挪松手是单击。
+ *  拖到哪两个按钮中间，那条缝亮一道竖线；松手存进这个项目的 .小按钮.json。 */
+function bmBindKitDrag(chip, kit, project) {
+  chip.addEventListener("dragstart", (event) => event.preventDefault());
+  chip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+    let armed = false;
+    let ghost = null;
+    let hit = null;
+    bmDragActive = true;
+    const clear = () => kit.querySelectorAll(".kit-gap-before, .kit-gap-after").forEach((el) => el.classList.remove("kit-gap-before", "kit-gap-after"));
+    function finish(commit) {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      clear();
+      if (ghost) ghost.remove();
+      chip.classList.remove("is-dragging");
+      bmDragActive = false;
+      const pending = bmRefreshPending;
+      bmRefreshPending = false;
+      if (armed) chip.dataset.swallow = "1";
+      const drop = armed && commit ? hit : null;
+      void (async () => {
+        if (drop) {
+          try {
+            await window.bookmark.projectsKit({ op: "move", project, name: chip.dataset.name, anchor: drop.anchor, place: drop.place });
+          } catch (error) {
+            bmShowError("换位置没成： " + bmErrorText(error));
+          }
+          await bmRenderProjects();
+        } else if (pending) await bmRefresh();
+      })();
+    }
+    function onMove(ev) {
+      if (!armed) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) <= BM_DRAG_SLOP) return;
+        if (!chip.isConnected) return finish(false);
+        armed = true;
+        bmHideProjPop();
+        const rect = chip.getBoundingClientRect();
+        ghost = chip.cloneNode(true);
+        ghost.classList.add("drag-ghost", "proj-kit-ghost");
+        ghost.style.width = rect.width + "px";
+        document.body.appendChild(ghost);
+        chip.classList.add("is-dragging");
+        try { chip.setPointerCapture(pointerId); } catch (e) { /* 捕不到也不挡拖 */ }
+      }
+      ev.preventDefault();
+      ghost.style.left = (ev.clientX - 20) + "px";
+      ghost.style.top = (ev.clientY - 14) + "px";
+      clear();
+      hit = null;
+      const others = [...kit.querySelectorAll(".proj-kit-btn:not(.proj-kit-plus)")].filter((el) => el !== chip);
+      if (!others.length) return;
+      let anchor = others.find((el) => {
+        const r = el.getBoundingClientRect();
+        return ev.clientX < r.left + r.width / 2;
+      });
+      let place = "above";
+      if (!anchor) {
+        anchor = others[others.length - 1];
+        place = "below";
+      }
+      anchor.classList.add(place === "above" ? "kit-gap-before" : "kit-gap-after");
+      hit = { anchor: anchor.dataset.name, place };
+    }
+    function onUp() { finish(true); }
+    function onCancel() { finish(false); }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  });
 }
 
 /** 悬停预览：列出该夹里有什么（夹优先），贴着行右边弹。 */

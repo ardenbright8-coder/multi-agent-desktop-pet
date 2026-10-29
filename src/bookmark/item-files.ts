@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../shared/log";
-import type { BookmarkRecord } from "./store";
+import { HANDED_OUT, type BookmarkRecord } from "./store";
 import { checklistProgress, formatChecklist } from "./checklist";
 
 const log = createLogger("bookmark");
@@ -43,7 +43,7 @@ export function formatItemFiles(
   const nl = String.fromCharCode(10);
   const fix = opts.images ?? ((t: string) => t);
   const title = opts.title || firstLine(record.text);
-  const status = record.claimedBy ? `${record.claimedBy} 在干` : record.report ? `${record.reportedBy ?? "AI"} 干完了，等审` : "没人领";
+  const status = record.claimedBy === HANDED_OUT ? "已交给 AI，还没窗口认领" : record.claimedBy ? `${record.claimedBy} 在干` : record.report ? `${record.reportedBy ?? "AI"} 干完了，等审` : "没人领";
   const lines = [
     `# ${title}`,
     "",
@@ -53,6 +53,10 @@ export function formatItemFiles(
   // 项目名（看板读条目时认出来的）：状态栏进度那行打头用它，比整句小标题短
   if (opts.project && opts.project !== "认不出") lines.push(`> 项目：${opts.project}`);
   if (record.forSystem) lines.push(`> 交给 ${record.forSystem}：这张是写给「${record.forSystem}」那套 Windows 的，不是那套就别接。`);
+  // 接活自动标（2026-10-29）：没人领或「已交出」的，告诉拿到这份的 AI 先接下（Claude Code 有钩子替它敲）
+  if (!record.report && (!record.claimedBy || record.claimedBy === HANDED_OUT)) {
+    lines.push(`> 拿到这份＝用户交给你了：先敲 \`看板 next ${record.id} --by <你的窗口名>\` 接下再干（看到「看板已替你接了」就是钩子替你敲过了）。用户只说看看、不接，就别敲。`);
+  }
   if (record.kind === "dispatch") {
     lines.push("> 派活单：强模型拆好的活，同一批的几张会被一键同时开出去。只动单子里「只许动」写的文件；干完 report 交报告，等调度审、用户测，别自己 done。");
   }

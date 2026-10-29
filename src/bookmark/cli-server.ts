@@ -17,6 +17,7 @@ import { parseDispatchArgs, type DispatchInput } from "./dispatch-cli";
 import { formatBrief, formatShow, indexBoard, parseShowSpec, type BoardNames } from "./board-index";
 import { imagesForAgent } from "./inline-images";
 import { checklistProgress, formatPending, lastProgress, parseChecklist, type ChecklistItem } from "./checklist";
+import { HANDED_OUT } from "./store";
 
 /** bookmark-cli.mjs 交清单前先在本地查格式，写错了不用连看板就报。 */
 export { parseChecklist };
@@ -855,7 +856,7 @@ function handleClaimRequest(path: string, raw: Record<string, unknown>, ctx: Cli
     if (!store.release) return { status: 500, body: { ok: false, error: "看板还不支持 release（主进程未接线）" } };
     const current = store.list().find((r) => r.id === id);
     if (!current) return { status: 404, body: { ok: false, error: "没找到这条（可能已经删了）" } };
-    if (current.claimedBy && current.claimedBy !== by) {
+    if (current.claimedBy && current.claimedBy !== by && current.claimedBy !== HANDED_OUT) {
       return { status: 400, body: { ok: false, error: `这条是 ${current.claimedBy} 领的，不是你的，放不回去` } };
     }
     store.release(id);

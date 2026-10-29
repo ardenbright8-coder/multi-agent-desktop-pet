@@ -3,13 +3,25 @@
 // 存真实文件夹+真实 md（不是程序里的假数据），跟书签库同窝（bookmark\projects\）。
 // 设计：纯函数（名字校验/路径安全）跟 IO（列表/建夹/建md）同模块；open 由 panel-window 调 shell（electron 侧），这层不 import electron 保持可测。
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
 import { bookmarkProjectsDirectory } from "../shared/paths";
 
 /** 项目条目（列表渲染用）：name=条目名，relPath=相对 projects 根的路径（正斜杠风格给渲染层），isDir=是不是文件夹。 */
 export interface ProjectEntry {
   name: string;
+  relPath: string;
+  isDir: boolean;
+  /** 只有项目根那层的夹带：行尾那排小按钮（2026-10-29）。子夹不带。 */
+  kit?: KitChip[];
+}
+
+/** 项目行尾的一个小按钮：点了打开项目夹里的一份 md 或一个子夹。 */
+export interface KitChip {
+  /** 项目夹里的名字（`设计思路.md`、`资源包`），也是排序账里记的那个。 */
+  name: string;
+  /** 按钮上的字：md 去掉后缀。 */
+  label: string;
   relPath: string;
   isDir: boolean;
 }
@@ -23,6 +35,11 @@ export interface ProjectListing {
 
 /** 每层目录里的顺序账。点开头，列表不显示它。 */
 export const PROJECT_ORDER_FILE = ".排序.json";
+
+/** 每个项目自己那排小按钮的账（2026-10-29 用户：任何一个都能加、能左右换位置）。点开头，列表不显示它。 */
+export const PROJECT_KIT_FILE = ".小按钮.json";
+/** 没记过账的项目：照新建项目夹自带的三块。 */
+export const DEFAULT_KIT = ["设计思路.md", "执行过程.md", "资源包"];
 
 // Windows 文件名禁用字符 + 保留尾点尾空格；.. 单独拦（防穿越）。
 const FORBIDDEN_NAME = /[\\/:*?"<>|]/;
@@ -72,9 +89,85 @@ export function listProjects(root: string, relative: string): ProjectListing {
   const byName = (a: ProjectEntry, b: ProjectEntry) => a.name.localeCompare(b.name, "zh-Hans-CN");
   dirs.sort(byName);
   files.sort(byName);
+  // 小按钮只挂项目根那层的夹（以前子夹也挂，指向的文件根本不存在）
+  if (!String(relative ?? "").trim()) for (const dir of dirs) dir.kit = readProjectKit(root, dir.relPath);
   const saved = readProjectOrder(abs);
   const ordered = saved.length ? applyProjectOrder([...dirs, ...files], saved) : [...dirs, ...files];
   return { dirs, files, ordered };
+}
+
+/** 一个项目那排小按钮：照账里的顺序，账上有、夹里已经没了的跳过。没记过账＝默认三块。 */
+export function readProjectKit(root: string, projectRel: string): KitChip[] {
+  const abs = resolveProjectPath(root, projectRel);
+  const chips: KitChip[] = [];
+  for (const name of readKitNames(abs)) {
+    const target = join(abs, name);
+    if (!existsSync(target)) continue;
+    const isDir = statSync(target).isDirectory();
+    chips.push({ name, label: isDir ? name : name.replace(/\.md$/i, ""), relPath: toRelPath(root, target), isDir });
+  }
+  return chips;
+}
+
+/** 小按钮的增、减、换位置都走这一个口子，改完写回账、返回新的一排。 */
+export function editProjectKit(
+  root: string,
+  projectRel: string,
+  edit: { op: "add"; name: string } | { op: "remove"; name: string } | { op: "move"; name: string; anchor: string; place: "above" | "below" },
+): KitChip[] {
+  const abs = resolveProjectPath(root, projectRel);
+  if (!String(projectRel ?? "").trim() || !existsSync(abs)) throw new Error("项目夹不在了");
+  let names = readKitNames(abs);
+  if (edit.op === "add") {
+    const name = sanitizeEntryName(edit.name);
+    if (!existsSync(join(abs, name))) throw new Error(`「${name}」不在这个项目夹里`);
+    if (!names.includes(name)) names = [...names, name];
+  } else if (edit.op === "remove") {
+    names = names.filter((n) => n !== edit.name);
+  } else {
+    names = moveInOrder(names, edit.name, edit.anchor, edit.place);
+  }
+  writeFileSync(join(abs, PROJECT_KIT_FILE), JSON.stringify(names), "utf8");
+  return readProjectKit(root, projectRel);
+}
+
+/** 「＋」里挑已有的：项目夹里还没上按钮的 md 和子夹。 */
+export function kitCandidates(root: string, projectRel: string): string[] {
+  const abs = resolveProjectPath(root, projectRel);
+  if (!existsSync(abs)) return [];
+  const used = new Set(readKitNames(abs));
+  return readdirSync(abs, { withFileTypes: true })
+    .filter((d) => !d.name.startsWith(".") && !used.has(d.name) && (d.isDirectory() || (d.isFile() && d.name.toLowerCase().endsWith(".md"))))
+    .map((d) => d.name)
+    .sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+}
+
+/** 「＋」里新建：建一份 md 或一个空夹（不套项目三块），顺手加成按钮。返回新的一排。 */
+export function createKitEntry(root: string, projectRel: string, kind: "md" | "dir", rawName: string): KitChip[] {
+  const abs = resolveProjectPath(root, projectRel);
+  if (!String(projectRel ?? "").trim() || !existsSync(abs)) throw new Error("项目夹不在了");
+  let name: string;
+  if (kind === "md") {
+    name = basename(createProjectMarkdown(root, projectRel, rawName));
+  } else {
+    name = sanitizeEntryName(rawName);
+    const target = join(abs, name);
+    if (existsSync(target)) throw new Error(`「${name}」已经存在了`);
+    mkdirSync(target);
+  }
+  return editProjectKit(root, projectRel, { op: "add", name });
+}
+
+function readKitNames(abs: string): string[] {
+  const file = join(abs, PROJECT_KIT_FILE);
+  if (!existsSync(file)) return [...DEFAULT_KIT];
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (!Array.isArray(parsed)) return [...DEFAULT_KIT];
+    return [...new Set(parsed.filter((item): item is string => typeof item === "string" && item.length > 0))];
+  } catch {
+    return [...DEFAULT_KIT];
+  }
 }
 
 /** 按保存的名字顺序排。账上没有的新条目按名字补在最后。 */
