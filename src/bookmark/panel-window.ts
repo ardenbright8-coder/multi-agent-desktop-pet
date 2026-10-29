@@ -24,6 +24,7 @@ import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "
 import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
 import { formatClaimMessage, startBookmarkCliServer, type CliRecord } from "./cli-server";
 import { indexBoard } from "./board-index";
+import { findHandoffs, startAgentWatch, windowNameFor, type AgentWatchHandle, type SentMessage } from "./agent-watch";
 import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
@@ -441,6 +442,7 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
     startOrganizerTimer();
     startIdleOrganizer();
   }
+  startHandoffWatch();
   if (options?.resident) {
     try {
       const win = ensurePanel();
@@ -539,6 +541,14 @@ export function toggleBookmarkPanel(): void {
 /** 退出清理：退热键、停定时器、关窗口。数据在磁盘上，不丢。 */
 export function closeBookmarkPanel(): void {
   panelShuttingDown = true;
+  try {
+    handoffWatch?.stop();
+    handoffWatch = null;
+    if (handoffExpireTimer) clearInterval(handoffExpireTimer);
+    handoffExpireTimer = null;
+  } catch {
+    /* 关的时候出错无所谓 */
+  }
   try {
     if (hotkeyRegistered) {
       globalShortcut.unregister(BOOKMARK_HOTKEY);
@@ -1315,6 +1325,19 @@ function registerIpc(): void {
     handOut(members.map((r) => r.id));
     return { line, count: members.length };
   });
+  // Ctrl+C（2026-10-29 用户：鼠标碰着哪条就复制哪条，捆标题＝整捆，Ctrl 点选的＝那几条）：复制这几条的单独文件路径，标「已交出」。
+  ipcMain.handle("bookmark:copy-paths", (_event, ids: unknown) => {
+    const want = (Array.isArray(ids) ? ids : [ids]).map((id) => String(id ?? "")).filter(Boolean);
+    const rows = boardRows();
+    const members = requireStore().list().filter((r) => want.includes(r.id));
+    if (!members.length) throw new Error("这几条已经不在了");
+    const line = members.length === 1
+      ? itemFileLine(members[0].id).line
+      : [`看板这 ${members.length} 条的单独文件（只读这几份，别翻整组）：`, ...members.map((r) => `${rowName(rows, r)}：${itemFileFor(r.id)}`)].join("\n");
+    clipboard.writeText(line);
+    handOut(members.map((r) => r.id));
+    return { line, count: members.length };
+  });
   // 两档仅决定领活后的报告流程；执行窗口一律由用户自己开，不挂自动开窗计时器。
   ipcMain.handle("bookmark:mode:get", () => readBoardMode());
   ipcMain.handle("bookmark:mode:set", (_event, value: unknown) => {
@@ -1613,6 +1636,66 @@ function itemFileLine(id: unknown): { path: string; line: string } {
 }
 
 /** 条目 id → 屏幕上的组名和号码（跟看板、show 同一个数法）。 */
+// ── 交活联动（2026-10-29 用户：拖、复制、六个点都一个逻辑；别加钩子，只靠看板程序）──
+// 盯 Claude Code、Pi、Antigravity 的会话记录：他把条目发给哪个窗口，就标「那个窗口 在干」；
+// 拖出去、复制了却一直没发（删掉了、拖到桌面了），「已交出」过 HANDOUT_EXPIRE_MS 自己消掉。
+const HANDOUT_EXPIRE_MS = Number(process.env.BOOKMARK_HANDOUT_EXPIRE_MS) || 3 * 60_000;
+let handoffWatch: AgentWatchHandle | null = null;
+let handoffExpireTimer: NodeJS.Timeout | null = null;
+
+function startHandoffWatch(): void {
+  // 真机盯自己的用户夹；验证脚本给假用户夹（BOOKMARK_WATCH_HOME）才盯，免得读到真聊天记录
+  const home = process.env.BOOKMARK_WATCH_HOME || (isIsolatedRun() ? "" : app.getPath("home"));
+  try {
+    if (home) handoffWatch = startAgentWatch(home, onAgentSent);
+  } catch (error) {
+    log.出事("盯 AI 会话记录没起来（看板照常用，交活只能手动标）", error, "watch");
+  }
+  handoffExpireTimer = setInterval(() => {
+    try {
+      const n = requireStore().expireHandedOut(HANDOUT_EXPIRE_MS);
+      if (n) {
+        log.记(`「已交出」${n} 条一直没发出去，自己消掉了`, "watch");
+        notifyInboxChanged();
+      }
+    } catch (error) {
+      log.出事("清「已交出」出错", error, "watch");
+    }
+  }, Math.min(20_000, Math.max(1_000, Math.floor(HANDOUT_EXPIRE_MS / 3))));
+}
+
+/** 他发出去的一句话里认出交了哪几条：单独文件路径＝那几条；「接第 N 条」＝看板第 N 条；「接捆 N」＝那一捆。别的窗口在干的不抢。 */
+function onAgentSent(sent: SentMessage): void {
+  const hits = findHandoffs(sent.text);
+  if (!hits.ids.length && !hits.numbers.length && !hits.bundles.length) return;
+  const s = requireStore();
+  const by = windowNameFor(sent.agent, sent.session);
+  const targets = [...hits.ids];
+  if (hits.numbers.length || hits.bundles.length) {
+    const groups = indexBoard(s.list(), requireRoster().list());
+    for (const g of groups) {
+      for (const row of g.rows) {
+        if (hits.numbers.includes(row.no)) targets.push(row.record.id);
+        if (row.bundleNo !== null && hits.bundles.includes(row.bundleNo) && row.record.bundleId && !targets.includes(row.record.bundleId)) targets.push(row.record.bundleId);
+      }
+    }
+  }
+  const got: string[] = [];
+  for (const target of targets) {
+    try {
+      if (s.taskBundles().some((b) => b.id === target)) continue; // 多人派工捆归调度管
+      const r = s.claimNext(target, by);
+      if (r.record?.claimedBy === by) got.push(r.record.id);
+    } catch {
+      /* 已经删了、找不到：不管 */
+    }
+  }
+  if (got.length) {
+    log.记(`${by} 收到了 ${got.length} 条，标成在干`, "watch");
+    notifyInboxChanged();
+  }
+}
+
 function boardRows(): Map<string, { group: string; no: number }> {
   const out = new Map<string, { group: string; no: number }>();
   for (const g of indexBoard(requireStore().list(), requireRoster().list())) for (const row of g.rows) out.set(row.record.id, { group: g.name, no: row.no });
@@ -2040,7 +2123,17 @@ function requireStore(): BookmarkStore {
 /** 手机消息入库后叫面板重拉列表。通知失败无所谓（Ctrl+R 手动刷新兑底）。 */
 function notifyInboxChanged(): void {
   try {
-    if (panel && !panel.isDestroyed()) panel.webContents.send("bookmark:inbox-changed");
+    if (panel && !panel.isDestroyed()) {
+      panel.webContents.send("bookmark:inbox-changed");
+      // 看板沉在底下、没被点中时 Windows 有时不重画（2026-10-29 用户：要点一下才消掉）：等它重画完再催一次
+      setTimeout(() => {
+        try {
+          if (panel && !panel.isDestroyed()) panel.webContents.invalidate();
+        } catch {
+          /* 催不动就算了 */
+        }
+      }, 300);
+    }
   } catch {
     /* 面板不在就跳过，别让刷新通知出幺蛾子 */
   }

@@ -723,6 +723,23 @@ export class BookmarkStore {
     return n;
   }
 
+  /** 交出去一阵子没人认（2026-10-29 用户：拖出去又删掉没发、拖到桌面，状态自己没了）：「已交出」超过 maxAgeMs 的放回去。
+   *  不进撤回账（是程序自己清的）。返回清了几条。 */
+  expireHandedOut(maxAgeMs: number, now = Date.now()): number {
+    this.ensureLoaded();
+    let n = 0;
+    for (const r of this.records) {
+      if (r.claimedBy !== HANDED_OUT) continue;
+      const at = Date.parse(r.claimedAt ?? "");
+      if (Number.isFinite(at) && now - at < maxAgeMs) continue;
+      r.claimedBy = null;
+      r.claimedAt = null;
+      n += 1;
+    }
+    if (n) this.save();
+    return n;
+  }
+
   /** 「已交出」的条目：头一个拿窗口名碰它的窗口接走（不用先 next）。 */
   private takeOver(record: BookmarkRecord, who: string): void {
     if (record.claimedBy !== HANDED_OUT || !who || who === HANDED_OUT) return;

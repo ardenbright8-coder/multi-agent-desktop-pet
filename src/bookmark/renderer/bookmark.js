@@ -3718,7 +3718,7 @@ bmInit();
 // ── 剪切后拿着走（2026-10-13 用户拍板）────────────────────
 // 按住某条（或鼠标停在某条上）按 Ctrl+X → 按 Ctrl+V，这条粘到鼠标上（跟按住拖一个样：变绿＝合并，不绿＝单独放，哪个组都能去）
 // → 按住左键接着拖、松开就放下；右键或 Esc 不要了（剪下的留在原地）。在捆标题那一栏上按 Ctrl+X＝整捆拿着走（跟按住捆标题拖一样）。
-// Ctrl+C 不碰条目（复制一条那套同天拆了）。在输入框里打字、或选中了一段字时，Ctrl+X / V 还是普通的剪切粘贴文字。
+// Ctrl+C＝复制单独文件路径交给 AI（2026-10-29，认谁跟 Ctrl+X 一样），不剪、不拿着走。在输入框里打字、或选中了一段字时，Ctrl+X / V 还是普通的剪切粘贴文字。
 
 /** Ctrl+Z 归框自己管的：框里有字、或选中了一段字。光标停在空框里（每组第一格那个常驻空白框最常见）按 Ctrl+Z，
  *  退看板上的一步（2026-10-29 用户：拖过去再撤销，状态不消——光标正好在空框里，Ctrl+Z 被框吃了）。 */
@@ -3726,6 +3726,14 @@ function bmBoxOwnsUndo() {
   const a = document.activeElement;
   if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT")) return Boolean(a.value);
   if (a && a.isContentEditable) return Boolean(a.textContent.trim());
+  const sel = window.getSelection();
+  return Boolean(sel && !sel.isCollapsed && String(sel).trim());
+}
+
+/** Ctrl+C 归框自己管的：只有选中了一段字（框里框外都算）。光标停在框里没选字时，Ctrl+C 复制鼠标碰着的那条（2026-10-29）。 */
+function bmBoxOwnsCopy() {
+  const a = document.activeElement;
+  if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT")) return a.selectionStart !== a.selectionEnd;
   const sel = window.getSelection();
   return Boolean(sel && !sel.isCollapsed && String(sel).trim());
 }
@@ -3820,6 +3828,25 @@ function bmInitClipboard() {
       // 项目页先退小按钮那几步（2026-10-29），退完了才轮到看板上的
       if (bmCurrentPage === "projects" && bmKitUndo.length) void bmUndoKit();
       else void bmUndo();
+      return;
+    }
+    // Ctrl+C＝复制单独文件路径交给 AI（2026-10-29 用户：跟 Ctrl+X 一个认法——Ctrl 点选的那几条 → 点选的那条 / 那捆 → 鼠标碰着的那条 / 那捆；
+    // 捆标题＝整捆）。在框里打字、选中了一段字时还是普通复制字。
+    if (k === "c" && !bmBoxOwnsCopy() && !bmCarry && window.bookmark.copyPaths) {
+      let ids = [...document.querySelectorAll(".task[data-id]")].filter((n) => bmSelectedTasks.has(n.dataset.id)).map((n) => n.dataset.id);
+      if (!ids.length) {
+        const pickedEl = bmPickedTaskId ? document.querySelector(`.task[data-id="${CSS.escape(bmPickedTaskId)}"]`) : null;
+        const pickedHead = !pickedEl && bmPickedBundleId ? document.querySelector(`.bundle-head[data-bundle="${CSS.escape(bmPickedBundleId)}"]`) : null;
+        const id = pickedEl ? bmPickedTaskId : pickedHead ? null : bmHoverTaskId;
+        const bundleId = id ? null : pickedHead ? bmPickedBundleId : bmHoverBundleId;
+        if (id && document.querySelector(`.task[data-id="${CSS.escape(id)}"]`)) ids = [id];
+        else if (bundleId) ids = [...document.querySelectorAll(`.task[data-bundle="${CSS.escape(bundleId)}"]`)].map((n) => n.dataset.id);
+      }
+      if (!ids.length) return;
+      event.preventDefault();
+      void window.bookmark.copyPaths(ids)
+        .then(({ count }) => bmToast(`${count > 1 ? `这 ${count} 条的` : ""}路径复制好了，标成交给 AI${BM_HANDOUT_UNDO}`, 3500))
+        .catch((error) => bmShowError(bmErrorText(error)));
       return;
     }
     if (k !== "x" && k !== "v") return;

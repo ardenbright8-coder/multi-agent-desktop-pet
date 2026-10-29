@@ -9,7 +9,7 @@
 // 注意：独立 AGENT_PET_HUB_HOME 起实例，不碰真看板。
 
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -47,6 +47,8 @@ function runCli(args) {
 }
 
 const app = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(dist, "app.js")], env });
+// 复制路径会动系统剪贴板：先存着，跑完放回去
+const savedClip = await app.evaluate(({ clipboard }) => clipboard.readText());
 try {
   let page;
   const end = Date.now() + 15000;
@@ -208,5 +210,63 @@ if (restartAt) {
     await again.close();
   }
 }
+// ⑨ 交活联动：看板盯假用户夹里三家的会话记录。发出去了＝标那个窗口在干；没发出去＝过一阵自己消掉；Ctrl+C 碰着哪条复制哪条；「接第 N 条」也认
+{
+  const fakeHome = mkdtempSync(join(tmpdir(), "bm-watch-home-"));
+  const claudeDir = join(fakeHome, ".claude", "projects", "C--Users");
+  const piDir = join(fakeHome, ".pi", "agent", "sessions", "--C--");
+  mkdirSync(claudeDir, { recursive: true });
+  mkdirSync(piDir, { recursive: true });
+  const home9 = mkdtempSync(join(tmpdir(), "bm-projkit9-"));
+  const env9 = { ...env, AGENT_PET_HUB_HOME: home9, BOOKMARK_WATCH_HOME: fakeHome, BOOKMARK_HANDOUT_EXPIRE_MS: "4000" };
+  const app9 = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(dist, "app.js")], env: env9 });
+  try {
+    let page;
+    const end = Date.now() + 15000;
+    while (!page && Date.now() < end) {
+      page = app9.windows().find((w) => w.url().includes("bookmark/renderer"));
+      if (!page) await sleep(100);
+    }
+    await page.waitForLoadState("domcontentloaded");
+    await app9.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.hide()));
+    await page.setViewportSize({ width: 620, height: 900 });
+    const who = (id) => page.evaluate(async (x) => (await window.bookmark.list()).find((r) => r.id === x)?.claimedBy ?? null, id);
+    const add = (text) => page.evaluate((t) => window.bookmark.add({ text: t, assignee: "Claude" }), text);
+    const x = await add("联动甲");
+    const y = await add("联动乙");
+    const z = await add("联动丙");
+    await page.evaluate(() => bmRefresh());
+    await sleep(400);
+    const { path } = await page.evaluate((id) => window.bookmark.itemFile(id), x.id);
+    await waitFor(async () => (await who(x.id)) === "已交出");
+    const sid = "64b7ed12-06e3-45fc-a88c-7bdbb84337a0";
+    appendFileSync(join(claudeDir, `${sid}.jsonl`), JSON.stringify({ type: "user", sessionId: sid, timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: `你干这个 ${path}` }] } }) + "\n", "utf8");
+    await waitFor(async () => (await who(x.id)) === "Claude-37a0", 6000);
+    check("⑨ 拖进 Claude 发出去：看板自己从记录里认出来，标「Claude-37a0 在干」", (await who(x.id)) === "Claude-37a0", await who(x.id));
+    await page.evaluate((id) => window.bookmark.itemFile(id), y.id);
+    await waitFor(async () => (await who(y.id)) === "已交出");
+    await waitFor(async () => (await who(y.id)) === null, 12000);
+    check("⑨ 复制了却一直没发：过一阵自己消掉", (await who(y.id)) === null, await who(y.id));
+    await page.evaluate(() => bmRefresh());
+    await sleep(300);
+    const box = await page.locator(`#board .task[data-id="${z.id}"] .t-text, #board .task[data-id="${z.id}"]`).first().boundingBox();
+    await page.mouse.move(box.x + 30, box.y + 10);
+    await page.mouse.move(box.x + 40, box.y + 12);
+    await sleep(200);
+    await page.keyboard.press("Control+c");
+    await waitFor(async () => (await who(z.id)) === "已交出");
+    const clip = await app9.evaluate(({ clipboard }) => clipboard.readText());
+    check("⑨ 鼠标碰着这条按 Ctrl+C：复制它的路径、标「已交出」", (await who(z.id)) === "已交出" && clip.includes(z.id), `${await who(z.id)} | ${clip.slice(0, 60)}`);
+    await page.evaluate((id) => window.bookmark.release(id), z.id);
+    const no = await page.evaluate((id) => document.querySelector(`#board .task[data-id="${id}"] .num`)?.textContent ?? "", z.id);
+    writeFileSync(join(piDir, "2026-10-29T03-26-37-516Z_01a185b1-ffcb-7341-970d-cfa933209acf.jsonl"), JSON.stringify({ type: "message", timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: `你接第${Number(no)}条` }] } }) + "\n", "utf8");
+    await waitFor(async () => (await who(z.id)) === "Pi-9acf", 6000);
+    check(`⑨ 在 Pi 里说「接第${Number(no)}条」：标「Pi-9acf 在干」`, (await who(z.id)) === "Pi-9acf", await who(z.id));
+  } finally {
+    await app9.evaluate(({ clipboard }, text) => clipboard.writeText(text), savedClip).catch(() => {});
+    await app9.close();
+  }
+}
+
 console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 process.exit(failed ? 1 : 0);

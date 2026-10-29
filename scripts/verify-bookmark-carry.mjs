@@ -1,5 +1,5 @@
 // 隔离看板回归（2026-10-13）：跨组一步到位拖动；Ctrl+X → Ctrl+V 拿着走、按住左键拖、松开放下、右键不要；
-// 整捆搬家（按住捆标题拖、捆标题上 Ctrl+X）；Ctrl+C 不碰条目（复制一条那套拆了）；Ctrl+Z 撤回；单击详情就改；
+// 整捆搬家（按住捆标题拖、捆标题上 Ctrl+X）；Ctrl+C 不剪条目（2026-10-29 起只复制单独文件路径）；Ctrl+Z 撤回；单击详情就改；
 // 所有组、所有时候第一行都是标题（还没读的拿自己的字顶着）；Ctrl 点选好几条一起剪、一起放（2026-10-27）。官方 Playwright 后台驱动，截图在 .runtime/carry/。
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync } from 'node:fs';
@@ -164,11 +164,11 @@ try {
   mem = await members();
   check('⑥ 整捆拿着走放到 Claude：整捆回来、还是一捆', mem.length === size && mem.every((x) => x === 'Claude'), JSON.stringify(mem));
 
-  // ⑥ Ctrl+C 不碰条目
+  // ⑥ Ctrl+C 不剪条目（只复制路径，剪还是 Ctrl+X）
   const dd = await box(task(ids.D));
   await page.mouse.move(dd.x, dd.y);
   await page.keyboard.press('Control+c');
-  check('⑥ 鼠标停在条目上按 Ctrl+C：什么都不拿', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0);
+  check('⑥ 鼠标停在条目上按 Ctrl+C：不剪、不拿着走', (await page.evaluate(() => bmClip)) === null && (await page.locator('.task.clip-cut').count()) === 0);
 
   // ⑦ 按住某条（长按）再按 Ctrl+X：剪下的就是按着的那条，这次拖动作废
   const b = await box(`${task(ids.B)} .num`);
