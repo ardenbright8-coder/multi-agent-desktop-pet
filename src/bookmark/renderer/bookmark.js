@@ -88,6 +88,8 @@ function bmForSystemTag(name) {
 /** 状态小标：圆角小方块＋细线图标，说明放在鼠标碰到才冒的提示里（2026-10-13 用户：省地方给标题）。 */
 // 干活的两个状态用表情（2026-10-13 用户：正在干＝绿的，干完等审＝勾，一眼分得出）；别的小标照旧细线图标。
 const BM_STATUS_EMOJI = { busy: "♻️", review: "✅" };
+// 交给 AI 的几种办法（拖出去、点号码、复制、捆复制路径）都标「已交出」，提示同一句（2026-10-29）
+const BM_HANDOUT_UNDO = "（不对就 Ctrl+Z，按一下退一步）";
 function bmStatusBadge(kind, label) {
   const el = document.createElement("span");
   el.className = `status-badge status-${kind}`;
@@ -1113,6 +1115,7 @@ async function bmStartDragOut(ids) {
   bmDragOutActive = true;
   try {
     await window.bookmark.dragOutFiles(list);
+    bmToast(`拖出去了，${list.length > 1 ? `这 ${list.length} 条` : "这条"}标成交给 AI${BM_HANDOUT_UNDO}`, 3500);
   } catch (error) {
     bmShowError(bmErrorText(error));
   } finally {
@@ -1252,7 +1255,7 @@ function bmBuildTask(record, groupKey, order) {
     event.stopPropagation();
     try {
       await window.bookmark.itemFile(record.id);
-      bmToast("这条的单独文件路径复制好了：贴给 AI，它只读这一份", 3500);
+      bmToast(`路径复制好了，这条标成交给 AI${BM_HANDOUT_UNDO}`, 3500);
     } catch (error) {
       bmShowError(bmErrorText(error));
     }
@@ -1457,7 +1460,7 @@ function bmBuildTask(record, groupKey, order) {
     event.stopPropagation();
     try {
       await window.bookmark.copyForAgent(record.id, null);
-      bmToast("已复制这条");
+      bmToast(`已复制这条，标成交给 AI${BM_HANDOUT_UNDO}`, 3500);
     } catch (error) {
       bmShowError(bmErrorText(error));
     }
@@ -1727,6 +1730,7 @@ async function bmShowKitAddMenu(project, kit, plus) {
     menu.appendChild(sep);
     for (const name of names) {
       menu.appendChild(bmCtxButton(`加上「${name.replace(/\.md$/i, "")}」`, async () => {
+        bmKitRemember(project);
         await window.bookmark.projectsKit({ op: "add", project, name });
         await bmRenderProjects();
       }));
@@ -1741,43 +1745,80 @@ function bmShowKitChipMenu(project, item, chip) {
   const menu = document.getElementById("ctx-menu");
   menu.textContent = "";
   menu.appendChild(bmCtxButton("从这排拿掉（文件不删）", async () => {
+    bmKitRemember(project);
     await window.bookmark.projectsKit({ op: "remove", project, name: item.name });
+    bmToast(`拿掉了「${item.label}」${BM_KIT_UNDO_HINT}`, 2500);
     await bmRenderProjects();
   }));
   bmPlaceCtxMenu(menu, chip);
 }
 
-/** 新建时「＋」原地变成起名框：回车建好、Esc 或点别处作罢。 */
+/** 新建时「＋」原地变成起名框（2026-10-29 用户：点哪都算保存，弄错了 Ctrl+Z）：回车或点别处就建好，框是空的或按 Esc 作罢。 */
 function bmKitNameInput(project, kit, plus, kind) {
   const input = document.createElement("input");
   input.type = "text";
   input.maxLength = 60;
   input.className = "proj-kit-input";
-  input.placeholder = kind === "dir" ? "文件夹名字" : "md 名字（自动补 .md）";
+  input.placeholder = kind === "dir" ? "文件夹名字（点别处就建好）" : "md 名字（点别处就建好）";
   let done = false;
-  const close = () => {
+  const finish = async (save) => {
     if (done) return;
     done = true;
+    const name = input.value.trim();
+    if (save && name) {
+      try {
+        const chips = await window.bookmark.projectsKit({ op: "create", project, kind, name });
+        const made = chips.at(-1)?.name;
+        if (made) bmKitUndo.push({ project, discard: made });
+        bmShowError("");
+        bmToast(`建好了「${made ?? name}」${BM_KIT_UNDO_HINT}`, 3000);
+      } catch (error) {
+        bmShowError("建失败了： " + bmErrorText(error));
+      }
+    }
     void bmRenderProjects();
   };
   for (const type of ["click", "pointerdown"]) input.addEventListener(type, (event) => event.stopPropagation());
-  input.addEventListener("keydown", async (event) => {
-    if (event.key === "Escape") close();
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") void finish(false);
     if (event.key !== "Enter") return;
     event.preventDefault();
-    const name = input.value.trim();
-    if (!name) return close();
-    try {
-      await window.bookmark.projectsKit({ op: "create", project, kind, name });
-      bmShowError("");
-      close();
-    } catch (error) {
-      bmShowError("建失败了： " + bmErrorText(error));
-    }
+    void finish(true);
   });
-  input.addEventListener("blur", () => window.setTimeout(close, 150));
+  input.addEventListener("blur", () => void finish(true));
   plus.replaceWith(input);
   window.requestAnimationFrame(() => input.focus());
+}
+
+// 项目页小按钮的撤回账（2026-10-29 用户：弄错了 Ctrl+Z 撤回）：一步一条，按一下退一步。
+// { project, names }＝那一排换回之前的顺序；{ project, discard }＝撤回「＋」新建的（还没写东西才删文件）。只在项目页、只记小按钮。
+const bmKitUndo = [];
+const BM_KIT_UNDO_HINT = "（不对就 Ctrl+Z）";
+function bmKitNames(project) {
+  const kit = document.querySelector(`#board .proj-kit[data-project="${CSS.escape(project)}"]`);
+  return kit ? [...kit.querySelectorAll(".proj-kit-btn:not(.proj-kit-plus)")].map((b) => b.dataset.name) : [];
+}
+/** 改小按钮之前记一笔：这一排现在什么样。 */
+function bmKitRemember(project) {
+  bmKitUndo.push({ project, names: bmKitNames(project) });
+  if (bmKitUndo.length > 30) bmKitUndo.shift();
+}
+async function bmUndoKit() {
+  const step = bmKitUndo.pop();
+  if (!step) return false;
+  try {
+    if (step.discard) {
+      const res = await window.bookmark.projectsKit({ op: "discard", project: step.project, name: step.discard });
+      bmToast(res.deleted ? `撤回了：新建的「${step.discard}」删掉了` : `撤回了：「${step.discard}」按钮拿掉了（里面写过东西，文件留着）`, 3000);
+    } else {
+      await window.bookmark.projectsKit({ op: "set", project: step.project, names: step.names });
+      bmToast("撤回了：小按钮回到上一步", 2500);
+    }
+  } catch (error) {
+    bmShowError("撤回没成：" + bmErrorText(error));
+  }
+  await bmRenderProjects();
+  return true;
 }
 
 /** 小按钮按住左右拖（2026-10-29 用户）：跟看板条目同一个手感——按下挪过 5 像素就是拖，没挪松手是单击。
@@ -1810,6 +1851,7 @@ function bmBindKitDrag(chip, kit, project) {
       void (async () => {
         if (drop) {
           try {
+            bmKitRemember(project);
             await window.bookmark.projectsKit({ op: "move", project, name: chip.dataset.name, anchor: drop.anchor, place: drop.place });
           } catch (error) {
             bmShowError("换位置没成： " + bmErrorText(error));
@@ -2465,7 +2507,7 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
   // 复制路径（2026-10-27 看板 01）：跟点号码一样，复制这条单独文件的路径，贴到哪个窗口都行。
   menu.appendChild(bmCtxButton("复制路径", async () => {
     await window.bookmark.itemFile(record.id);
-    bmToast("这条的单独文件路径复制好了：贴给 AI，它只读这一份", 3500);
+    bmToast(`路径复制好了，这条标成交给 AI${BM_HANDOUT_UNDO}`, 3500);
   }));
 
   if (insertPlace) {
@@ -2714,7 +2756,7 @@ function bmReleaseItem(record) {
   const item = document.createElement("button");
   item.type = "button";
   item.className = "ctx-item back";
-  item.textContent = `放回去（${record.claimedBy} 不干了）`;
+  item.textContent = record.claimedBy === "已交出" ? "放回去（没交给 AI）" : `放回去（${record.claimedBy} 不干了）`;
   item.addEventListener("click", async () => {
     bmHideCtxMenu();
     try {
@@ -2794,7 +2836,7 @@ function bmShowBundleMenu(bundleId, groupKey, anchor) {
   menu.appendChild(sep);
   menu.appendChild(bmCtxButton("复制路径", async () => {
     const { count } = await window.bookmark.bundleFiles(bundleId);
-    bmToast(`这一捆 ${count} 条的单独文件路径复制好了：贴给 AI，它只读这几份`, 3500);
+    bmToast(`这一捆 ${count} 条的路径复制好了，标成交给 AI${BM_HANDOUT_UNDO}`, 3500);
   }));
   const split = document.createElement("button");
   split.type = "button";
@@ -3750,7 +3792,9 @@ function bmInitClipboard() {
     // Ctrl+Z 撤回看板上最近一步（2026-10-13 用户：拖错了、改错了能退回去）；在框里打字时还是框自己的撤销。
     if (k === "z" && !bmTyping() && !bmCarry && window.bookmark.undo) {
       event.preventDefault();
-      void bmUndo();
+      // 项目页先退小按钮那几步（2026-10-29），退完了才轮到看板上的
+      if (bmCurrentPage === "projects" && bmKitUndo.length) void bmUndoKit();
+      else void bmUndo();
       return;
     }
     if (k !== "x" && k !== "v") return;

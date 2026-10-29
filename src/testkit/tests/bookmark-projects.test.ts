@@ -10,6 +10,7 @@ import {
   createKitEntry,
   createProjectFolder,
   createProjectMarkdown,
+  discardKitEntry,
   editProjectKit,
   kitCandidates,
   listProjects,
@@ -139,6 +140,25 @@ test("项目小按钮：挑已有的加上、新建 md 和夹顺手加上、左�
   assert.ok(existsSync(join(root, "中医", "药方.md")), "拿掉只是不显示");
   assert.deepEqual(listProjects(root, "").dirs[0].kit?.map((c) => c.label), ["执行过程", "设计思路", "资源包", "笔记", "图片"], "刷新还是这个顺序");
   assert.throws(() => editProjectKit(root, "中医", { op: "add", name: "没这个.md" }), /不在这个项目夹里/);
+});
+
+test("项目小按钮撤回：set 整排换回去；discard 撤新建的——没写东西才删文件，写过的留着", () => {
+  const root = tempRoot();
+  createProjectFolder(root, "", "中医");
+  createKitEntry(root, "中医", "md", "笔记");
+  createKitEntry(root, "中医", "dir", "图片");
+  createKitEntry(root, "中医", "md", "写过的");
+  writeFileSync(join(root, "中医", "写过的.md"), "# 写过的\n正文\n", "utf8");
+  const a = discardKitEntry(root, "中医", "笔记.md");
+  assert.equal(a.deleted, true);
+  assert.ok(!existsSync(join(root, "中医", "笔记.md")));
+  assert.equal(discardKitEntry(root, "中医", "图片").deleted, true, "空夹删掉");
+  const c = discardKitEntry(root, "中医", "写过的.md");
+  assert.equal(c.deleted, false);
+  assert.ok(existsSync(join(root, "中医", "写过的.md")), "写过东西的不删");
+  assert.deepEqual(c.kit.map((x) => x.label), ["设计思路", "执行过程", "资源包"]);
+  const back = editProjectKit(root, "中医", { op: "set", names: ["资源包", "设计思路.md", "../越界", "执行过程.md"] });
+  assert.deepEqual(back.map((x) => x.name), ["资源包", "设计思路.md", "执行过程.md"], "越界的名字不收");
 });
 
 test("listProjects：越界相对路径抛错、不存在的目录回落空列表", () => {

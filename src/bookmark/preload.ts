@@ -134,7 +134,8 @@ contextBridge.exposeInMainWorld("bookmark", {
   projectsReorder: (parent: string, moving: string, anchor: string, place: "above" | "below") =>
     ipcRenderer.invoke("bookmark:projects:reorder", { parent, moving, anchor, place }),
   projectsOpen: (relative: string) => ipcRenderer.invoke("bookmark:projects:open", relative),
-  // 项目行尾小按钮（2026-10-29）：op＝candidates 挑已有的 / create 新建（kind md|dir）/ add / remove / move（anchor、place）。
-  projectsKit: (payload: { op: string; project: string; name?: string; anchor?: string; place?: "above" | "below"; kind?: "md" | "dir" }) =>
+  // 项目行尾小按钮（2026-10-29）：op＝candidates 挑已有的 / create 新建（kind md|dir）/ add / remove / move（anchor、place）
+  // / set（names，撤回用）/ discard（撤回新建的）。
+  projectsKit: (payload: { op: string; project: string; name?: string; anchor?: string; place?: "above" | "below"; kind?: "md" | "dir"; names?: string[] }) =>
     ipcRenderer.invoke("bookmark:projects:kit", payload),
 });

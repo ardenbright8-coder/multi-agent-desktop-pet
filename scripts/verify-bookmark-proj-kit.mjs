@@ -73,14 +73,23 @@ try {
   await page.locator(".proj-up").click();
   await waitFor(async () => (await chips()).length === 3);
 
-  // ②
-  await page.locator('#board .proj-kit[data-project="中医"] .proj-kit-plus').click();
-  await page.locator("#ctx-menu .ctx-item", { hasText: "新建 .md" }).click();
-  const input = page.locator("#board .proj-kit-input");
-  await input.fill("笔记");
-  await input.press("Enter");
-  await waitFor(async () => (await chips()).includes("笔记.md"));
-  check("② 「＋」新建 .md：按钮加在末尾、文件真的在", (await chips()).at(-1) === "笔记.md" && existsSync(join(projDir, "中医", "笔记.md")), (await chips()).join());
+  // ② 新建：点别处就建好；Ctrl+Z 撤回（没写东西的文件跟着删）
+  const newMd = async (name, how) => {
+    await page.locator('#board .proj-kit[data-project="中医"] .proj-kit-plus').click();
+    await page.locator("#ctx-menu .ctx-item", { hasText: "新建 .md" }).click();
+    const input = page.locator("#board .proj-kit-input");
+    await input.fill(name);
+    if (how === "enter") await input.press("Enter");
+    else await page.locator("#board .proj-bar .proj-crumbs").click();
+    await waitFor(async () => (await chips()).includes(`${name}.md`));
+  };
+  await newMd("草稿", "click");
+  check("② 「＋」新建 .md：不按回车、点别处就建好", (await chips()).at(-1) === "草稿.md" && existsSync(join(projDir, "中医", "草稿.md")), (await chips()).join());
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => !(await chips()).includes("草稿.md"));
+  check("② Ctrl+Z 撤回新建：按钮没了、空文件删了", !(await chips()).includes("草稿.md") && !existsSync(join(projDir, "中医", "草稿.md")), (await chips()).join());
+  await newMd("笔记", "enter");
+  check("② 回车也照样建好，按钮加在末尾", (await chips()).at(-1) === "笔记.md" && existsSync(join(projDir, "中医", "笔记.md")), (await chips()).join());
 
   // ③
   await page.locator('#board .proj-kit[data-project="中医"] .proj-kit-plus').click();
@@ -112,6 +121,12 @@ try {
   await page.locator("#ctx-menu .ctx-item", { hasText: "从这排拿掉" }).click();
   await waitFor(async () => !(await chips()).includes("药方.md"));
   check("⑤ 右键拿掉：按钮没了，文件还在", !(await chips()).includes("药方.md") && existsSync(join(projDir, "中医", "药方.md")));
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => (await chips()).includes("药方.md"));
+  check("⑤ Ctrl+Z 一下：药方回来了", (await chips()).at(-1) === "药方.md", (await chips()).join());
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => (await chips())[0] === "设计思路.md");
+  check("⑤ 再 Ctrl+Z 一下：拖的那步也退回去，设计思路回到第一个", (await chips()).slice(0, 2).join() === "设计思路.md,执行过程.md", (await chips()).join());
 
   // ⑥ 接活自动标
   const rec = await page.evaluate(() => window.bookmark.add({ text: "改一下搜索框", assignee: "Claude" }));
@@ -124,6 +139,27 @@ try {
   check("⑥ 复制单独文件路径 → 标「已交出」、条目挂 ♻️ 小标", (await claimed()) === "已交出" && /已交给 AI/.test(badge), `${await claimed()} | ${badge}`);
   const got = runCli(["next", rec.id, "--by", "Claude-测试"]);
   check("⑥ 命令行 next 这条 → 换成窗口名", got.code === 0 && (await waitFor(async () => (await claimed()) === "Claude-测试")), got.out.split("\n")[0]);
+
+  // ⑦ 别的交法一个逻辑：行尾复制也标；交两条按两下 Ctrl+Z 一条一条退；六个点启动直接标窗口名
+  const who = (id) => page.evaluate(async (x) => (await window.bookmark.list()).find((r) => r.id === x)?.claimedBy ?? null, id);
+  const b = await page.evaluate(() => window.bookmark.add({ text: "改按钮颜色", assignee: "Claude" }));
+  const c = await page.evaluate(() => window.bookmark.add({ text: "改字号", assignee: "Claude" }));
+  await page.evaluate(() => bmRefresh());
+  await page.locator(`#board .task[data-id="${b.id}"] .t-copy`).click();
+  await waitFor(async () => (await who(b.id)) === "已交出");
+  await page.evaluate((id) => window.bookmark.itemFile(id), c.id);
+  await waitFor(async () => (await who(c.id)) === "已交出");
+  check("⑦ 行尾复制、点号码复制路径都标「已交出」", (await who(b.id)) === "已交出" && (await who(c.id)) === "已交出");
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => (await who(c.id)) === null);
+  check("⑦ Ctrl+Z 一下：只退最后交的那条", (await who(c.id)) === null && (await who(b.id)) === "已交出", `${await who(b.id)} / ${await who(c.id)}`);
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => (await who(b.id)) === null);
+  check("⑦ 再 Ctrl+Z 一下：前一条也退了", (await who(b.id)) === null);
+  const launched = await page.evaluate((id) => window.bookmark.launchLine(id, "Claude", false, null), c.id);
+  await waitFor(async () => (await who(c.id)) === launched.label);
+  check("⑦ 六个点启动 Agent：直接标成看板起的窗口名", (await who(c.id)) === launched.label, `${launched.label} / ${await who(c.id)}`);
   console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 } finally {
   await app.close();

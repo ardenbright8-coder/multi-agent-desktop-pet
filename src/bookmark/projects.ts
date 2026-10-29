@@ -3,7 +3,7 @@
 // 存真实文件夹+真实 md（不是程序里的假数据），跟书签库同窝（bookmark\projects\）。
 // 设计：纯函数（名字校验/路径安全）跟 IO（列表/建夹/建md）同模块；open 由 panel-window 调 shell（electron 侧），这层不 import electron 保持可测。
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { bookmarkProjectsDirectory } from "../shared/paths";
 
@@ -113,12 +113,19 @@ export function readProjectKit(root: string, projectRel: string): KitChip[] {
 export function editProjectKit(
   root: string,
   projectRel: string,
-  edit: { op: "add"; name: string } | { op: "remove"; name: string } | { op: "move"; name: string; anchor: string; place: "above" | "below" },
+  edit:
+    | { op: "add"; name: string }
+    | { op: "remove"; name: string }
+    | { op: "move"; name: string; anchor: string; place: "above" | "below" }
+    | { op: "set"; names: string[] },
 ): KitChip[] {
   const abs = resolveProjectPath(root, projectRel);
   if (!String(projectRel ?? "").trim() || !existsSync(abs)) throw new Error("项目夹不在了");
   let names = readKitNames(abs);
-  if (edit.op === "add") {
+  if (edit.op === "set") {
+    // 撤回用（2026-10-29）：整排换回之前那份
+    names = [...new Set(edit.names.map((n) => String(n ?? "").trim()).filter((n) => n && !/[\\/]|\.\./.test(n)))];
+  } else if (edit.op === "add") {
     const name = sanitizeEntryName(edit.name);
     if (!existsSync(join(abs, name))) throw new Error(`「${name}」不在这个项目夹里`);
     if (!names.includes(name)) names = [...names, name];
@@ -156,6 +163,25 @@ export function createKitEntry(root: string, projectRel: string, kind: "md" | "d
     mkdirSync(target);
   }
   return editProjectKit(root, projectRel, { op: "add", name });
+}
+
+/** 撤回「＋」新建的那一下（2026-10-29 用户：弄错了 Ctrl+Z 撤回）：按钮拿掉；文件还是刚建时的样子（md 只有标题行、夹是空的）才删，
+ *  已经写进东西的留着不删。返回新的一排和删没删。 */
+export function discardKitEntry(root: string, projectRel: string, rawName: string): { kit: KitChip[]; deleted: boolean } {
+  const abs = resolveProjectPath(root, projectRel);
+  const name = sanitizeEntryName(rawName);
+  const kit = editProjectKit(root, projectRel, { op: "remove", name });
+  const target = join(abs, name);
+  if (!existsSync(target)) return { kit, deleted: false };
+  if (statSync(target).isDirectory()) {
+    if (readdirSync(target).length) return { kit, deleted: false };
+    rmdirSync(target);
+    return { kit, deleted: true };
+  }
+  const fresh = `# ${name.replace(/\.md$/i, "")}\n`;
+  if (readFileSync(target, "utf8") !== fresh) return { kit, deleted: false };
+  unlinkSync(target);
+  return { kit, deleted: true };
 }
 
 function readKitNames(abs: string): string[] {

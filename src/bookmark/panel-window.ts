@@ -28,7 +28,7 @@ import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
-import { createKitEntry, createProjectFolder, createProjectMarkdown, editProjectKit, ensureProjectsRoot, kitCandidates, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
+import { createKitEntry, createProjectFolder, createProjectMarkdown, discardKitEntry, editProjectKit, ensureProjectsRoot, kitCandidates, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
 import {
   agentShortcutFor, formatLaunchConfig, isAbsoluteTarget, LAUNCH_CONFIG_FILE, launchKey, parseLaunchConfig, pasteIntoAppWindow, pasteIntoNewWindow,
@@ -876,6 +876,25 @@ function registerIpc(): void {
   // 撤回账（2026-10-13）：看板上用户的动作一律过 userAction，Ctrl+Z 能退回；AI 整理、命令行、手机来的不记。
   const act = <T>(label: string, fn: () => T, keyOf?: (result: T) => string | null): T => requireStore().userAction(label, fn, keyOf);
   const textKey = (r: BookmarkRecord | null) => (r ? `text:${r.id}` : null);
+  // 交出去了（2026-10-29 用户：接没接活程序自己判，拖、复制、六个点……不管哪种交给 AI 都是一个逻辑）：
+  // 拖出窗口、点号码复制路径、捆标题复制路径、行尾复制 → 先标「已交出」，AI 头一个用看板命令碰它就换成它的窗口名；
+  // 六个点启动、一键启动 → 看板自己起了窗口名，直接标「那个窗口名 在干」。已有窗口在干的不动；都包 act，Ctrl+Z 一下撤一步。
+  const handOut = (ids: string[]) => {
+    try {
+      if (act("交给 AI", () => requireStore().handOut(ids))) notifyInboxChanged();
+    } catch (error) {
+      log.出事("标「已交出」没成（不影响拖和复制）", error, "window");
+    }
+  };
+  const claimForLaunch = (target: string, label: string) => {
+    try {
+      if (requireStore().taskBundles().some((b) => b.id === target)) return; // 多人派工捆归调度管
+      act("交给 AI", () => requireStore().claimNext(target, label));
+      notifyInboxChanged();
+    } catch (error) {
+      log.出事("开窗时标在干没成（AI 领活时照样会标）", error, "window");
+    }
+  };
   ipcMain.handle("bookmark:undo", () => {
     const label = requireStore().undo();
     if (label) notifyInboxChanged();
@@ -1014,12 +1033,15 @@ function registerIpc(): void {
   });
   // 项目行尾那排小按钮（2026-10-29）：加（挑已有的 / 新建 md / 新建夹）、拿掉（只是不显示，文件不删）、左右换位置。
   ipcMain.handle("bookmark:projects:kit", (_event, payload: unknown) => {
-    const raw = (payload ?? {}) as { op?: unknown; project?: unknown; name?: unknown; anchor?: unknown; place?: unknown; kind?: unknown };
+    const raw = (payload ?? {}) as { op?: unknown; project?: unknown; name?: unknown; anchor?: unknown; place?: unknown; kind?: unknown; names?: unknown };
     const root = projectsRoot();
     const project = String(raw.project ?? "");
     const name = String(raw.name ?? "");
     ensureProjectsRoot();
     if (raw.op === "candidates") return kitCandidates(root, project);
+    // 项目页 Ctrl+Z（2026-10-29）：set 整排换回之前那份；discard 撤回「＋」新建的（还没写东西才删文件）
+    if (raw.op === "set") return editProjectKit(root, project, { op: "set", names: Array.isArray(raw.names) ? raw.names.map(String) : [] });
+    if (raw.op === "discard") return discardKitEntry(root, project, name);
     if (raw.op === "create") return createKitEntry(root, project, raw.kind === "dir" ? "dir" : "md", name);
     if (raw.op === "add" || raw.op === "remove") return editProjectKit(root, project, { op: raw.op, name });
     if (raw.op === "move") {
@@ -1046,6 +1068,7 @@ function registerIpc(): void {
     if (name && !template) throw new Error(`要求模板「${name}」找不到了`);
     const text = composeForAgent(template ? template.text : null, record);
     clipboard.writeText(text);
+    handOut([record.id]);
     return text;
   });
   // 右键「捆成一捆」（设定21）：看板上手动捆的，以最后一次为准，AI 以后不碰这几条。
@@ -1239,6 +1262,7 @@ function registerIpc(): void {
     const label = nextWindowLabel(group);
     const line = `${LAUNCH_HEAD}node "${bookmarkCliScriptPath()}" next ${target} --by ${label}${raw.coding ? " --coding" : ""}`;
     clipboard.writeText(line);
+    claimForLaunch(target, label);
     log.记(`启动 Agent：${label} ← ${target}${raw.coding ? "（带编程）" : ""}`, "cli");
     return { line, label, model, ...(await openAgentShortcut(group, line, label)) };
   });
@@ -1260,15 +1284,6 @@ function registerIpc(): void {
     }
   });
   // 点号码（设定24）：复制这条那份单独小文件的路径，贴给 AI，它只读这一份。
-  // 交出去了（2026-10-29 用户：接没接活程序自己判）：复制单独文件路径、拖出窗口＝要交给 AI，先标「已交出」，
-  // AI 头一个用看板命令碰它就换成它的窗口名。已有窗口在干的不动；包 act，Ctrl+Z 能撤。
-  const handOut = (ids: string[]) => {
-    try {
-      if (act("交给 AI", () => requireStore().handOut(ids))) notifyInboxChanged();
-    } catch (error) {
-      log.出事("标「已交出」没成（不影响拖和复制）", error, "window");
-    }
-  };
   ipcMain.handle("bookmark:item-file", (_event, id: unknown) => {
     const { path, line } = itemFileLine(id);
     clipboard.writeText(line);
@@ -1402,6 +1417,13 @@ async function launchDispatchBatch(id: string, coding: boolean, model: string | 
     if (!res.opened) {
       skipped.push({ name, reason: res.problem ?? "没打开" });
       continue;
+    }
+    // 开出去了就标在干（2026-10-29 接活程序自己标）；命令行 launch 也走这里，不进 Ctrl+Z
+    try {
+      requireStore().claimNext(card.id, label);
+      notifyInboxChanged();
+    } catch (error) {
+      log.出事("一键启动标在干没成（AI 领活时照样会标）", error, "cli");
     }
     launched.push({ name, label, opened: res.opened, pasting: res.pasting });
   }
