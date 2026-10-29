@@ -26,6 +26,7 @@ const projDir = join(home, "bookmark", "projects");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failed = 0;
+let restartAt = null; // ⑧ 重开看板那段用：哪条
 function check(name, ok, detail = "") {
   console.log(`${ok ? "✔" : "✘"} ${name}${detail ? `（${detail}）` : ""}`);
   if (!ok) failed += 1;
@@ -160,8 +161,52 @@ try {
   const launched = await page.evaluate((id) => window.bookmark.launchLine(id, "Claude", false, null), c.id);
   await waitFor(async () => (await who(c.id)) === launched.label);
   check("⑦ 六个点启动 Agent：直接标成看板起的窗口名", (await who(c.id)) === launched.label, `${launched.label} / ${await who(c.id)}`);
-  console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
+
+  // ⑧ 撤销一定撤得掉：光标在每组第一格空框里按 Ctrl+Z 也退看板；点 ♻️ 放回去；重开看板 Ctrl+Z 照样退
+  await page.evaluate((id) => window.bookmark.itemFile(id), b.id);
+  await waitFor(async () => (await who(b.id)) === "已交出");
+  await page.evaluate(() => bmRefresh());
+  await page.locator('#board .group[data-group="Claude"] textarea').first().click();
+  const inBox = await page.evaluate(() => document.activeElement?.tagName);
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => (await who(b.id)) === null);
+  check("⑧ 光标停在空框里按 Ctrl+Z：照样退「交给 AI」", inBox === "TEXTAREA" && (await who(b.id)) === null, `${inBox} / ${await who(b.id)}`);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.evaluate((id) => window.bookmark.itemFile(id), b.id);
+  await waitFor(async () => (await who(b.id)) === "已交出");
+  await page.evaluate(() => bmRefresh());
+  await page.locator(`#board .task[data-id="${b.id}"] .claim-handed`).click();
+  await waitFor(async () => (await who(b.id)) === null);
+  check("⑧ 点一下 ♻️：放回去", (await who(b.id)) === null);
+  await page.keyboard.press("Control+z");
+  await waitFor(async () => (await who(b.id)) === "已交出");
+  check("⑧ 点错了 Ctrl+Z：又回到「已交出」", (await who(b.id)) === "已交出");
+  restartAt = b.id;
 } finally {
   await app.close();
 }
+
+// ⑧ 续：关掉看板重开（等于点「升级」），Ctrl+Z 照样退上一步「交给 AI」
+if (restartAt) {
+  const again = await _electron.launch({ executablePath: join(root, "node_modules/electron/dist/electron.exe"), args: [join(dist, "app.js")], env });
+  try {
+    let page;
+    const end = Date.now() + 15000;
+    while (!page && Date.now() < end) {
+      page = again.windows().find((w) => w.url().includes("bookmark/renderer"));
+      if (!page) await sleep(100);
+    }
+    await page.waitForLoadState("domcontentloaded");
+    await again.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((w) => w.hide()));
+    const who = (id) => page.evaluate(async (x) => (await window.bookmark.list()).find((r) => r.id === x)?.claimedBy ?? null, id);
+    await waitFor(async () => (await page.locator("#board .task").count()) > 0);
+    const before = await who(restartAt);
+    await page.keyboard.press("Control+z");
+    await waitFor(async () => (await who(restartAt)) === null);
+    check("⑧ 重开看板以后 Ctrl+Z：照样退「交给 AI」", before === "已交出" && (await who(restartAt)) === null, `${before} → ${await who(restartAt)}`);
+  } finally {
+    await again.close();
+  }
+}
+console.log(failed ? `结果：${failed} 项没过` : "结果：全部验证点通过");
 process.exit(failed ? 1 : 0);

@@ -1245,7 +1245,8 @@ function registerIpc(): void {
     return act("捆一捆", () => requireStore().bundleWith(String(raw.id ?? ""), String(raw.targetId ?? "")));
   });
   ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => act("拆开一捆", () => requireStore().unbundle(String(bundleId ?? ""))));
-  ipcMain.handle("bookmark:release", (_event, id: unknown) => requireStore().release(String(id ?? "")));
+  // 放回去也进撤回账（2026-10-29）：点 ♻️ 放回去点错了，Ctrl+Z 能拿回来
+  ipcMain.handle("bookmark:release", (_event, id: unknown) => act("放回去", () => requireStore().release(String(id ?? ""))));
   // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式，
   // 新窗口启动好后替用户按一次 Ctrl+V。🚨 绝不替他按回车。开不了窗、贴不了只提示，照旧能手动来。
   ipcMain.handle("bookmark:launch-line", async (_event, payload: unknown) => {

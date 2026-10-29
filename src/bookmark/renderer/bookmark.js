@@ -1441,8 +1441,23 @@ function bmBuildTask(record, groupKey, order) {
   if (record.claimedBy) {
     item.classList.add("claimed");
     // 「已交出」＝拖出去或复制了路径、还没哪个窗口认（2026-10-29 接活自动标），AI 一敲看板命令就换成它的窗口名
-    const claim = bmStatusBadge("busy", record.claimedBy === "已交出" ? "已交给 AI，等它认领（右键能放回去）" : `${record.claimedBy} 在干`);
+    const handed = record.claimedBy === "已交出";
+    const claim = bmStatusBadge("busy", handed ? "已交给 AI，等它认领（点一下放回去）" : `${record.claimedBy} 在干`);
     claim.classList.add("claim");
+    // 「已交出」点一下就放回去（2026-10-29 用户：撤销了状态不消）；点错了 Ctrl+Z 拿回来
+    if (handed) {
+      claim.classList.add("claim-handed");
+      claim.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        try {
+          await window.bookmark.release(record.id);
+          bmToast("放回去了（点错了 Ctrl+Z）", 2500);
+        } catch (error) {
+          bmShowError(bmErrorText(error));
+        }
+        await bmRefresh();
+      });
+    }
     item.appendChild(claim);
   } else if (record.report) {
     item.appendChild(bmStatusBadge("review", `${record.reportedBy ?? "AI"} 干完了，等你审（报告在这条下面）`));
@@ -3705,6 +3720,16 @@ bmInit();
 // → 按住左键接着拖、松开就放下；右键或 Esc 不要了（剪下的留在原地）。在捆标题那一栏上按 Ctrl+X＝整捆拿着走（跟按住捆标题拖一样）。
 // Ctrl+C 不碰条目（复制一条那套同天拆了）。在输入框里打字、或选中了一段字时，Ctrl+X / V 还是普通的剪切粘贴文字。
 
+/** Ctrl+Z 归框自己管的：框里有字、或选中了一段字。光标停在空框里（每组第一格那个常驻空白框最常见）按 Ctrl+Z，
+ *  退看板上的一步（2026-10-29 用户：拖过去再撤销，状态不消——光标正好在空框里，Ctrl+Z 被框吃了）。 */
+function bmBoxOwnsUndo() {
+  const a = document.activeElement;
+  if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT")) return Boolean(a.value);
+  if (a && a.isContentEditable) return Boolean(a.textContent.trim());
+  const sel = window.getSelection();
+  return Boolean(sel && !sel.isCollapsed && String(sel).trim());
+}
+
 function bmTyping() {
   const a = document.activeElement;
   if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return true;
@@ -3790,7 +3815,7 @@ function bmInitClipboard() {
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const k = String(event.key || "").toLowerCase();
     // Ctrl+Z 撤回看板上最近一步（2026-10-13 用户：拖错了、改错了能退回去）；在框里打字时还是框自己的撤销。
-    if (k === "z" && !bmTyping() && !bmCarry && window.bookmark.undo) {
+    if (k === "z" && !bmBoxOwnsUndo() && !bmCarry && window.bookmark.undo) {
       event.preventDefault();
       // 项目页先退小按钮那几步（2026-10-29），退完了才轮到看板上的
       if (bmCurrentPage === "projects" && bmKitUndo.length) void bmUndoKit();

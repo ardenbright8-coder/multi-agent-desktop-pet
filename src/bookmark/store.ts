@@ -415,10 +415,12 @@ export class BookmarkStore {
     if (key && last && last.key === key && Date.now() - last.at < UNDO_MERGE_MS) {
       for (const [id, was] of changed) if (!last.before.has(id)) last.before.set(id, was);
       last.at = Date.now();
+      this.saveUndo();
       return result;
     }
     this.undoSteps.push({ label, key, at: Date.now(), before: changed, meta });
     if (this.undoSteps.length > MAX_UNDO) this.undoSteps.shift();
+    this.saveUndo();
     return result;
   }
 
@@ -427,6 +429,7 @@ export class BookmarkStore {
     this.ensureLoaded();
     const step = this.undoSteps.pop();
     if (!step) return null;
+    this.saveUndo();
     this.records = this.records.filter((r) => !step.before.has(r.id));
     const back = [...step.before.entries()].filter(([, v]) => v.json !== null).sort((a, b) => a[1].index - b[1].index);
     for (const [, v] of back) {
@@ -1097,7 +1100,41 @@ export class BookmarkStore {
   private ensureLoaded(): void {
     if (this.loaded) return;
     this.records = this.loadFromDisk();
+    this.undoSteps = this.loadUndo();
     this.loaded = true;
+  }
+
+  /** 撤回账存一份到硬盘（2026-10-29 用户：拖过去再撤销，状态不消）：点「升级」、重开桌宠以后 Ctrl+Z 照样能退。 */
+  private get stepUndoPath(): string {
+    return `${this.path}.undo.json`;
+  }
+
+  private saveUndo(): void {
+    try {
+      writeJsonAtomic(this.stepUndoPath, this.undoSteps.map((s) => ({ ...s, before: [...s.before.entries()] })));
+    } catch (error) {
+      log.出事("撤回账存不下来（这次开着时照样能撤）", error, "store");
+    }
+  }
+
+  private loadUndo(): UndoStep[] {
+    try {
+      if (!existsSync(this.stepUndoPath)) return [];
+      const parsed: unknown = JSON.parse(readFileSync(this.stepUndoPath, "utf8"));
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((s): s is Record<string, unknown> => Boolean(s) && typeof s === "object" && Array.isArray((s as { before?: unknown }).before))
+        .map((s) => ({
+          label: String(s.label ?? "一步"),
+          key: typeof s.key === "string" ? s.key : null,
+          at: Number(s.at) || 0,
+          before: new Map(s.before as [string, { json: string | null; index: number; prevId: string | null }][]),
+          meta: (s.meta && typeof s.meta === "object" ? s.meta : {}) as Record<string, BundleMeta>,
+        }))
+        .slice(-MAX_UNDO);
+    } catch {
+      return []; // 坏了就当没有撤回账，不挡看板
+    }
   }
 
   private loadFromDisk(): BookmarkRecord[] {

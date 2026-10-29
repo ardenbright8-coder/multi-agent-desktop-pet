@@ -737,6 +737,9 @@ body {
   cursor: pointer;
 }
 
+/* 「已交出」的 ♻️ 点一下放回去（2026-10-29） */
+.status-badge.claim-handed { cursor: pointer; }
+.status-badge.claim-handed:hover { filter: saturate(0.4); }
 /* 小按钮按住左右拖、「＋」加（2026-10-29）：按钮多了换行不挤掉夹名；拖着的那个变淡，落点那条缝亮一道绿竖线 */
 .proj-kit { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; }
 .proj-kit-btn { user-select: none; touch-action: none; }

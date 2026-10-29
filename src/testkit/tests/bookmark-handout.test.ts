@@ -67,6 +67,23 @@ test("已交出的：看板上用户勾一项不算接走；AI 勾一项接走",
   });
 });
 
+test("撤回账存在硬盘上：重开看板（新的 store 读同一个文件）以后 Ctrl+Z 照样退「交给 AI」那一步", () => {
+  const root = mkdtempSync(join(tmpdir(), "bm-handout-undo-"));
+  try {
+    const path = join(root, "bookmarks.json");
+    const first = new BookmarkStore(path);
+    const a = first.add({ text: "甲", assignee: "Claude" }).id;
+    first.userAction("交给 AI", () => first.handOut([a]));
+    const again = new BookmarkStore(path);
+    assert.equal(again.list().find((r) => r.id === a)?.claimedBy, HANDED_OUT);
+    assert.equal(again.undo(), "交给 AI");
+    assert.equal(again.list().find((r) => r.id === a)?.claimedBy, null);
+    assert.equal(new BookmarkStore(path).undo(), null, "退过的那步不会再来一次");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("单独文件：没人领或已交出的写一句「先敲 next 接下」，有窗口在干的不写", () => {
   withStore((store) => {
     const a = store.add({ text: "甲", assignee: "Claude" }).id;
