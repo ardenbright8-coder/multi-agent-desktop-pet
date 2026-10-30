@@ -74,6 +74,27 @@ try {
   console.log("REPORT " + run);
 } finally { await electron.close(); }
 
+// 日常模式只收数据，不创建旧提示条；真实收件器链路仍保持可用。
+const headlessHome = join(run, "headless"); mkdirSync(headlessHome, { recursive: true });
+const headless = await _electron.launch({ executablePath: join(root, "node_modules", "electron", "dist", "electron.exe"),
+  args: [join(build, "testkit", "gemini-quota-host.js")],
+  env: { ...env, AGENT_PET_HUB_HOME: headlessHome, AGENT_GEMINI_HEADLESS_TEST: "1" }, timeout: 30000 });
+try {
+  const file = join(headlessHome, "gemini", "receiver.json"), deadline = Date.now() + 15000;
+  while (!existsSync(file) && Date.now() < deadline) await new Promise(r => setTimeout(r, 100));
+  assert(existsSync(file));
+  const cfg = JSON.parse(readFileSync(file, "utf8")), url = "http://127.0.0.1:" + cfg.port;
+  const headers = { Authorization: "Bearer " + cfg.token, "Content-Type": "application/json" };
+  assert.equal(await headless.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 0);
+  const sent = await fetch(url + "/ingest", { method: "POST", headers, body: JSON.stringify(msg("dddddddd", "headless-source-1", 25)) });
+  assert.equal(sent.status, 200);
+  const snapshot = await (await fetch(url + "/snapshot", { headers })).json();
+  assert.equal(snapshot.accounts.length, 1); assert.equal(snapshot.accounts[0].current.used, 25);
+  assert.equal(await headless.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 0);
+  writeFileSync(join(run, "headless-ok.json"), JSON.stringify({ receiver: true, reading: true, legacyWindows: 0, realAccounts: false }, null, 2));
+  console.log("GEMINI_HEADLESS_OK receiver/reading/no-legacy-window");
+} finally { await headless.close(); }
+
 for (const mode of ["controls", "lifecycle", "smoke"]) {
   const modeHome = join(run, mode); mkdirSync(modeHome, { recursive: true });
   const result = spawnSync(join(root, "node_modules", "electron", "dist", "electron.exe"), [join(build, "app.js"), "--" + mode + "-test", "--skip-integration-install"],

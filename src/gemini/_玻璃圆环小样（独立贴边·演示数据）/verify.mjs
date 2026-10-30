@@ -1,123 +1,107 @@
-// 公共 Playwright 后台驱动；只开本小样，测试位置隔离，不操作物理鼠标、不重建日常dist。
+// 公开界面的回归：不移动物理鼠标、不连接真实账号、不改日常dist。
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url), here = dirname(fileURLToPath(import.meta.url)), root = resolve(here, "../../..");
-const { _electron } = require("E:/个人AI资源管理/60_公用资源（钩子·skill·搜索引擎·可后期扩展）/后台驱动测试（Playwright·零抢鼠标·测Electron应用）/包（npm下载·playwright完整包）/node_modules/playwright");
-const { dockOrb, panelBounds, nearestSide } = require("./geometry.cjs");
-const runtime = join(root, ".runtime", "test-runs"); mkdirSync(runtime, { recursive: true });
-const run = mkdtempSync(join(runtime, "bm-gemini-glass-"));
-console.log("RUN " + run);
-let assertions = 0;
-function check(condition, message) { assert(condition, message); assertions++; }
-function inside(bounds, area) { return bounds.x >= area.x && bounds.y >= area.y && bounds.x + bounds.width <= area.x + area.width + 1 && bounds.y + bounds.height <= area.y + area.height + 1; }
-const areas = [{ x: 0, y: 0, width: 1922, height: 778 }, { x: -1920, y: -200, width: 1920, height: 1080 }, { x: 0, y: 0, width: 800, height: 600 }];
-for (const area of areas) for (const side of ["left", "right"]) for (const cy of [-9999, 0, 450, 9999]) {
-  const orb = dockOrb(area, side, cy); check(inside(orb, area), "小球越过工作区");
-  check(nearestSide(area, orb.x + orb.width / 2) === side, "左右吸附方向不符");
-  for (const count of [1, 2, 3]) for (const mode of ["summary", "details"]) check(inside(panelBounds(area, orb, mode, count), area), "展开卡片越界");
-}
-function distHash() {
-  return ["app.js", "gemini/gemini-quota.js", "gemini/renderer/quota.js"].map(name => {
-    const f = join(root, "dist", name); return existsSync(f) ? createHash("sha256").update(readFileSync(f)).digest("hex") : "absent";
-  });
-}
-const before = distHash();
-const electron = await _electron.launch({ executablePath: join(root, "node_modules", "electron", "dist", "electron.exe"),
-  args: [join(here, "main.cjs"), "--preview-home=" + join(run, "home")],
-  env: { ...process.env, GEMINI_GLASS_PREVIEW_TEST: "1" }, timeout: 30000 });
-let errors = [], frameworkDiagnostics = [];
-try {
-  const first = await electron.firstWindow();
-  await first.waitForFunction(() => document.querySelectorAll("#orbRings .ring-fill").length === 2);
-  const pages = await electron.windows();
-  const orb = pages.find(p => new URL(p.url()).searchParams.get("view") === "orb");
-  const panel = pages.find(p => new URL(p.url()).searchParams.get("view") === "panel");
-  check(!!orb && !!panel, "没有分别建立小球和详情窗口");
-  for (const p of pages) p.on("pageerror", error => errors.push(error.stack || String(error)));
-  await panel.waitForFunction(() => document.querySelectorAll(".account-row").length === 2);
-  check(await orb.locator("#orbNumber").textContent() === "68", "常驻数字不是最低剩余");
-  check(await panel.locator("#heroCaption").textContent() === "当前最低余量 · 2号", "中心数值的账号说明缺失");
-  check(await orb.locator(".ring-fill").count() === 2, "初始圆环数量错误");
-  check(await panel.locator("#details").isHidden(), "周额度泄露到常驻界面");
-  check(await panel.locator("#summary").isVisible(), "摘要没有显示");
-  await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes("view=orb")).showInactive());
-  await orb.mouse.move(33, 33);
-  await orb.waitForFunction(() => document.body.dataset.expanded === "true");
-  check(await orb.locator("#orbShell").evaluate(e => e.classList.contains("is-open")), "悬停后小球未放大");
-  const initialWindows = await electron.evaluate(({ BrowserWindow, screen }) => BrowserWindow.getAllWindows().map(w => ({ title: w.getTitle(), focusable: w.isFocusable(), focused: w.isFocused(), bounds: w.getBounds(), area: screen.getDisplayMatching(w.getBounds()).workArea })));
-  check(initialWindows.every(w => !w.focusable && !w.focused), "预览抢了输入焦点");
-  check(initialWindows.every(w => insidePlain(w.bounds, w.area)), "真实窗口越界");
-  function insidePlain(b, a) { return b.x >= a.x - 2 && b.y >= a.y - 2 && b.x + b.width <= a.x + a.width + 2 && b.y + b.height <= a.y + a.height + 2; }
-  await orb.screenshot({ path: join(run, "v1_小球透明底.png"), omitBackground: true });
-  await panel.screenshot({ path: join(run, "v1_双账号展开.png"), omitBackground: true });
-  for (const count of [1, 3, 2]) {
-    await panel.evaluate(n => window.glassPreview.count(n), count);
-    await panel.waitForFunction(n => document.querySelectorAll(".account-row").length === n, count);
-    check(await orb.locator(".ring-fill").count() === count, "增减账号后环数不符");
-    const minimum = count === 1 ? "91" : count === 3 ? "37" : "68";
-    check(await orb.locator("#orbNumber").textContent() === minimum, "增减账号后最低余量不符");
-    const metrics = await panel.evaluate(() => {
-      const root = document.querySelector(".panel-content"), r = root.getBoundingClientRect();
-      return { overflow: root.scrollHeight - root.clientHeight, rows: [...document.querySelectorAll(".account-row")].map(el => { const b = el.getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; }), top: r.top, bottom: r.bottom };
-    });
-    check(metrics.overflow <= 1 && metrics.rows.every(r => r.top >= metrics.top && r.bottom <= metrics.bottom), "账号文字溢出");
-    if (count === 3) await panel.screenshot({ path: join(run, "v1_三账号展开.png"), omitBackground: true });
-  }
-  await orb.locator("#orb").click({ button: "right" });
-  await panel.waitForFunction(() => document.body.dataset.mode === "details");
-  check(await panel.locator("#details").isVisible(), "右键没有进入详情");
-  check(await panel.locator("#detailNumber").textContent() === "68", "详情数值不是剩余");
-  check(await panel.locator("#detailWeekly").textContent() === "55%", "周额度没有换算为剩余");
-  check(await panel.locator(".not-connected").textContent() === "尚未接入", "虚构套餐余额");
-  await panel.locator('[data-account="1号"]').click();
-  check(await panel.locator("#detailNumber").textContent() === "91", "切换详情账号失效");
-  await panel.locator('[data-count="3"]').click();
-  await panel.waitForFunction(() => document.querySelectorAll(".account-tab").length === 3);
-  await panel.locator('[data-account="3号"]').click();
-  check(await panel.locator("#detailNumber").textContent() === "37", "三账号详情失效");
-  const detailMetrics = await panel.locator(".panel-content").evaluate(e => ({ height: e.clientHeight, scroll: e.scrollHeight, font: getComputedStyle(document.querySelector(".detail-grid strong")).fontSize }));
-  check(detailMetrics.scroll <= detailMetrics.height + 1, "详情卡片底部被裁切");
-  check(parseFloat(detailMetrics.font) >= 14, "展开数值字号过小");
-  await panel.screenshot({ path: join(run, "v1_详情透明底.png"), omitBackground: true });
-  for (const side of ["left", "right"]) {
-    await panel.locator('[data-action="' + side + '"]').click();
-    await panel.waitForFunction(s => document.querySelector('.dock-controls [data-action="' + s + '"]').getAttribute("aria-pressed") === "true", side);
-    const result = await electron.evaluate(({ BrowserWindow, screen }) => {
-      const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().includes("view=orb"));
-      return { b: w.getBounds(), area: screen.getDisplayMatching(w.getBounds()).workArea };
-    });
-    check(nearestSide(result.area, result.b.x + result.b.width / 2) === side, "真实窗口吸附方向不符");
-    check(insidePlain(result.b, result.area), "吸附后窗口越界");
-  }
-  await panel.locator('[data-action="back"]').click();
-  await panel.locator('[data-action="details"]').click();
-  await panel.waitForFunction(() => document.body.dataset.mode === "details");
-  check(await panel.locator("#details").isVisible(), "详情按钮失效");
-  await panel.locator('[data-action="back"]').click();
-  await orb.mouse.move(0, 0); await panel.mouse.move(0, 0);
-  await panel.waitForFunction(() => document.body.dataset.expanded === "false");
-  const closedState = await panel.evaluate(() => window.glassPreview.get());
-  check(closedState.visible === false, "离开后未自动收回");
-  await orb.mouse.move(33, 33); await orb.mouse.down(); await orb.mouse.move(45, 33);
-  await orb.waitForFunction(() => document.querySelector("#orbShell").classList.contains("is-dragging"));
-  check((await orb.evaluate(() => window.glassPreview.get())).dragging, "拖动阈值没有启动独立窗口拖动");
-  await orb.mouse.up();
-  await orb.waitForFunction(() => !document.querySelector("#orbShell").classList.contains("is-dragging"));
-  check(!(await orb.evaluate(() => window.glassPreview.get())).dragging, "松开后没有结束拖动");
-  // Electron 43 的安全告警器把空资源计时名传给new URL，栈已从其内置源码核对。
-  // 不关闭告警、沙箱或CSP；仅把这个已定位的框架诊断与本小样异常分开记。
-  frameworkDiagnostics = errors.filter(error => error.startsWith("TypeError: Failed to construct 'URL': Invalid URL") && /at node:electron\/js2c\/sandbox_bundle:2:101097/.test(error));
-  const ownErrors = errors.filter(error => !frameworkDiagnostics.includes(error));
-  check(ownErrors.length === 0, ownErrors.join("\n"));
-} finally { await electron.close(); }
-check(JSON.stringify(before) === JSON.stringify(distHash()), "日常dist被改动");
-check(!existsSync(join(run, "home", "receiver.json")), "小样意外启动了收件器");
-const report = { assertions, passed: true, frameworkDiagnostics, physicalMouseTouched: false, realAccounts: false, userDistUntouched: true,
-  disclaimer: "鼠标输入通过Playwright页面协议合成；贴边几何与窗口状态已验，主机真实手拖手感由用户看小样确认。", screenshots: run };
-writeFileSync(join(run, "preview-ok.json"), JSON.stringify(report, null, 2));
-console.log("GEMINI_GLASS_PREVIEW_OK assertions=" + assertions + " frameworkDiagnostics=" + frameworkDiagnostics.length);
-console.log("REPORT " + run);
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+const require=createRequire(import.meta.url), here=dirname(fileURLToPath(import.meta.url)), root=resolve(here,"../../..");
+const {_electron}=require("E:/个人AI资源管理/60_公用资源（钩子·skill·搜索引擎·可后期扩展）/后台驱动测试（Playwright·零抢鼠标·测Electron应用）/包（npm下载·playwright完整包）/node_modules/playwright");
+const runtime=join(root,".runtime/test-runs");mkdirSync(runtime,{recursive:true});
+const run=mkdtempSync(join(runtime,"bm-gemini-dark-"));console.log("RUN "+run);
+let checks=0;function check(value,message){assert(value,message);checks++;}
+const distFiles=["app.js","gemini/gemini-quota.js","pet/tray.js"];
+const hashes=()=>distFiles.map(f=>createHash("sha256").update(readFileSync(join(root,"dist",f))).digest("hex"));
+const before=hashes();
+const app=await _electron.launch({executablePath:join(root,"node_modules/electron/dist/electron.exe"),args:[join(here,"main.cjs"),"--preview-home="+join(run,"home")],env:{...process.env,GEMINI_GLASS_PREVIEW_TEST:"1"},timeout:30000});
+let errors=[],frameworkDiagnostics=[];
+try{
+ const first=await app.firstWindow();await first.waitForSelector("#orbNumber",{state:"attached"});
+ const pages=await app.windows(),orb=pages.find(p=>new URL(p.url()).searchParams.get("view")==="orb"),panel=pages.find(p=>new URL(p.url()).searchParams.get("view")==="panel");
+ check(!!orb&&!!panel,"小球和详情应是独立窗口");
+ for(const p of pages)p.on("pageerror",e=>errors.push(e.stack||String(e)));
+ await orb.waitForFunction(()=>document.getElementById("orbNumber").textContent==="68");
+ const idle=await orb.locator("#orb").boundingBox();
+ check(Math.abs(idle.width-25)<1,"平时球的直径必须是25，而不是第一版的50；实际="+idle.width);
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes("view=orb")).showInactive());
+ await orb.screenshot({path:join(run,"v2_平时小球.png"),omitBackground:true,timeout:5000});
+ await orb.mouse.move(33,33);
+ await orb.waitForFunction(()=>document.body.dataset.expanded==="true");
+ await orb.waitForFunction(()=>document.getElementById("orb").getBoundingClientRect().width>49.5);
+ const full=await orb.locator("#orb").boundingBox();
+ check(Math.abs(full.width-50)<1,"悬停后只放大到第一版球的直径50");
+ const hiddenPanel=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes("view=panel")).isVisible());
+ check(!hiddenPanel,"悬停绝不能弹详情");
+ check(Math.abs((full.x+full.width/2)-(idle.x+idle.width/2))<1,"放大不能挪动球心");
+ await orb.screenshot({path:join(run,"v2_悬停放大.png"),omitBackground:true,timeout:5000});
+ await orb.mouse.move(42,33);await orb.mouse.down();await orb.mouse.move(22,33,{steps:3});await orb.mouse.up();
+ await orb.waitForFunction(()=>document.body.dataset.account==="0",null,{timeout:1500});
+ check(await orb.locator("#orbNumber").textContent()==="91","左划应从2号切到1号，并显示其余量");
+ await orb.mouse.move(22,33);await orb.mouse.down();await orb.mouse.move(42,33,{steps:3});await orb.mouse.up();
+ await orb.waitForFunction(()=>document.body.dataset.account==="1");
+ check(await orb.locator("#orbNumber").textContent()==="68","右划应回到2号");
+ const visual=await orb.locator("#orb").evaluate(e=>{
+   const value=document.getElementById("orbValue"),small=value.querySelector("small");
+   const s=getComputedStyle(e),v=getComputedStyle(value),p=getComputedStyle(small);
+   return {background:s.backgroundImage,blur:s.backdropFilter,shadow:s.boxShadow,color:v.color,font:parseFloat(v.fontSize),weight:v.fontWeight,textShadow:v.textShadow,percentFont:parseFloat(p.fontSize),percentColor:p.color};
+ });
+ check(visual.background.includes("linear-gradient")&&!visual.background.includes("radial-gradient"),"只保留指定的线性暗色磨砂");
+ check(visual.blur==="blur(24px)","磨砂模糊应是24px");
+ check(visual.color==="rgb(248, 250, 252)"&&visual.textShadow==="none"&&visual.weight==="600","数字必须纯白600且无描边阴影");
+ check(visual.font>12&&Math.abs(visual.percentFont/visual.font-.55)<.01,"数字加大，百分号为数字字号55%");
+ check(visual.percentColor==="rgba(255, 255, 255, 0.45)","百分号灰白透明度不符");
+ check(await orb.locator(".ring-track[opacity='0.14']").count()===2,"两个圆环均应有14%的完整暗轨");
+ check(await orb.locator("linearGradient stop[stop-color='#3B82F6']").count()===1&&await orb.locator("linearGradient stop[stop-color='#34D399']").count()===1,"圆环必须使用指定蓝绿SVG渐变");
+ await orb.locator("#orb").click({button:"right"});
+ await panel.waitForFunction(()=>document.body.dataset.visible==="true");
+ const pb=await panel.locator("#details").boundingBox();
+ check(pb.width<=225&&pb.height<=219,"右键详情应压到224×218，不是原来的346×484");
+ check(await panel.locator("#detailNumber").textContent()==="68"&&await panel.locator("#detailWeekly").textContent()==="55%","详情应显示当前账号的5小时和本周余量");
+ check(await panel.locator("#detailReset").textContent()==="16:05"&&await panel.locator("#detailWeeklyReset").textContent()==="周六 10:00","两种重置时间不可遗漏");
+ check(await panel.locator(".not-connected").textContent()==="尚未接入","套餐未采集时不能编造");
+ check(await panel.locator("#details").evaluate(e=>e.scrollHeight<=e.clientHeight+1),"紧凑详情不能裁切文字");
+ await panel.screenshot({path:join(run,"v2_紧凑详情.png"),omitBackground:true,timeout:5000});
+ await panel.locator("[data-count='3']").click();
+ await panel.waitForFunction(()=>document.querySelectorAll(".account-tab").length===3);
+ await panel.locator("[data-action='close']").click();
+ await orb.waitForFunction(()=>document.body.dataset.visible==="false");
+ await orb.mouse.move(33,33);await orb.mouse.down();await orb.mouse.move(13,33,{steps:3});await orb.mouse.up();
+ await orb.waitForFunction(()=>document.body.dataset.account==="2");
+ check(await orb.locator("#orbNumber").textContent()==="37","第三个账号必须能循环进入");
+ check(await orb.locator(".ring-fill.is-selected").getAttribute("data-index")==="2","切号后应高亮对应环，而不是给数字染色");
+ await orb.screenshot({path:join(run,"v2_三账号红环.png"),omitBackground:true,timeout:5000});
+ await orb.mouse.move(42,33);await orb.mouse.down();await orb.mouse.move(22,33,{steps:3});await orb.mouse.up();
+ await orb.waitForFunction(()=>document.body.dataset.account==="0");
+ check(await orb.locator("#orbNumber").textContent()==="91","三号再左划必须循环回一号");
+ await orb.mouse.move(22,33);await orb.mouse.down();await orb.mouse.move(42,33,{steps:3});await orb.mouse.up();
+ await orb.waitForFunction(()=>document.body.dataset.account==="2");
+ check(await orb.locator("#orbNumber").textContent()==="37","一号右划必须循环回三号");
+ const prior=await orb.evaluate(()=>window.glassPreview.get());
+ await orb.clock.install();
+ await orb.mouse.move(33,33);await orb.mouse.down();await orb.clock.fastForward(510);
+ check(await orb.locator("#orbShell").evaluate(e=>e.classList.contains("is-armed")),"按住半秒应进入可拖动状态");
+ await orb.mouse.move(42,33,{steps:2});
+ await orb.waitForFunction(()=>document.getElementById("orbShell").classList.contains("is-dragging"));
+ check((await orb.evaluate(()=>window.glassPreview.get())).dragging,"长按后移动应启动挪位置");
+ await orb.mouse.up();
+ await orb.waitForFunction(()=>!document.getElementById("orbShell").classList.contains("is-dragging"));
+ const afterDrag=await orb.evaluate(()=>window.glassPreview.get());
+ check(afterDrag.selected===prior.selected,"长按拖动不能顺带切号");
+ await orb.mouse.move(0,0);
+ await orb.waitForFunction(()=>document.body.dataset.expanded==="false");
+ await orb.waitForFunction(()=>document.getElementById("orb").getBoundingClientRect().width<25.5);
+ check(!(await orb.evaluate(()=>window.glassPreview.get())).visible,"划动和长按都不应打开详情");
+ await orb.emulateMedia({reducedMotion:"reduce"});
+ check(await orb.locator("#orb").evaluate(e=>getComputedStyle(e).transitionDuration)==="0s","减少动效时应停止缩放过渡");
+ const windows=await app.evaluate(({BrowserWindow,screen})=>BrowserWindow.getAllWindows().map(w=>({focused:w.isFocused(),focusable:w.isFocusable(),bounds:w.getBounds(),area:screen.getDisplayMatching(w.getBounds()).workArea,nativeGlass:w.__glassNative})));
+ check(windows.every(w=>!w.focused&&!w.focusable),"所有测试操作都不能抢走焦点");
+ check(windows.every(w=>w.bounds.x>=w.area.x-2&&w.bounds.y>=w.area.y-2&&w.bounds.x+w.bounds.width<=w.area.x+w.area.width+2&&w.bounds.y+w.bounds.height<=w.area.y+w.area.height+2),"真实窗口不可越界");
+ writeFileSync(join(run,"native-window-state.json"),JSON.stringify(windows,null,2));
+ // UI_SLICES
+ frameworkDiagnostics=errors.filter(e=>e.startsWith("TypeError: Failed to construct 'URL': Invalid URL")&&e.includes("node:electron/js2c/sandbox_bundle:2:101097"));
+ check(errors.filter(e=>!frameworkDiagnostics.includes(e)).length===0,errors.join("\n"));
+}finally{await app.close();}
+check(JSON.stringify(before)===JSON.stringify(hashes()),"预览测试不能修改正式dist");
+check(!existsSync(join(run,"home/receiver.json")),"预览不能启动账号收件器");
+writeFileSync(join(run,"preview-ok.json"),JSON.stringify({checks,passed:true,frameworkDiagnostics,realAccounts:false,physicalMouseTouched:false,productionDistUntouched:true},null,2));
+console.log("GEMINI_DARK_PREVIEW_OK checks="+checks+" frameworkDiagnostics="+frameworkDiagnostics.length);console.log("REPORT "+run);

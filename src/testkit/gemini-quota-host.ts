@@ -2,7 +2,7 @@
 import { app } from "electron";
 import { initGeminiQuota, closeGeminiQuota } from "../gemini/gemini-quota";
 app.setPath("userData", process.env.AGENT_PET_HUB_HOME!);
-void app.whenReady().then(() => initGeminiQuota({ display: false }));
+void app.whenReady().then(() => initGeminiQuota({ display: false, backgroundOnly: process.env.AGENT_GEMINI_HEADLESS_TEST === "1" }));
 let closing = false;
 app.on("window-all-closed", () => {});
 app.on("before-quit", event => { if (closing) return; event.preventDefault(); closing = true; void closeGeminiQuota().finally(() => app.quit()); });

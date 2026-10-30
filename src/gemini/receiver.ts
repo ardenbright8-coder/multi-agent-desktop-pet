@@ -28,10 +28,13 @@ export async function startQuotaReceiver(root: string, store: QuotaStore, templa
     if (req.headers.host !== expectedHost) { json(res, 403, { error: "host" }); return; }
     if (req.headers.origin && req.headers.origin !== "https://gemini.google.com" && !req.headers.origin.startsWith("chrome-extension://")) { json(res, 403, { error: "origin" }); return; }
     if (req.method === "GET" && req.url === "/meta") { json(res, 200, { service: "gemini-quota", id: config.serviceId, version: 1 }); return; }
-    if (req.method === "GET" && req.url === `/${nonce}/collector.user.js`) {
+    if (req.method === "GET" && /^\/[a-f0-9-]{36}\/collector\.user\.js$/.test(req.url || "")) {
       const bridge = { url: `http://127.0.0.1:${config.port}`, token: config.token, serviceId: config.serviceId };
+      const selfUrl = `http://127.0.0.1:${config.port}${req.url}`;
+      let currentTemplate = template;
+      try { if (template.includes("/*__GEMINI_DESKTOP_BRIDGE__*/null")) currentTemplate = readFileSync(join(__dirname, "collector.user.js"), "utf8"); } catch { /* 沿用内存模板 */ }
       res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
-      res.end(template.replace("/*__GEMINI_DESKTOP_BRIDGE__*/null", JSON.stringify(bridge))); return;
+      res.end(currentTemplate.replace("// @updateURL    none", `// @updateURL    ${selfUrl}\n// @downloadURL  ${selfUrl}`).replace("/*__GEMINI_DESKTOP_BRIDGE__*/null", JSON.stringify(bridge))); return;
     }
     if (!authorized(req)) { json(res, 401, { error: "auth" }); return; }
     if (req.method === "GET" && req.url === "/snapshot") { json(res, 200, { accounts: store.snapshot() }); return; }
@@ -45,7 +48,14 @@ export async function startQuotaReceiver(root: string, store: QuotaStore, templa
     });
     req.on("end", () => {
       if (res.writableEnded) return;
-      try { const ok = store.ingest(JSON.parse(Buffer.concat(chunks).toString("utf8"))); if (ok) changed(); json(res, ok ? 200 : 400, { ok }); }
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        const ok = store.ingest(parsed);
+        if (ok) changed();
+        // 兼容浏览器里还没重装的 3.0.1 旧脚本：照常收下读数，但返回 202 让旧脚本把 connected 置为 false，彻底阻断旧脚本每 3 分钟调 GM_openInTab 弹 /usage 标签页
+        const blockLegacyPopup = ok && forcePort === undefined && (!parsed || typeof parsed !== "object" || (parsed as { v?: number }).v !== 2);
+        json(res, blockLegacyPopup ? 202 : (ok ? 200 : 400), { ok });
+      }
       catch { json(res, 400, { error: "invalid reading" }); }
     });
     req.on("error", () => { if (!res.writableEnded) json(res, 400, { error: "request" }); });

@@ -1,8 +1,9 @@
 // Gemini 独立板块。只给桌宠加一条装配，不修改 Agent 事件、看板或登录状态。
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { BrowserWindow, ipcMain, screen, type Rectangle } from "electron";
-import { appDataRoot } from "../shared/paths";
+import { appDataRoot, isIsolatedRun } from "../shared/paths";
 import { createLogger } from "../shared/log";
 import { QuotaStore } from "./model";
 import { startQuotaReceiver, type QuotaReceiver } from "./receiver";
@@ -13,11 +14,27 @@ let receiver: QuotaReceiver | null = null;
 let win: BrowserWindow | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let anchor: () => Rectangle | undefined = () => undefined;
-let hidden = false, failure = "", previous = "", shuttingDown = false, allowShow = true;
+let hidden = false, failure = "", previous = "", shuttingDown = false, allowShow = true, backgroundOnly = false;
+let orbChild: ReturnType<typeof spawn> | null = null;
 
-export async function initGeminiQuota(options: { root?: string; anchor?: () => Rectangle | undefined; display?: boolean } = {}): Promise<void> {
+function ensureGlassOrbStarted(): void {
+  if (isIsolatedRun() || process.env.AGENT_GEMINI_HEADLESS_TEST === "1" || process.env.GEMINI_GLASS_PREVIEW_TEST === "1") return;
+  try {
+    const orbEntry = resolve(__dirname, "..", "..", "src", "gemini", "_玻璃圆环小样（独立贴边·演示数据）", "main.cjs");
+    if (!existsSync(orbEntry)) return;
+    if (orbChild && !orbChild.killed) {
+      try { orbChild.kill(); } catch { /* ignore */ }
+      orbChild = null;
+    }
+    const child = spawn(process.execPath, [orbEntry], { detached: true, stdio: "ignore", windowsHide: true });
+    child.unref();
+    orbChild = child;
+  } catch { /* 小球独立进程失败不影响桌宠本体 */ }
+}
+
+export async function initGeminiQuota(options: { root?: string; anchor?: () => Rectangle | undefined; display?: boolean; backgroundOnly?: boolean } = {}): Promise<void> {
   if (receiver) return;
-  shuttingDown = false; failure = ""; hidden = false; allowShow = options.display !== false;
+  shuttingDown = false; failure = ""; hidden = false; allowShow = options.display !== false; backgroundOnly = options.backgroundOnly === true;
   anchor = options.anchor || (() => undefined);
   const root = options.root || join(appDataRoot(), "gemini");
   store = new QuotaStore(join(root, "readings.json"));
@@ -28,6 +45,7 @@ export async function initGeminiQuota(options: { root?: string; anchor?: () => R
       return { accounts: store?.snapshot() || [] };
     });
     timer = setInterval(syncWindow, 2000); timer.unref();
+    if (backgroundOnly && allowShow) ensureGlassOrbStarted();
     log.记("Gemini只读收件器已启动（不记录凭据、账号邮箱或聊天内容）", "gemini");
   } catch (error) {
     failure = error instanceof Error ? error.message : "初始化失败";
@@ -44,13 +62,18 @@ export function toggleGeminiQuota(): void {
 export async function closeGeminiQuota(): Promise<void> {
   shuttingDown = true;
   if (timer) clearInterval(timer); timer = null;
+  if (orbChild && !orbChild.killed) {
+    try { orbChild.kill(); } catch { /* ignore */ }
+    orbChild = null;
+  }
   ipcMain.removeHandler("gemini-quota:get");
   win?.destroy(); win = null; previous = "";
   const old = receiver; receiver = null; await old?.close(); store = null;
 }
 function syncWindow(): void {
-  if (shuttingDown) return;
+  if (shuttingDown) { if (win && !win.isDestroyed()) win.destroy(); return; }
   const rows = store?.snapshot() || [];
+  if (backgroundOnly) { if (win && !win.isDestroyed()) win.destroy(); return; }
   if (hidden || !rows.length) { win?.destroy(); return; }
   if (!win || win.isDestroyed()) {
     win = new BrowserWindow({ width: 116, height: 48, title: "Gemini用量提示球", frame: false, transparent: true,
