@@ -239,8 +239,12 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     context.trayActions.hide();
     await delay(150);
     await waitFor(() => !win.isVisible(), 1_500, "Hide button did not hide the window");
+    // 2026-10-27 起「藏起来」是勾选开关：勾着时单击托盘图标不叫出来，要取消勾选（show）才出来
     context.tray.emit("click", {} as never, {} as never, {} as never);
-    await waitFor(() => win.isVisible(), 1_500, "Tray click callback did not restore the window");
+    await delay(150);
+    assert.ok(!win.isVisible(), "Tray click brought back a pet the user chose to hide");
+    context.trayActions.show();
+    await waitFor(() => win.isVisible(), 1_500, "Tray show callback did not restore the hidden window");
     const beforeTraySimulation = hub.snapshot().eventCount;
     context.trayActions.simulate();
     await waitFor(() => hub.snapshot().eventCount > beforeTraySimulation, 1_500, "Tray test-notification callback did not publish an event");

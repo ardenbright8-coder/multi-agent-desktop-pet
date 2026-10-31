@@ -1,6 +1,6 @@
 // multi-agent-desktop-pet managed generic hook bridge v1
-import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
@@ -13,9 +13,9 @@ const PROTOCOL_VERSION = 1;
 const ALLOW_WORDS = new Set(["yes", "y", "ok", "okay", "是", "好", "行", "可以", "允许", "同意", "确认", "准", "放行"]);
 const ALWAYS_WORDS = new Set(["always", "一直允许", "以后都允许", "不再问", "都允许"]);
 const REJECT_WORDS = new Set(["no", "n", "deny", "reject", "不", "拒绝", "不准", "不行"]);
-// ═══ 什么算"大权限"，只有命中这张表的才弹桌宠 ═══
+// ═══ 什么算"大权限"：命中这张表的，桌宠弹窗不给「以后都允许」，每次都问 ═══
 // 标准：碰 Windows 系统那一摊、改网络配置、不可逆、或者往外发。
-// 改项目文件、跑测试、本地 git commit 这类小事不算，别弹。
+// 2026-10-31 起 Claude 终端里要你确认的一律弹桌宠（他：每次回窗口点太浪费时间），这张表只管能不能记住。
 // 想加想减就改这张表，改完跑 `node agent-pet-hook.mjs --self-test` 确认没写错。
 // ⚠️ 必须放在文件顶部：脚本一进来就调 shouldGateThroughPet()，const 不会提升，
 //    放在文件中段会报 "Cannot access 'BIG_DEAL' before initialization"，
@@ -78,16 +78,19 @@ try {
         writeFileSync(join(dir, "last-permission-payload.json"), JSON.stringify(input, null, 2), "utf8");
       } catch { /* 存不下也不能挡 */ }
     }
-    if (shouldGateThroughPet(hookArg, input)) {
-      writeHookDecision(agent, await gateThroughPet(agent, hookArg, input));
+    if (shouldGateThroughPet(hookArg, input, agent)) {
+      writeHookDecision(agent, await gateThroughPet(agent, hookArg, input), input);
     } else if (String(hookArg || "").toLowerCase().includes("permissionrequest")) {
-      // 小事的权限请求：连报都不报。
-      // 不加这条的话，它会掉进上报路径 → 桌宠照样弹一个"不支持回传，请回终端"的窗，
-      // 等于白弹一次。小事就该在终端里回车过，桌宠一声不吭。
+      // 不走网关的权限请求（AskUserQuestion 这类桌宠答不了的）：连报都不报。
+      // 不加这条的话，它会掉进上报路径 → 桌宠照样弹一个"不支持回传，请回终端"的窗，等于白弹一次。
+      process.exit(0);
+    } else if (agent === "claude-code" && isPermissionNotification(hookArg, input)) {
+      // Claude 的权限提醒：PermissionRequest 那边已经弹了可点的窗，这里再报就弹第二个点不了的。
       process.exit(0);
     } else {
       const event = translate(agent, hookArg, input);
       if (event) await publish(event);
+      await resolveAnsweredInTerminal(agent, hookArg, input);
     }
   }
 } catch (error) {
@@ -396,10 +399,10 @@ function decideFromClaim(claim) {
   return "reject";
 }
 
-function permissionPrompt(canRemember = true) {
+function permissionPrompt(canRemember = true, alwaysDescription = "这家 Agent 先记住，先不问了") {
   const options = [
     { id: "once", label: "允许一次", value: "once", description: "只准这一次", recommended: true },
-    { id: "always", label: "以后都允许", value: "always", description: "这家 Agent 先记住，先不问了" },
+    { id: "always", label: "以后都允许", value: "always", description: alwaysDescription },
     { id: "reject", label: "拒绝", value: "reject", description: "这次不执行" },
   ];
   return {
@@ -418,10 +421,13 @@ function permissionPrompt(canRemember = true) {
 // 顶层的 decision 字段只收 approve/block，之前那版写 "allow" 是非法的，就是报错的根。
 // 2026-10-31：PermissionRequest 以前写成顶层 permissionDecision，CC 不认、也不报错，
 // 桌宠上点的允许/拒绝全白点，CC 等钩子退了再回终端问。官方格式见 code.claude.com/docs/en/hooks。
-function writeHookDecision(agent, decision) {
-  // 大事不记「以后都允许」：自己写 always 也只算这一次。
-  if (decision === "always" && isBigDealGate(hookArg)) decision = "allow";
-  if (decision === "always") rememberAlways(agent);
+function writeHookDecision(agent, decision, input = {}) {
+  const permissionRequest = isBigDealGate(hookArg);
+  // 记不住的（大事、CC 没给建议规则）：自己写 always 也只算这一次。
+  if (decision === "always" && permissionRequest && !canRememberInClaude(input)) decision = "allow";
+  // PermissionRequest 的「以后都允许」交给 CC 自己记（跟终端选 Yes, don't ask again 一样），不按整家 Agent 记。
+  if (decision === "always" && !permissionRequest) rememberAlways(agent);
+  const updatedPermissions = decision === "always" && permissionRequest ? input.permission_suggestions : undefined;
   // 桌宠上没人点 → 不表态，交回给 CC 自己问。别替用户做主。
   if (decision === "timeout") return;
   const hook = String(hookArg || "").toLowerCase();
@@ -441,17 +447,93 @@ function writeHookDecision(agent, decision) {
     return;
   }
   if (hook.includes("permissionrequest")) {
-    process.stdout.write(`${JSON.stringify(permissionRequestOutput(permissionDecision, reason))}\n`);
+    process.stdout.write(`${JSON.stringify(permissionRequestOutput(permissionDecision, reason, updatedPermissions))}\n`);
     return;
   }
   // Notification 之类的事件根本不接受决定，回传也没处使，闭嘴。
 }
 
-function permissionRequestOutput(permissionDecision, reason) {
+function permissionRequestOutput(permissionDecision, reason, updatedPermissions) {
   const decision = permissionDecision === "deny"
     ? { behavior: "deny", message: reason }
     : { behavior: "allow" };
+  if (decision.behavior === "allow" && Array.isArray(updatedPermissions) && updatedPermissions.length) {
+    decision.updatedPermissions = updatedPermissions;
+  }
   return { hookSpecificOutput: { hookEventName: "PermissionRequest", decision } };
+}
+
+// CC 给了「以后别问」的建议规则、又不是大事，桌宠才给「以后都允许」。
+function canRememberInClaude(input) {
+  return Array.isArray(input.permission_suggestions) && input.permission_suggestions.length > 0 && !isBigDeal(input);
+}
+
+// ═══ 终端先答了，桌宠那个窗要收掉 ═══
+// CC 终端的确认框和桌宠弹窗同时在，哪边先答算哪边。终端先答时钩子可能被 CC 掐掉，来不及报，
+// 所以弹窗时留个记号（按 会话+工具+参数 算出固定号），之后这几种事件看到记号就报 permission.resolved：
+//   PostToolUse / PostToolUseFailure：同一个工具同样参数跑了 → 那条已经答了
+//   UserPromptSubmit / Stop / StopFailure / SessionEnd：这个会话往下走了 → 它名下的全收掉
+function permissionKey(input) {
+  const session = firstString(input.session_id, input.sessionId) || "";
+  const tool = firstString(input.tool_name, input.toolName, input.tool) || "";
+  const toolInput = objectValue(input.tool_input, input.toolInput, input.input);
+  return `perm-${createHash("sha1").update(`${session}\n${tool}\n${stableJson(toolInput)}`).digest("hex").slice(0, 20)}`;
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function pendingDir() {
+  return join(hubDataDir(), "pending-permission");
+}
+
+function markPending(requestId, sessionId) {
+  try {
+    mkdirSync(pendingDir(), { recursive: true });
+    writeFileSync(join(pendingDir(), `${requestId}.json`), JSON.stringify({ sessionId, at: Date.now() }), "utf8");
+  } catch { /* 记号留不下也不能挡 */ }
+}
+
+function clearPending(requestId) {
+  try { unlinkSync(join(pendingDir(), `${requestId}.json`)); return true; } catch { return false; }
+}
+
+async function publishResolved(agent, input, requestId) {
+  const event = translate(agent, "permission.resolved", { ...input, request_id: requestId, tool_use_id: undefined });
+  if (event) await publish(event);
+}
+
+async function resolveAnsweredInTerminal(agent, hook, input) {
+  const name = String(hook || "").toLowerCase();
+  const sessionId = firstString(input.session_id, input.sessionId);
+  if (!sessionId || !existsSync(pendingDir())) return;
+  if (name.includes("posttooluse")) {
+    const requestId = permissionKey(input);
+    if (clearPending(requestId)) await publishResolved(agent, input, requestId);
+    return;
+  }
+  if (!/userpromptsubmit|^stop|stopfailure|sessionend/.test(name)) return;
+  for (const file of readdirSync(pendingDir())) {
+    const path = join(pendingDir(), file);
+    try {
+      const mark = JSON.parse(readFileSync(path, "utf8"));
+      const stale = Date.now() - statSync(path).mtimeMs > 6 * 60 * 60 * 1000;
+      if (mark.sessionId !== sessionId && !stale) continue;
+      unlinkSync(path);
+      if (mark.sessionId === sessionId) await publishResolved(agent, input, file.replace(/\.json$/, ""));
+    } catch { /* 坏记号跳过 */ }
+  }
+}
+
+function isPermissionNotification(hook, input) {
+  if (!String(hook || "").toLowerCase().includes("notification")) return false;
+  const text = notificationText(input);
+  return text.includes("permission") || text.includes("approval");
 }
 
 function failOpen(error) {
@@ -465,17 +547,21 @@ function failOpen(error) {
   process.exit(0);
 }
 
-function shouldGateThroughPet(hook, input) {
+function shouldGateThroughPet(hook, input, agent) {
   const name = String(hook || "").toLowerCase();
   if (name.includes("notification")) {
+    // Claude 的权限走 PermissionRequest，这里只给 Grok 这类没有 PermissionRequest 的用。
+    if (agent === "claude-code") return false;
     const text = notificationText(input);
     return text.includes("permission") || text.includes("plan") || text.includes("approval") || text.includes("input");
   }
-  // PermissionRequest 是 CC 已经决定要问你了，大事走桌宠网关（可回传）。
+  // PermissionRequest 是 CC 真要在终端问你了（不是每次调工具都来），一律走桌宠网关（可回传）。
   // 之前这里跟 PreToolUse 共用工具白名单，ExitPlanMode 这类工具名不匹配就掉进上报路径，
   // 上报路径的 responseCapability 写死 false → 桌宠只能显示"不支持回传，请回终端"。
-  // 只有动真格的才弹桌宠。小事让 CC 自己按 settings.json 处理，别烦人。
-  if (name.includes("permissionrequest")) return isBigDeal(input);
+  // 例外：AskUserQuestion 是 Claude 问你选择题，桌宠只有允许/拒绝，答不了，留在终端。
+  if (name.includes("permissionrequest")) {
+    return firstString(input.tool_name, input.toolName, input.tool) !== "AskUserQuestion";
+  }
   // PreToolUse 不再走桌宠网关：它在 CC 还没决定要不要问你之前就触发，
   // 结果是每一次 Bash/Edit/Write 都要去桌宠上点一下，会话直接没法用。
   // CC 自己放行的照常飞过，等它真要问你时会发 PermissionRequest，那时才弹桌宠。
@@ -579,23 +665,29 @@ async function announceChoice(agent, decision, extra = {}) {
   } catch { /* 回执弹不出来也不能挡决定 */ }
 }
 
-// PermissionRequest 只放大事进来（见 isBigDeal），大事一律每次都问：
-// 不认「以后都允许」的记忆，面板上也不给这个选项。2026-10-31 之前按整家 Agent 记，
-// 点一次就把 Claude Code 往后所有大事全放了，桌宠再也不弹。
+// PermissionRequest 不认 always-allow.json 那份按整家 Agent 的记忆：2026-10-31 之前点一次
+// 就把 Claude Code 往后所有权限全放了，桌宠再也不弹。它的「以后都允许」交给 CC 自己记（见 writeHookDecision）。
 function isBigDealGate(hook) {
   return String(hook || "").toLowerCase().includes("permissionrequest");
 }
 
 async function gateThroughPet(agent, hook, input) {
   const tool = firstString(input.tool_name, input.toolName, input.tool) || "命令";
-  const canRemember = !isBigDealGate(hook);
-  if (canRemember && isAlwaysRemembered(agent)) {
+  const permissionRequest = isBigDealGate(hook);
+  if (!permissionRequest && isAlwaysRemembered(agent)) {
     await announceChoice(agent, "always", { alwaysRemembered: true, tool });
     return "always";
   }
+  const canRemember = permissionRequest ? canRememberInClaude(input) : true;
+  const alwaysDescription = permissionRequest
+    ? "跟终端里选「Yes, and don't ask again」一样，这类以后不问"
+    : undefined;
   const target = targetFrom(objectValue(input.tool_input, input.toolInput, input.input), input) || "未提供目标";
-  const requestId = firstString(input.request_id, input.requestId, input.tool_use_id, input.toolUseId, randomUUID());
+  const requestId = permissionRequest
+    ? permissionKey(input)
+    : firstString(input.request_id, input.requestId, input.tool_use_id, input.toolUseId, randomUUID());
   const sessionId = firstString(input.session_id, input.sessionId, process.env.GROK_SESSION_ID, `${agent}-default`);
+  if (permissionRequest) markPending(requestId, sessionId);
   const event = {
     version: 1,
     eventId: randomUUID(),
@@ -618,7 +710,7 @@ async function gateThroughPet(agent, hook, input) {
       mode: "permission",
       title: `允许 ${agentLabel(agent)} 使用 ${tool} 吗？`,
       providerRequestId: requestId,
-      prompts: [permissionPrompt(canRemember)],
+      prompts: [permissionPrompt(canRemember, alwaysDescription)],
       action: tool,
       resources: [target],
       // impact / rollback / unknowns 三个字段桌宠会原样拼进说明里，
@@ -669,7 +761,12 @@ async function gateThroughPet(agent, hook, input) {
       tool,
     });
     if (String(hook || "").toLowerCase().includes("notification")) replyGrokTerminal(decision);
+    if (permissionRequest) clearPending(requestId);
     return decision;
+  }
+  // 没人点：把桌宠那个窗收掉，别留一个点了没人接的。
+  if (permissionRequest && clearPending(requestId)) {
+    try { await publishResolved(agent, input, requestId); } catch { /* 收不掉就等桌宠自己清 */ }
   }
   // 等超时了。原来这里直接返回 allow —— 等于"没人管就放行"，太危险。
   // 改成不表态：钩子什么都不输出，CC 回落到它自己的权限询问。
@@ -731,8 +828,24 @@ function runSelfTest() {
     process.stderr.write("self-test fail: PermissionRequest 回传格式不对\n");
     ok = false;
   }
-  if (permissionPrompt(false).options.some((option) => option.id === "always") || !isBigDealGate("PermissionRequest")) {
-    process.stderr.write("self-test fail: 大事不该给「以后都允许」\n");
+  const suggestions = [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "npm test" }], behavior: "allow", destination: "localSettings" }];
+  const small = { tool_name: "Bash", tool_input: { command: "npm test" }, permission_suggestions: suggestions };
+  const big = { tool_name: "Bash", tool_input: { command: "git push origin main" }, permission_suggestions: suggestions };
+  if (permissionPrompt(false).options.some((option) => option.id === "always") || canRememberInClaude(big) || !canRememberInClaude(small)) {
+    process.stderr.write("self-test fail: 大事不该给「以后都允许」、小事该给\n");
+    ok = false;
+  }
+  if (permissionRequestOutput("allow", "x", suggestions).hookSpecificOutput.decision.updatedPermissions !== suggestions) {
+    process.stderr.write("self-test fail: 以后都允许没带上 CC 的建议规则\n");
+    ok = false;
+  }
+  if (permissionKey({ session_id: "s", tool_name: "Bash", tool_input: { a: 1, b: 2 } }) !== permissionKey({ session_id: "s", tool_name: "Bash", tool_input: { b: 2, a: 1 } })) {
+    process.stderr.write("self-test fail: 同一请求算出的号不一样\n");
+    ok = false;
+  }
+  if (!shouldGateThroughPet("PermissionRequest", small, "claude-code") || shouldGateThroughPet("PermissionRequest", { tool_name: "AskUserQuestion" }, "claude-code")
+    || shouldGateThroughPet("Notification", { message: "Claude needs your permission" }, "claude-code")) {
+    process.stderr.write("self-test fail: 该弹的没弹 / 不该弹的弹了\n");
     ok = false;
   }
   if (ok) process.stdout.write("SELF-TEST OK\n");

@@ -68,6 +68,9 @@ let mainWindow: BrowserWindow | null = null;
 // 面板走别的路径关掉），面板就再也不会被拉回屏幕内，窗口还会永久卡在不穿透状态继续挡鼠标。
 // 2026-08-12 实机踩过：拖出屏幕后弹面板，右半边和确认按钮全在屏幕外。
 let panelOpen = false;
+// 藏着时来了要点的事（权限／提问），临时亮出来；面板收起再藏回去，「藏起来」那个设置不动（2026-10-31）。
+let shownForPanel = false;
+let hubRef: AgentHub | null = null;
 let positionBeforePanel: { x: number; y: number } | null = null;
 let dragging = false;
 let hoveringInteractive = false;
@@ -97,6 +100,11 @@ export function destroyPetWindow(): void {
 }
 
 export function createPetWindow(hub: AgentHub): BrowserWindow {
+  if (hubRef !== hub) {
+    hubRef = hub;
+    // 面板早就开着、高度没变时界面不会再报一次，这里跟着快照兜一下
+    hub.on("snapshot", () => { if (panelOpen) revealForPendingIfHidden(); });
+  }
   ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 400×173 → 逻辑）
   const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
@@ -280,7 +288,17 @@ export function setPetHidden(hidden: boolean): void {
 export function showMainWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.showInactive();
+  shownForPanel = false;
   rememberHidden(false);
+}
+
+/** 藏着、又有要点的事：临时亮出来。只看权限／提问，完成提醒不算（藏着就是不想被它打扰）。 */
+function revealForPendingIfHidden(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !petHiddenNow() || mainWindow.isVisible()) return;
+  if (!hubRef?.snapshot().sessions.some((session) => session.pendingInteraction)) return;
+  mainWindow.showInactive();
+  shownForPanel = true;
+  log.记("藏着时来了要点的事，临时亮出来", "setPanelVisibility");
 }
 
 export function hideMainWindow(): void {
@@ -345,6 +363,7 @@ export function setPanelVisibility(visible: boolean, height?: number): void {
         log.记(`面板换内容，窗口高度改成 ${panelHeight}`, "setPanelVisibility");
       }
       ensureFullyVisible();
+      revealForPendingIfHidden();
       return;
     }
     // 只把窗口撑大，左上角不动 —— 幼苗贴在窗口顶部，所以它在屏幕上原地不动。
@@ -360,6 +379,7 @@ export function setPanelVisibility(visible: boolean, height?: number): void {
     }, false);
     ensureFullyVisible();
     log.记(`面板展开，窗口长大 ${before.x},${before.y} → ${mainWindow.getBounds().x},${mainWindow.getBounds().y} 高 ${panelHeight}`, "setPanelVisibility");
+    revealForPendingIfHidden();
     applyMouseMode();
     return;
   }
@@ -368,6 +388,10 @@ export function setPanelVisibility(visible: boolean, height?: number): void {
     return;
   }
   panelOpen = false;
+  if (shownForPanel) {
+    shownForPanel = false;
+    if (petHiddenNow()) mainWindow.hide();
+  }
   // 缩回幼苗大小：左上角还是不动，幼苗照样不跳。
   const current = mainWindow.getBounds();
   const shrunk = clampWindowPosition(
