@@ -26,6 +26,8 @@ ensureGrokHooks()
 
 - 🚨 **OpenCode 自动发现只加载 `.js` / `.ts`**，托管插件必须装成 `~\.config\opencode\plugins\multi-agent-desktop-pet.js`。旧的 `.mjs` 在 1.18.14 上**不会被自动加载**（踩过）。
 - 开机自启动的快捷方式带 `--skip-integration-install`，**启动时不会重写四家配置**。改这块要想清楚会不会破了这条。
+  例外（2026-10-31）：钩子桥 `ensureGenericHookBridge()` 和 `ensureAgentHookPaths()` 每次启动都跑——只同步自己那份桥、只改各家配置里带 `agent-pet-hook.mjs` 的命令路径。
+- 🚨 钩子桥的位置只认 `hookBridgePath()`（桌宠数据夹 `\integrations\`，跟 `AGENT_PET_HUB_HOME` 走）。别再写 `%APPDATA%\AgentPetHub`：数据搬到 F 盘后 Claude、Grok、Hermes 就是因为这个一直跑 C 盘旧桥。
 - 接法总纲在项目根 `AGENT_INTEGRATION.md`（新 Agent 怎么判断、可上报哪些事件、字段怎么填），改协议前先读那份。
 - 装完要用 `npm run integration:smoke` 验四条线，别只看有没有报错。
 

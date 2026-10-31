@@ -396,26 +396,31 @@ function decideFromClaim(claim) {
   return "reject";
 }
 
-function permissionPrompt() {
+function permissionPrompt(canRemember = true) {
+  const options = [
+    { id: "once", label: "允许一次", value: "once", description: "只准这一次", recommended: true },
+    { id: "always", label: "以后都允许", value: "always", description: "这家 Agent 先记住，先不问了" },
+    { id: "reject", label: "拒绝", value: "reject", description: "这次不执行" },
+  ];
   return {
     id: "permission",
     question: "点一个，或自己填。",
     multiple: false,
     allowCustomInput: true,
-    options: [
-      { id: "once", label: "允许一次", value: "once", description: "只准这一次", recommended: true },
-      { id: "always", label: "以后都允许", value: "always", description: "这家 Agent 先记住，先不问了" },
-      { id: "reject", label: "拒绝", value: "reject", description: "这次不执行" },
-    ],
+    options: canRemember ? options : options.filter((option) => option.id !== "always"),
   };
 }
 
 // CC 对不同事件收的字段不一样，写错一个字它就把整张 schema 打屏幕上。
 //   PreToolUse       → hookSpecificOutput.permissionDecision（allow/deny/ask）
-//   PermissionRequest→ 顶层 permissionDecision（allow/deny/ask）
+//   PermissionRequest→ hookSpecificOutput.decision.behavior（allow/deny），拒绝带 message
 //   其它事件（含 Notification）→ 一个字都不能输出
 // 顶层的 decision 字段只收 approve/block，之前那版写 "allow" 是非法的，就是报错的根。
+// 2026-10-31：PermissionRequest 以前写成顶层 permissionDecision，CC 不认、也不报错，
+// 桌宠上点的允许/拒绝全白点，CC 等钩子退了再回终端问。官方格式见 code.claude.com/docs/en/hooks。
 function writeHookDecision(agent, decision) {
+  // 大事不记「以后都允许」：自己写 always 也只算这一次。
+  if (decision === "always" && isBigDealGate(hookArg)) decision = "allow";
   if (decision === "always") rememberAlways(agent);
   // 桌宠上没人点 → 不表态，交回给 CC 自己问。别替用户做主。
   if (decision === "timeout") return;
@@ -436,10 +441,17 @@ function writeHookDecision(agent, decision) {
     return;
   }
   if (hook.includes("permissionrequest")) {
-    process.stdout.write(`${JSON.stringify({ permissionDecision, reason })}\n`);
+    process.stdout.write(`${JSON.stringify(permissionRequestOutput(permissionDecision, reason))}\n`);
     return;
   }
   // Notification 之类的事件根本不接受决定，回传也没处使，闭嘴。
+}
+
+function permissionRequestOutput(permissionDecision, reason) {
+  const decision = permissionDecision === "deny"
+    ? { behavior: "deny", message: reason }
+    : { behavior: "allow" };
+  return { hookSpecificOutput: { hookEventName: "PermissionRequest", decision } };
 }
 
 function failOpen(error) {
@@ -459,7 +471,7 @@ function shouldGateThroughPet(hook, input) {
     const text = notificationText(input);
     return text.includes("permission") || text.includes("plan") || text.includes("approval") || text.includes("input");
   }
-  // PermissionRequest 是 CC 已经决定要问你了，那就一律走桌宠网关（可回传）。
+  // PermissionRequest 是 CC 已经决定要问你了，大事走桌宠网关（可回传）。
   // 之前这里跟 PreToolUse 共用工具白名单，ExitPlanMode 这类工具名不匹配就掉进上报路径，
   // 上报路径的 responseCapability 写死 false → 桌宠只能显示"不支持回传，请回终端"。
   // 只有动真格的才弹桌宠。小事让 CC 自己按 settings.json 处理，别烦人。
@@ -567,9 +579,17 @@ async function announceChoice(agent, decision, extra = {}) {
   } catch { /* 回执弹不出来也不能挡决定 */ }
 }
 
+// PermissionRequest 只放大事进来（见 isBigDeal），大事一律每次都问：
+// 不认「以后都允许」的记忆，面板上也不给这个选项。2026-10-31 之前按整家 Agent 记，
+// 点一次就把 Claude Code 往后所有大事全放了，桌宠再也不弹。
+function isBigDealGate(hook) {
+  return String(hook || "").toLowerCase().includes("permissionrequest");
+}
+
 async function gateThroughPet(agent, hook, input) {
   const tool = firstString(input.tool_name, input.toolName, input.tool) || "命令";
-  if (isAlwaysRemembered(agent)) {
+  const canRemember = !isBigDealGate(hook);
+  if (canRemember && isAlwaysRemembered(agent)) {
     await announceChoice(agent, "always", { alwaysRemembered: true, tool });
     return "always";
   }
@@ -598,7 +618,7 @@ async function gateThroughPet(agent, hook, input) {
       mode: "permission",
       title: `允许 ${agentLabel(agent)} 使用 ${tool} 吗？`,
       providerRequestId: requestId,
-      prompts: [permissionPrompt()],
+      prompts: [permissionPrompt(canRemember)],
       action: tool,
       resources: [target],
       // impact / rollback / unknowns 三个字段桌宠会原样拼进说明里，
@@ -704,6 +724,16 @@ function runSelfTest() {
       process.stderr.write(`self-test fail: ${JSON.stringify(claim.answers[0])} => ${got} (want ${expected})\n`);
       ok = false;
     }
+  }
+  const allow = permissionRequestOutput("allow", "x").hookSpecificOutput;
+  const deny = permissionRequestOutput("deny", "x").hookSpecificOutput;
+  if (allow.hookEventName !== "PermissionRequest" || allow.decision.behavior !== "allow" || deny.decision.behavior !== "deny") {
+    process.stderr.write("self-test fail: PermissionRequest 回传格式不对\n");
+    ok = false;
+  }
+  if (permissionPrompt(false).options.some((option) => option.id === "always") || !isBigDealGate("PermissionRequest")) {
+    process.stderr.write("self-test fail: 大事不该给「以后都允许」\n");
+    ok = false;
   }
   if (ok) process.stdout.write("SELF-TEST OK\n");
   return ok;

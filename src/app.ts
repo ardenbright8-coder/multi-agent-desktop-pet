@@ -13,7 +13,7 @@ import { createLogger, lastLogError, logRoot, startLog } from "./shared/log";
 import { AgentHub } from "./events/hub";
 import { LocalIpcServer } from "./channel/ipc-server";
 import { registerHubIpc } from "./channel/ipc-handlers";
-import { ensureGenericHookBridge, ensureGrokHooks, ensureOpenCodeIntegration } from "./integrations/manager";
+import { ensureAgentHookPaths, ensureGenericHookBridge, ensureGrokHooks, ensureOpenCodeIntegration } from "./integrations/manager";
 import {
   createPetWindow,
   ensureFullyVisible,
@@ -105,11 +105,23 @@ async function bootstrap(): Promise<void> {
   if (!testMode && !skipIntegrationInstall) {
     try {
       ensureOpenCodeIntegration();
-      ensureGenericHookBridge();
       ensureGrokHooks();
       log.记("五家接入已同步", "bootstrap");
     } catch (error) {
       log.出事("装接入失败", error, "bootstrap");
+      logError(error);
+    }
+  }
+  // 钩子桥和各家指过来的路径每次启动都对一遍，不看 --skip-integration-install：
+  // 只动自己那份桥和自己那几条钩子命令。程序或数据夹换了地方，重开一次就接上（2026-10-31）。
+  if (!testMode) {
+    try {
+      const bridge = ensureGenericHookBridge();
+      if (bridge.reason) log.记(`钩子桥没更新（${bridge.reason}）：${bridge.target}`, "bootstrap");
+      const paths = ensureAgentHookPaths();
+      if (paths.changed.length) log.记(`钩子路径已改指 ${bridge.target}：${paths.changed.join("、")}`, "bootstrap");
+    } catch (error) {
+      log.出事("对钩子路径失败", error, "bootstrap");
       logError(error);
     }
   }

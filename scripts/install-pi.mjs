@@ -8,7 +8,7 @@ const source = resolve("integrations", "pi", "agent-pet.ts");
 const target = join(piRoot, "extensions", "agent-pet.ts");
 const bridgeSource = resolve("integrations", "hooks", "agent-pet-hook.mjs");
 const appData = process.env.APPDATA || join(process.env.USERPROFILE || "", "AppData", "Roaming");
-const bridgeTarget = join(appData, "AgentPetHub", "integrations", "agent-pet-hook.mjs");
+const bridgeTarget = join(process.env.AGENT_PET_HUB_HOME || join(appData, "AgentPetHub"), "integrations", "agent-pet-hook.mjs");
 
 installManagedFile(bridgeSource, bridgeTarget, bridgeMarker);
 if (existsSync(target)) {

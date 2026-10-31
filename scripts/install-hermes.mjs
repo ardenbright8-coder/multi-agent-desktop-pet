@@ -6,7 +6,7 @@ const source = resolve("integrations", "hermes");
 const target = "D:\\hermes\\plugins\\multi-agent-desktop-pet";
 const bridgeSource = resolve("integrations", "hooks", "agent-pet-hook.mjs");
 const appData = process.env.APPDATA || join(process.env.USERPROFILE || "", "AppData", "Roaming");
-const bridgeTarget = join(appData, "AgentPetHub", "integrations", "agent-pet-hook.mjs");
+const bridgeTarget = join(process.env.AGENT_PET_HUB_HOME || join(appData, "AgentPetHub"), "integrations", "agent-pet-hook.mjs");
 
 installBridge();
 if (existsSync(join(target, "__init__.py"))) {

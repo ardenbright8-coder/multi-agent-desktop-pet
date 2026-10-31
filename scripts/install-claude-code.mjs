@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 const marker = "multi-agent-desktop-pet managed generic hook bridge v1";
 const source = resolve("integrations", "hooks", "agent-pet-hook.mjs");
 const appData = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-const target = join(appData, "AgentPetHub", "integrations", "agent-pet-hook.mjs");
+const target = join(process.env.AGENT_PET_HUB_HOME || join(appData, "AgentPetHub"), "integrations", "agent-pet-hook.mjs");
 const settingsPath = join(homedir(), ".claude", "settings.json");
 const events = [
   "SessionStart",
