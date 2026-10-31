@@ -70,7 +70,6 @@ let mainWindow: BrowserWindow | null = null;
 let panelOpen = false;
 // 藏着时来了要点的事（权限／提问），临时亮出来；面板收起再藏回去，「藏起来」那个设置不动（2026-10-31）。
 let shownForPanel = false;
-let hubRef: AgentHub | null = null;
 let positionBeforePanel: { x: number; y: number } | null = null;
 let dragging = false;
 let hoveringInteractive = false;
@@ -100,11 +99,6 @@ export function destroyPetWindow(): void {
 }
 
 export function createPetWindow(hub: AgentHub): BrowserWindow {
-  if (hubRef !== hub) {
-    hubRef = hub;
-    // 面板早就开着、高度没变时界面不会再报一次，这里跟着快照兜一下
-    hub.on("snapshot", () => { if (panelOpen) revealForPendingIfHidden(); });
-  }
   ensurePetWindowSize(); // 按主屏缩放重算窗口尺寸（物理 400×173 → 逻辑）
   const saved = loadWindowBounds();
   const workArea = screen.getPrimaryDisplay().workArea;
@@ -292,13 +286,20 @@ export function showMainWindow(): void {
   rememberHidden(false);
 }
 
-/** 藏着、又有要点的事：临时亮出来。只看权限／提问，完成提醒不算（藏着就是不想被它打扰）。 */
-function revealForPendingIfHidden(): void {
-  if (!mainWindow || mainWindow.isDestroyed() || !petHiddenNow() || mainWindow.isVisible()) return;
-  if (!hubRef?.snapshot().sessions.some((session) => session.pendingInteraction)) return;
-  mainWindow.showInactive();
-  shownForPanel = true;
-  log.记("藏着时来了要点的事，临时亮出来", "setPanelVisibility");
+/**
+ * 藏着时：询问／权限窗露着就临时亮出来；换成完成提醒、设置这些就藏回去（藏着就是不想被它打扰）。
+ * 看的是界面上那个窗露没露，不看后台有没有待处理——他按 Esc／关闭关掉的，后台还挂着，不能再被它叫出来（2026-10-31）。
+ */
+function syncHiddenReveal(needsAction: boolean): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !petHiddenNow()) return;
+  if (needsAction && !mainWindow.isVisible()) {
+    mainWindow.showInactive();
+    shownForPanel = true;
+    log.记("藏着时来了要点的事，临时亮出来", "setPanelVisibility");
+  } else if (!needsAction && shownForPanel) {
+    mainWindow.hide();
+    shownForPanel = false;
+  }
 }
 
 export function hideMainWindow(): void {
@@ -349,7 +350,7 @@ export function keepWindowOnVisibleDisplay(): void {
   persistWindowPosition();
 }
 
-export function setPanelVisibility(visible: boolean, height?: number): void {
+export function setPanelVisibility(visible: boolean, height?: number, needsAction = false): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   if (visible) {
@@ -363,7 +364,7 @@ export function setPanelVisibility(visible: boolean, height?: number): void {
         log.记(`面板换内容，窗口高度改成 ${panelHeight}`, "setPanelVisibility");
       }
       ensureFullyVisible();
-      revealForPendingIfHidden();
+      syncHiddenReveal(needsAction);
       return;
     }
     // 只把窗口撑大，左上角不动 —— 幼苗贴在窗口顶部，所以它在屏幕上原地不动。
@@ -379,7 +380,7 @@ export function setPanelVisibility(visible: boolean, height?: number): void {
     }, false);
     ensureFullyVisible();
     log.记(`面板展开，窗口长大 ${before.x},${before.y} → ${mainWindow.getBounds().x},${mainWindow.getBounds().y} 高 ${panelHeight}`, "setPanelVisibility");
-    revealForPendingIfHidden();
+    syncHiddenReveal(needsAction);
     applyMouseMode();
     return;
   }

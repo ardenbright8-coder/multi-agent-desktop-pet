@@ -30,7 +30,7 @@ export function registerWindowIpc(extras: WindowIpcExtras = {}): void {
   });
   ipcMain.on("window:drag-stop", () => stopDragging());
   ipcMain.on("window:hover-interactive", (_event, hovering: boolean) => setHoveringInteractive(Boolean(hovering)));
-  ipcMain.on("window:panel-visibility", (_event, visible: boolean, height?: number) => setPanelVisibility(Boolean(visible), typeof height === "number" ? height : undefined));
+  ipcMain.on("window:panel-visibility", (_event, visible: boolean, height?: number, needsAction?: boolean) => setPanelVisibility(Boolean(visible), typeof height === "number" ? height : undefined, Boolean(needsAction)));
   ipcMain.on("window:focus-agent", (_event, hint: { agent?: unknown; project?: unknown; originPid?: unknown }) => {
     focusAgentWindow({
       agent: String(hint?.agent || ""),

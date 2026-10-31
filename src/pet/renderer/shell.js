@@ -256,6 +256,7 @@ function renderSnapshot(next) {
 const PANEL_TOP_BAND = 8;
 const PANEL_BOTTOM_GAP = 20;
 let panelHeightSent = null;
+let panelNeedsActionSent = false;
 
 function panelFitHeight() {
   if (drawerOpen) return null;
@@ -273,10 +274,13 @@ function panelFitHeight() {
 function syncPanelVisibility() {
   const visible = drawerOpen || settingsOpen || completionOpen || !elements.interaction.hidden;
   const height = visible ? panelFitHeight() : null;
-  if (panelVisible === visible && panelHeightSent === height) return;
+  // 要他点的（询问／权限）露着没有：桌宠藏着时只为这个亮出来
+  const needsAction = !elements.interaction.hidden;
+  if (panelVisible === visible && panelHeightSent === height && panelNeedsActionSent === needsAction) return;
   panelVisible = visible;
   panelHeightSent = height;
-  window.agentPet.setPanelVisibility(visible, height ?? undefined);
+  panelNeedsActionSent = needsAction;
+  window.agentPet.setPanelVisibility(visible, height ?? undefined, needsAction);
 }
 
 function activateTab(name) {

@@ -68,7 +68,10 @@ document.addEventListener("pointerdown", (event) => {
   petMenu.hidden = true;
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") petMenu.hidden = true;
+  if (event.key !== "Escape") return;
+  petMenu.hidden = true;
+  // Esc 跟询问／权限面板的「关闭」一个效果（2026-10-31 他要的）；输入法选字时的 Esc 不算
+  if (!elements.interaction.hidden && !event.isComposing) dismissInteraction();
 });
 // 滚轮缩放也一并挡掉，跟 Ctrl +/- 一个道理
  document.addEventListener("wheel", (event) => { if (event.ctrlKey) event.preventDefault(); }, { passive: false });
@@ -119,6 +122,17 @@ document.querySelector("#simulate-button").addEventListener("click", () => windo
 document.querySelector("#interaction-top-close").addEventListener("click", dismissInteraction);
 document.querySelector("#interaction-bottom-close").addEventListener("click", dismissInteraction);
 elements.interactionConfirm.addEventListener("click", submitInteraction);
+// 双击弹窗空白处＝关闭；双击选项、输入框、按钮不算（免得选字、点选项时误关）（2026-10-31 他要的）
+elements.interaction.addEventListener("dblclick", (event) => {
+  if (event.target instanceof Element && event.target.closest("input, textarea, label, button, select, a")) return;
+  dismissInteraction();
+});
+// Enter 跟「确认」一个效果；Shift+Enter 在输入框里换行；输入法还在选字时的 Enter 不算（2026-10-31 他要的）
+elements.interactionPrompts.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  submitInteraction();
+});
 elements.sessionList.addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("[data-open-interaction]") : null;
   if (!button) return;

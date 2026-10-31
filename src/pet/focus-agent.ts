@@ -75,6 +75,7 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
   const originPid = Number(hint.originPid) > 0 ? Math.floor(Number(hint.originPid)) : 0;
   const script = [
     "$ErrorActionPreference = 'SilentlyContinue'",
+    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
     "Add-Type -TypeDefinition @'",
     "using System;",
     "using System.Runtime.InteropServices;",
@@ -82,6 +83,7 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
     "  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);",
     "  [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);",
     "  [DllImport(\"user32.dll\")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);",
     "  [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);",
     "  [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);",
@@ -107,6 +109,13 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "if ($project -and $project.Length -ge 2) { $needles += $project }",
     "function Activate-Handle([IntPtr]$hwnd, [string]$label) {",
     "  if ($hwnd -eq [IntPtr]::Zero) { return }",
+    // Windows Terminal 开的命令行：进程自己只有一个 0×0 的隐形控制台窗口，它的主人才是看得见的终端窗口（2026-10-31 实机：切到隐形窗＝没反应）
+    "  $owner = [AgentPetFocus]::GetAncestor($hwnd, 3)",
+    "  if ($owner -ne [IntPtr]::Zero -and $owner -ne $hwnd) {",
+    "    $osb = New-Object System.Text.StringBuilder 512",
+    "    [void][AgentPetFocus]::GetWindowText($owner, $osb, 512)",
+    "    $hwnd = $owner; $label = $label + ' -> 终端窗口 ' + $osb.ToString()",
+    "  }",
     "  if ([AgentPetFocus]::IsIconic($hwnd)) { [void][AgentPetFocus]::ShowWindow($hwnd, 9) }",
     "  [AgentPetFocus]::SwitchToThisWindow($hwnd, $true)",
     "  [void][AgentPetFocus]::SetForegroundWindow($hwnd)",

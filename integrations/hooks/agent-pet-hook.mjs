@@ -13,6 +13,9 @@ const PROTOCOL_VERSION = 1;
 const ALLOW_WORDS = new Set(["yes", "y", "ok", "okay", "是", "好", "行", "可以", "允许", "同意", "确认", "准", "放行"]);
 const ALWAYS_WORDS = new Set(["always", "一直允许", "以后都允许", "不再问", "都允许"]);
 const REJECT_WORDS = new Set(["no", "n", "deny", "reject", "不", "拒绝", "不准", "不行"]);
+const ALLOW_PREFIXES = ["好", "行", "可以", "允许", "同意", "确认", "放行", "没问题", "嗯", "ok", "yes"];
+// 带这些就是有条件、有转折，不能当同意：原话交给 Claude 自己看
+const TURN_WORDS = /不|别|但|先等|等等|等一下|停|拒|no|don'?t|but|wait/;
 // ═══ 什么算"大权限"：命中这张表的，桌宠弹窗不给「以后都允许」，每次都问 ═══
 // 标准：碰 Windows 系统那一摊、改网络配置、不可逆、或者往外发。
 // 2026-10-31 起 Claude 终端里要你确认的一律弹桌宠（他：每次回窗口点太浪费时间），这张表只管能不能记住。
@@ -58,6 +61,7 @@ if (argv[0] === "--self-test") {
 }
 
 const [agentArg = "generic", hookArg = "context.updated"] = argv;
+let leftNote = ""; // 桌宠「自己输入」里写的、不是同意／拒绝的那段话
 
 // 桌宠没起来就别耗着——照 app 自带原版的做法：连不上，静默走人，零输出。
 // 不加这行的话 publish() 会硬撑重试，然后 failOpen 吐一段 CC 不认的 JSON，
@@ -395,7 +399,9 @@ function decideFromClaim(claim) {
   if (option === "reject") return "reject";
   if (ALWAYS_WORDS.has(text)) return "always";
   if (ALLOW_WORDS.has(text)) return "allow";
-  if (REJECT_WORDS.has(text) || text) return "reject";
+  if (REJECT_WORDS.has(text)) return "reject";
+  // 他是语音输入，很少只说一个字：「好，没问题」开头是同意词、后面没转折，也算同意（2026-10-31）
+  if (ALLOW_PREFIXES.some((word) => text.startsWith(word)) && !TURN_WORDS.test(text)) return "allow";
   return "reject";
 }
 
@@ -432,8 +438,9 @@ function writeHookDecision(agent, decision, input = {}) {
   if (decision === "timeout") return;
   const hook = String(hookArg || "").toLowerCase();
   const permissionDecision = decision === "reject" ? "deny" : "allow";
+  // 自己输入的话不是同意／拒绝那几个词：当没批准，但原话交给 Claude 看（弹窗上写着「按你的原话交回 Agent」）
   const reason = decision === "reject"
-    ? "用户在桌宠上拒绝了这次操作"
+    ? (leftNote ? `用户在桌宠上没批准，留了话：「${leftNote}」` : "用户在桌宠上拒绝了这次操作")
     : "用户在桌宠上放行了这次操作";
 
   if (hook.includes("pretooluse")) {
@@ -748,6 +755,8 @@ async function gateThroughPet(agent, hook, input) {
       continue;
     }
     const decision = decideFromClaim(claim);
+    const note = String(claim.answers?.[0]?.customText || "").trim();
+    if (decision === "reject" && note && !REJECT_WORDS.has(normalizeDecisionText(note))) leftNote = clean(note, 2_000) || "";
     try {
       await sendRequest("interaction.response.complete", {
         responseId: claim.responseId,
@@ -812,6 +821,10 @@ function runSelfTest() {
     [{ answers: [{ optionIds: [], customText: "always" }] }, "always"],
     [{ answers: [{ optionIds: [], customText: "no" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "随便写点" }] }, "reject"],
+    [{ answers: [{ optionIds: [], customText: "好，没问题测试过Enter了。" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "好的但是先别推" }] }, "reject"],
+    [{ answers: [{ optionIds: [], customText: "好不好再说" }] }, "reject"],
+    [{ answers: [{ optionIds: [], customText: "我试试" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "" }] }, "reject"],
   ];
   let ok = true;
