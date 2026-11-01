@@ -126,7 +126,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await click(win, "#interaction-confirm");
     await hidden(win, "#interaction-panel");
 
-    const bottomClose = makePermissionEvent("bottom-close-session", "bottom-close-request");
+    const bottomClose = makeQuestionEvent("bottom-close-session", "bottom-close-request");
     hub.publish(bottomClose);
     await interactionVisible(win, bottomClose.eventId);
     await click(win, "#interaction-bottom-close");
@@ -159,8 +159,8 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     // 面板窗口高度跟着内容走：内容装得下就不该再出滚动条，也不该长到 740 满高（2026-10-01 用户嫌挡东西）
     await waitFor(() => evaluate<boolean>(win, "(() => { const s = document.querySelector('#interaction-panel .interaction-scroll'); return s.scrollHeight <= s.clientHeight + 2; })()"), 1_500, "权限面板内容没装下——窗口高度没跟着内容走");
     assert.ok(win.getBounds().height < 740, `权限面板窗口还是满高 ${win.getBounds().height}`);
+    // 单题权限改成一排真按钮：点一下直接算确定，省掉底部确认二段操作（2026-11-01）
     await click(win, "[data-prompt-id='permission'] input[value='once']");
-    await click(win, "#interaction-confirm");
     await waitForRenderer(win, "document.querySelector('#interaction-panel').hidden");
     const permissionResponse = context.getLastInteractionResponse();
     assert.equal(permissionResponse?.eventId, permission.eventId);
@@ -327,6 +327,26 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     await delay(150);
     await hidden(win, "#completion-panel");
 
+    // 纯提示窗（2026-11-01 新增）：无底部按钮，不占 Agent 会话，默认 6 秒自动关，悬停暂停，移开 1.5 秒关，点一下秒关
+    const sessionCountBeforeNotice = hub.snapshot().sessions.length;
+    hub.publishNotice({
+      source: "两套系统同步",
+      title: "两边配置已对齐",
+      body: "已把最新配置同步好。",
+      durationMs: 6000,
+    });
+    await visible(win, "#notice-panel");
+    assert.equal(hub.snapshot().sessions.length, sessionCountBeforeNotice, "纯提示窗不许占用 Agent 会话座位");
+    await rendererAssert(win, "document.querySelectorAll('#notice-panel button').length === 0", "纯提示窗不许有任何按钮");
+    await rendererAssert(win, "document.querySelector('#notice-badge').textContent.includes('秒自动关')", "纯提示窗初始未显示自动关闭倒计时");
+    await delay(200);
+    await evaluate(win, "document.querySelector('#notice-panel').dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))");
+    await rendererAssert(win, "document.querySelector('#notice-badge').textContent === '已暂停 · 移开自动关'", "鼠标移入纯提示窗未暂停倒计时");
+    await evaluate(win, "document.querySelector('#notice-panel').dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))");
+    await rendererAssert(win, "document.querySelector('#notice-badge').textContent.includes('秒自动关')", "鼠标移出纯提示窗未恢复倒计时");
+    await click(win, "#notice-panel");
+    await hidden(win, "#notice-panel");
+
     const report = {
       version: context.version,
       fixedButtonsClicked: 14,
@@ -350,9 +370,8 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
   }
 }
 
-function makeQuestionEvent(): AgentEvent {
-  const requestId = "controls-question-request";
-  return makeEvent("question.asked", "controls-question-session", {
+function makeQuestionEvent(sessionId = "controls-question-session", requestId = "controls-question-request"): AgentEvent {
+  return makeEvent("question.asked", sessionId, {
     summary: "Controls multi-prompt question",
     requestId,
     interaction: interaction("question", requestId, true, [

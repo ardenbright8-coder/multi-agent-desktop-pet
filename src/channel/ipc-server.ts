@@ -126,6 +126,8 @@ export class LocalIpcServer {
         return okResponse(request.id, { healthy: true, ownerPid: process.pid, protocolVersion: PROTOCOL_VERSION });
       case "event.publish":
         return okResponse(request.id, this.hub.publish(request.params));
+      case "notice.publish":
+        return okResponse(request.id, this.hub.publishNotice(request.params));
       case "snapshot.get":
         return okResponse(request.id, this.hub.snapshot());
       case "search.query":

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import type {
   AgentEvent,
   DiagnosticsSnapshot,
@@ -6,6 +7,7 @@ import type {
   InteractionResponseClaim,
   InteractionResponseInput,
   InteractionSubmitResult,
+  NoticePayload,
   SearchHit,
   SearchQuery,
 } from "../shared/protocol";
@@ -35,6 +37,7 @@ export class AgentHub extends EventEmitter {
   private readonly integrationSeenAt = new Map<string, number>();
   private lastAcceptedAt: number | null = null;
   private lastAgent: string | null = null;
+  private latestNotice: NoticePayload | undefined;
   private serverInfo: HubServerInfo;
   private readonly interactionBroker: InteractionBroker;
 
@@ -117,8 +120,35 @@ export class AgentHub extends EventEmitter {
     return { accepted: true, status: "accepted", eventId: event.eventId, sequence: event.sequence };
   }
 
+  publishNotice(raw: unknown): { accepted: boolean; noticeId?: string } {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { accepted: false };
+    const value = raw as Record<string, unknown>;
+    const title = typeof value.title === "string" ? value.title.trim().slice(0, 300) : "";
+    const body = typeof value.body === "string" ? value.body.trim().slice(0, 2_000) : "";
+    if (!title && !body) return { accepted: false };
+    const source = typeof value.source === "string" && value.source.trim() ? value.source.trim().slice(0, 100) : "系统提示";
+    const rawDuration = Number(value.durationMs);
+    const durationMs = Number.isFinite(rawDuration) && rawDuration >= 1_000 ? Math.min(30_000, Math.round(rawDuration)) : 6_000;
+    const notice: NoticePayload = {
+      noticeId: typeof value.noticeId === "string" && value.noticeId.trim() ? value.noticeId.trim().slice(0, 120) : randomUUID(),
+      source,
+      title: title || "系统提示",
+      body,
+      durationMs,
+      emittedAt: Date.now(),
+    };
+    this.latestNotice = notice;
+    log.记(`收到纯提示窗 source=${notice.source} title=${notice.title}`, "notice");
+    this.emit("snapshot", this.snapshot());
+    return { accepted: true, noticeId: notice.noticeId };
+  }
+
   snapshot(): HubSnapshot {
-    return this.sessions.snapshot(this.journal.count);
+    const base = this.sessions.snapshot(this.journal.count);
+    const activeNotice = this.latestNotice && Date.now() - this.latestNotice.emittedAt < this.latestNotice.durationMs + 4_000
+      ? this.latestNotice
+      : undefined;
+    return activeNotice ? { ...base, notice: activeNotice } : base;
   }
 
   search(query: SearchQuery): SearchHit[] {

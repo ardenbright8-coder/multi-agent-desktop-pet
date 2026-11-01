@@ -240,11 +240,14 @@ body:has(.settings-panel:not([hidden])) .scene-frame,
 body:has(.settings-panel:not([hidden])) .agent-seats,
 body:has(.completion-panel:not([hidden])) .scene-frame,
 body:has(.completion-panel:not([hidden])) .agent-seats,
+body:has(.notice-panel:not([hidden])) .scene-frame,
+body:has(.notice-panel:not([hidden])) .agent-seats,
 /* 面板弹出时幼苗一起让位（画框退场，幼苗也不挡面板正文） */
 body:has(.interaction-panel:not([hidden])) .pet,
 body:has(.drawer:not([hidden])) .pet,
 body:has(.settings-panel:not([hidden])) .pet,
-body:has(.completion-panel:not([hidden])) .pet { display: none; }
+body:has(.completion-panel:not([hidden])) .pet,
+body:has(.notice-panel:not([hidden])) .pet { display: none; }
 
 /* 幼苗顶部对齐窗口顶（不是底部对齐）：
    ① 100% 时幼苗离窗口顶只有 8px，能真正贴到屏幕最上边；
@@ -602,68 +605,158 @@ body[data-pet-pose="review"] .arm-left { transform: rotate(-24deg) translate(7px
    用户 2026-08-12 明确要求：不管哪个框弹出来，都不许把宠物完全遮住，
    否则弹了框就没法拖、没法右键。 */
 .interaction-panel {
-  right: 20px;
+  right: 12px;
   top: var(--pet-band);
   bottom: 20px;
-  width: 400px;
+  width: 372px;
   display: flex;
   flex-direction: column;
-  animation: ticket-in 320ms cubic-bezier(0.16,1,0.3,1) both;
+  border-radius: 12px;
+  animation: ticket-in 240ms cubic-bezier(0.16,1,0.3,1) both;
 }
-.interaction-header { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; padding: 15px 18px 9px; }
-.interaction-identity { display: flex; align-items: center; gap: 8px; color: var(--success); font-size: 11px; font-weight: 720; }
-.type-badge { padding: 3px 7px; border: 1px solid rgba(143,219,120,0.34); border-radius: 999px; color: var(--success); font-size: 10px; font-weight: 600; }
-.type-badge.permission { border-color: rgba(242,200,75,0.42); color: var(--accent); }
+.interaction-header {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px 6px;
+  cursor: grab;
+}
+.interaction-header:active { cursor: grabbing; }
+.interaction-identity { display: flex; align-items: center; gap: 6px; color: var(--success); font-size: 12px; font-weight: 720; }
+.interaction-header-right { position: relative; display: flex; align-items: center; gap: 4px; }
+.type-badge { padding: 2px 7px; border: 1px solid rgba(143,219,120,0.34); border-radius: 6px; color: var(--success); font-size: 10.5px; font-weight: 680; }
+.type-badge.permission { border-color: rgba(242,200,75,0.42); background: rgba(242,200,75,0.12); color: var(--accent); }
+.queue-badge { padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #dbe5d8; font-size: 10.5px; font-weight: 700; }
 /* 完成弹窗：跟权限/询问一个壳，绿色强调「干完了」。 */
-.completion-badge { border-color: rgba(143,219,120,0.5); background: rgba(143,219,120,0.12); }
+.completion-badge { border-color: rgba(143,219,120,0.5); background: rgba(143,219,120,0.14); }
 .completion-panel h1 { color: var(--sprout-light); }
-.completion-panel .interaction-explanation { font-size: 15px; line-height: 1.7; }
-.completion-actions { grid-template-columns: 0.72fr 1.28fr; }
-.icon-button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--paper-muted); font-size: 21px; line-height: 1; cursor: pointer; }
-.icon-button:hover { color: var(--paper); background: rgba(255,255,255,0.05); }
-.interaction-scroll { min-height: 0; flex: 1 1 auto; padding: 0 18px 14px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--ink-soft) transparent; }
-.interaction-panel h1 { margin: 3px 0 11px; font-size: 23px; line-height: 1.25; letter-spacing: -0.025em; }
-.interaction-explanation { margin: 0; color: var(--paper-muted); font-size: 15px; line-height: 1.7; user-select: text; }
-.interaction-prompts { display: grid; gap: 16px; margin-top: 17px; }
-.interaction-prompt { display: grid; gap: 7px; margin: 0; padding: 13px 0 0; border: 0; border-top: 1px solid var(--line); }
-.interaction-prompt legend { width: 100%; padding: 0 0 3px; color: var(--paper); font-size: 15px; font-weight: 650; line-height: 1.5; user-select: text; }
-.interaction-option { display: grid; grid-template-columns: 17px 1fr; gap: 9px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,0.035); cursor: pointer; }
-.interaction-option:hover { border-color: rgba(143,219,120,0.46); }
-.interaction-option:has(input:checked) { border-color: var(--success); background: rgba(143,219,120,0.10); }
+.completion-panel .interaction-explanation { font-size: 13px; line-height: 1.5; }
+.completion-actions { grid-template-columns: 0.72fr 1.28fr; padding: 8px 14px 12px; }
+/* 纯提示窗（2026-11-01 新增）：同款外壳、无底部按钮、6 秒自动消。 */
+.notice-badge { border-color: rgba(143,219,120,0.5); background: rgba(143,219,120,0.14); }
+.notice-panel h1 { color: var(--sprout-light); }
+.notice-panel .interaction-scroll { padding-bottom: 14px; }
+.notice-panel .interaction-explanation { font-size: 13.5px; line-height: 1.58; white-space: pre-line; max-height: 260px; }
+.icon-button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: rgba(255,255,255,0.05); color: var(--paper-muted); font-size: 16px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.icon-button:hover { color: var(--paper); background: rgba(255,255,255,0.12); }
+.help-button { font-size: 12px; font-weight: 700; }
+.help-popover {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  z-index: 30;
+  width: 196px;
+  padding: 8px 10px;
+  border: 1px solid rgba(143,219,120,0.32);
+  border-radius: 8px;
+  background: rgba(12, 22, 16, 0.98);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.45);
+  color: #e4ece2;
+  font-size: 11px;
+  line-height: 1.65;
+}
+.help-popover b { color: var(--sprout-light); font-weight: 700; }
+.interaction-scroll { min-height: 0; flex: 1 1 auto; padding: 0 14px 12px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: var(--ink-soft) transparent; }
+.interaction-panel h1 { margin: 2px 0 7px; font-size: 15px; font-weight: 740; line-height: 1.32; letter-spacing: -0.01em; }
+.interaction-explanation {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #e4ece2;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 86px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  user-select: text;
+  word-break: break-word;
+}
+.interaction-prompts { display: grid; gap: 10px; margin-top: 9px; }
+.interaction-prompt { display: grid; gap: 6px; margin: 0; padding: 8px 0 0; border: 0; border-top: 1px solid var(--line); }
+.direct-single .interaction-prompt { padding: 0; border-top: 0; gap: 7px; }
+.direct-single .interaction-prompt legend { display: none; }
+.interaction-prompt legend { width: 100%; padding: 0 0 2px; color: var(--paper); font-size: 13px; font-weight: 650; line-height: 1.4; user-select: text; }
+.interaction-options-row { display: flex; gap: 7px; align-items: stretch; }
+.interaction-option { display: grid; grid-template-columns: 16px 1fr; gap: 8px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,0.04); cursor: pointer; position: relative; }
+.interaction-option:hover { border-color: rgba(143,219,120,0.52); }
+.interaction-option:has(input:checked) { border-color: var(--success); background: rgba(143,219,120,0.12); }
 .interaction-option input { align-self: start; margin: 2px 0 0; accent-color: var(--success); }
+.interaction-option.pill-option {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 8px;
+  border-radius: 7px;
+  text-align: center;
+  transition: transform 110ms ease-out, filter 110ms ease-out, border-color 110ms ease-out;
+}
+.interaction-option.pill-option:hover { filter: brightness(1.07); }
+.interaction-option.pill-option:active { transform: scale(0.97); }
+.interaction-option.pill-option input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+.interaction-option.pill-option.recommended {
+  background: var(--sprout-light);
+  border-color: transparent;
+}
+.interaction-option.pill-option.recommended strong { color: var(--forest); font-weight: 760; }
+.interaction-option.pill-option.danger {
+  border-color: rgba(237, 128, 101, 0.34);
+  background: rgba(237, 128, 101, 0.08);
+}
+.interaction-option.pill-option.danger strong { color: #ffbfb0; }
 .interaction-option span, .interaction-option strong, .interaction-option em { display: block; min-width: 0; }
-.interaction-option strong { color: var(--paper); font-size: 15px; line-height: 1.5; }
-.interaction-option strong small { display: inline-block; margin-left: 7px; padding: 1px 5px; border-radius: 999px; background: rgba(143,219,120,0.13); color: var(--success); font-size: 9px; font-weight: 650; }
-.interaction-option em { margin-top: 3px; color: var(--paper-muted); font-size: 13px; font-style: normal; line-height: 1.45; }
-.interaction-prompt textarea { width: 100%; min-height: 72px; padding: 10px 11px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; outline: none; background: rgba(255,255,255,0.045); color: var(--paper); font: inherit; font-size: 14px; line-height: 1.55; user-select: text; }
-.interaction-prompt textarea:focus { border-color: rgba(143,219,120,0.72); box-shadow: 0 0 0 3px rgba(143,219,120,0.12); }
-.interaction-fallback { margin: 15px 0 0; padding: 11px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
+.interaction-option strong { color: var(--paper); font-size: 13px; line-height: 1.35; }
+.interaction-option strong small { display: inline-block; margin-left: 5px; padding: 1px 5px; border-radius: 999px; background: rgba(143,219,120,0.13); color: var(--success); font-size: 9px; font-weight: 650; }
+.interaction-option em { margin-top: 2px; color: var(--paper-muted); font-size: 11.5px; font-style: normal; line-height: 1.4; }
+.interaction-prompt textarea { width: 100%; min-height: 54px; padding: 7px 9px; resize: vertical; border: 1px solid var(--line); border-radius: 7px; outline: none; background: rgba(8,14,10,0.72); color: var(--paper); font: inherit; font-size: 12.5px; line-height: 1.45; user-select: text; }
+.interaction-prompt textarea.compact-custom-input {
+  min-height: 32px;
+  height: 32px;
+  max-height: 108px;
+  padding: 6px 9px;
+  resize: none;
+  overflow-y: auto;
+}
+.interaction-prompt textarea:focus { border-color: rgba(143,219,120,0.72); box-shadow: 0 0 0 2px rgba(143,219,120,0.12); }
+.interaction-fallback { margin: 8px 0 0; padding: 7px 9px; border-radius: 7px; font-size: 12px; line-height: 1.45; }
 /* 🚨 错误提示钉在按钮上方的固定区，绝不能塞进滚动正文里——
    塞进去就会被滚出视野，用户点确认看不到任何反馈，只会觉得「按钮是死的」
    （2026-08-12 实机踩到）。 */
-.interaction-error { flex: 0 0 auto; margin: 0 18px 10px; padding: 11px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; }
+.interaction-error { flex: 0 0 auto; margin: 0 14px 8px; padding: 7px 9px; border-radius: 7px; font-size: 12px; line-height: 1.45; }
 .interaction-fallback { border: 1px solid rgba(242,200,75,0.35); background: rgba(242,200,75,0.08); color: var(--accent); }
 .interaction-error { border: 1px solid rgba(237,128,101,0.38); background: rgba(237,128,101,0.09); color: #ffae9a; }
-.interaction-actions { flex: 0 0 auto; display: grid; grid-template-columns: 0.72fr 1.28fr; gap: 8px; padding: 12px 18px 17px; border-top: 1px solid var(--line); background: rgba(15,28,21,0.98); border-radius: 0 0 6px 16px; }
+.interaction-actions { flex: 0 0 auto; display: grid; grid-template-columns: 0.72fr 1.28fr; gap: 7px; padding: 8px 14px 12px; border-top: 1px solid var(--line); background: rgba(15,28,21,0.98); border-radius: 0 0 12px 12px; }
 .interaction-actions .primary-button { margin-top: 0; }
 .interaction-actions button:disabled { cursor: not-allowed; filter: saturate(0.25); opacity: 0.62; }
 
 .primary-button, .secondary-button {
   width: 100%;
-  border-radius: 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
   cursor: pointer;
   transition: transform 150ms ease-out, filter 150ms ease-out;
 }
-.primary-button { margin-top: 14px; padding: 11px 14px; border: 0; background: var(--sprout-light); color: var(--forest); font-weight: 760; }
-.secondary-button { padding: 9px 12px; border: 1px solid var(--line); background: transparent; color: var(--paper); }
+.primary-button { margin-top: 10px; padding: 8px 12px; border: 0; background: var(--sprout-light); color: var(--forest); font-weight: 760; }
+.secondary-button { padding: 7px 10px; border: 1px solid var(--line); background: transparent; color: var(--paper); }
 .primary-button:hover, .secondary-button:hover { filter: brightness(1.08); }
 .primary-button:active, .secondary-button:active { transform: scale(0.98); }
 
 .drawer {
-  right: 20px;
+  right: 12px;
   top: var(--pet-band);
   bottom: 20px;
-  width: 400px;
+  width: 372px;
   padding: 18px;
   animation: drawer-in 280ms cubic-bezier(0.16,1,0.3,1) both;
 }

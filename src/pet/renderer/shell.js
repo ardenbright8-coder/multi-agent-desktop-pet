@@ -18,6 +18,11 @@ const elements = {
   completionAgent: document.querySelector("#completion-agent"),
   completionHeading: document.querySelector("#completion-heading"),
   completionExplanation: document.querySelector("#completion-explanation"),
+  noticePanel: document.querySelector("#notice-panel"),
+  noticeSource: document.querySelector("#notice-source"),
+  noticeBadge: document.querySelector("#notice-badge"),
+  noticeHeading: document.querySelector("#notice-heading"),
+  noticeExplanation: document.querySelector("#notice-explanation"),
   agentSeats: document.querySelector("#agent-seats"),
   sessionList: document.querySelector("#session-list"),
   searchInput: document.querySelector("#search-input"),
@@ -33,6 +38,7 @@ const labels = {
   hermes: "Hermes",
   grok: "Grok",
   codex: "Codex",
+  antigravity: "Antigravity",
   simulator: "模拟 Agent",
 };
 
@@ -80,14 +86,28 @@ const dismissedInteractions = new Set();
 let completionOpen = false;
 let completionTarget = null;
 let completionHydrated = false;
+let queuedCompletion = null;
 const lastSessionState = new Map();
+let noticeOpen = false;
+let noticeHovered = false;
+let noticeOpenedAt = 0;
+let noticeEndAt = 0;
+let noticeCloseTimer = null;
+let noticeTickTimer = null;
+let lastSeenNoticeId = null;
 
 // 完成弹窗：只有某个会话「新进入 done」才弹。
 // 以前用 lead 身份变化判断——已经点掉的完成会话一回到队首就再弹一次，看着像乱弹。
 function showCompletion(session) {
-  if (drawerOpen) closeDrawer();
-  if (settingsOpen) closeSettings(false);
-  elements.interaction.hidden = true;
+  const hasActivePending = Boolean(
+    activeInteractionEventId
+    || snapshot.sessions?.some((item) => item.pendingInteraction && !dismissedInteractions.has(item.pendingInteraction.eventId)),
+  );
+  if (hasActivePending) {
+    queuedCompletion = session;
+    return;
+  }
+  openPanel("completion");
   const agentName = labels[session?.agent] || session?.agent || "Agent";
   elements.completionAgent.textContent = agentName;
   elements.completionHeading.textContent = "任务完成了";
@@ -96,6 +116,100 @@ function showCompletion(session) {
   elements.completionPanel.hidden = false;
   completionOpen = true;
   syncPanelVisibility();
+}
+
+// 纯提示窗（2026-11-01 新增）：无底部按钮，只供查看。
+// 不碰它 6 秒自动关；鼠标放上去立刻暂停倒计时；鼠标移开 1.5 秒自动关；点一下当场秒关。
+function clearNoticeTimers() {
+  if (noticeCloseTimer) {
+    clearTimeout(noticeCloseTimer);
+    noticeCloseTimer = null;
+  }
+  if (noticeTickTimer) {
+    clearInterval(noticeTickTimer);
+    noticeTickTimer = null;
+  }
+}
+
+function startNoticeCountdown(ms) {
+  clearNoticeTimers();
+  noticeEndAt = Date.now() + ms;
+  const updateBadge = () => {
+    if (noticeHovered) {
+      elements.noticeBadge.textContent = "已暂停 · 移开自动关";
+      return;
+    }
+    const remainSec = Math.max(1, Math.ceil((noticeEndAt - Date.now()) / 1000));
+    elements.noticeBadge.textContent = `${remainSec}秒自动关`;
+  };
+  updateBadge();
+  noticeTickTimer = setInterval(updateBadge, 250);
+  noticeCloseTimer = setTimeout(() => {
+    closeNotice();
+  }, ms);
+}
+
+function pauseNoticeOnHover() {
+  if (!noticeOpen || noticeHovered) return;
+  // 刚弹出来 150ms 内如果鼠标本来就停在半空没动，不算主动移上去
+  if (Date.now() - noticeOpenedAt < 150) return;
+  noticeHovered = true;
+  clearNoticeTimers();
+  if (elements.noticeBadge) {
+    elements.noticeBadge.textContent = "已暂停 · 移开自动关";
+  }
+}
+
+function resumeNoticeOnLeave() {
+  if (!noticeOpen || !noticeHovered) return;
+  noticeHovered = false;
+  startNoticeCountdown(1500);
+}
+
+function showNotice(notice) {
+  if (!notice || !elements.noticePanel) return;
+  const hasActivePending = Boolean(
+    activeInteractionEventId
+    || snapshot.sessions?.some((item) => item.pendingInteraction && !dismissedInteractions.has(item.pendingInteraction.eventId)),
+  );
+  if (hasActivePending) return;
+  clearNoticeTimers();
+  openPanel("notice");
+  const durationMs = Number(notice.durationMs) >= 1000 ? Number(notice.durationMs) : 6000;
+  noticeHovered = false;
+  noticeOpenedAt = Date.now();
+  elements.noticeSource.textContent = notice.source || "系统提示";
+  elements.noticeHeading.textContent = notice.title || "系统提示";
+  elements.noticeExplanation.textContent = notice.body || "";
+  elements.noticePanel.hidden = false;
+  noticeOpen = true;
+  syncPanelVisibility();
+  startNoticeCountdown(durationMs);
+}
+
+function closeNotice() {
+  clearNoticeTimers();
+  noticeHovered = false;
+  if (!noticeOpen) return;
+  noticeOpen = false;
+  if (elements.noticePanel) elements.noticePanel.hidden = true;
+  syncPanelVisibility();
+}
+
+function noteNoticeTransitions(next) {
+  const notice = next?.notice;
+  if (!notice || !notice.noticeId) return;
+  if (notice.noticeId === lastSeenNoticeId) return;
+  lastSeenNoticeId = notice.noticeId;
+  if (Date.now() - (notice.emittedAt || 0) > (notice.durationMs || 6000) + 4000) return;
+  showNotice(notice);
+}
+
+function flushQueuedCompletion() {
+  if (!queuedCompletion || !elements.interaction.hidden) return;
+  const next = queuedCompletion;
+  queuedCompletion = null;
+  showCompletion(next);
 }
 
 function closeCompletion() {
@@ -141,6 +255,7 @@ function openPanel(which) {
   if (which !== "drawer" && drawerOpen) closeDrawer();
   if (which !== "settings" && settingsOpen) closeSettings(false);
   if (which !== "completion" && completionOpen) closeCompletion();
+  if (which !== "notice" && noticeOpen) closeNotice();
   if (which !== "interaction" && !elements.interaction.hidden) elements.interaction.hidden = true;
   syncPanelVisibility();
 }
@@ -242,6 +357,7 @@ function renderSnapshot(next) {
     celebrationTimer = null;
   }
   noteCompletionTransitions(next.sessions);
+  noteNoticeTransitions(next);
   if (!celebrationTimer) updatePetPose();
   renderSessions(next.sessions);
   renderSeats(next.sessions);
@@ -261,7 +377,13 @@ let panelNeedsActionSent = false;
 function panelFitHeight() {
   if (drawerOpen) return null;
   if (settingsOpen) return Math.ceil(elements.settings.offsetHeight + PANEL_TOP_BAND + PANEL_BOTTOM_GAP);
-  const panel = !elements.interaction.hidden ? elements.interaction : completionOpen ? elements.completionPanel : null;
+  const panel = !elements.interaction.hidden
+    ? elements.interaction
+    : completionOpen
+      ? elements.completionPanel
+      : noticeOpen
+        ? elements.noticePanel
+        : null;
   if (!panel) return null;
   let height = 2; // 面板上下边框
   for (const child of panel.children) {
@@ -272,10 +394,10 @@ function panelFitHeight() {
 }
 
 function syncPanelVisibility() {
-  const visible = drawerOpen || settingsOpen || completionOpen || !elements.interaction.hidden;
+  const visible = drawerOpen || settingsOpen || completionOpen || noticeOpen || !elements.interaction.hidden;
   const height = visible ? panelFitHeight() : null;
-  // 要他点的（询问／权限）露着没有：桌宠藏着时只为这个亮出来
-  const needsAction = !elements.interaction.hidden;
+  // 要他点的（询问／权限／完成／纯提示）露着没有：桌宠藏着时临时亮出来，点完或倒计时结束藏回去
+  const needsAction = !elements.interaction.hidden || completionOpen || noticeOpen;
   if (panelVisible === visible && panelHeightSent === height && panelNeedsActionSent === needsAction) return;
   panelVisible = visible;
   panelHeightSent = height;

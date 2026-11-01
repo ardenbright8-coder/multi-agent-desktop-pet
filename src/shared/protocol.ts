@@ -139,12 +139,22 @@ export interface InteractionResponseClaim extends InteractionResponseInput {
   claimToken: string;
 }
 
+export interface NoticePayload {
+  noticeId: string;
+  source: string;
+  title: string;
+  body: string;
+  durationMs: number;
+  emittedAt: number;
+}
+
 export interface HubSnapshot {
   generatedAt: number;
   sessions: SessionSnapshot[];
   activeCount: number;
   topState: SessionSnapshot["state"];
   eventCount: number;
+  notice?: NoticePayload;
 }
 
 export interface SearchQuery {
@@ -197,6 +207,7 @@ export interface RpcRequest {
   method:
     | "hello"
     | "event.publish"
+    | "notice.publish"
     | "snapshot.get"
     | "search.query"
     | "diagnostics.get"

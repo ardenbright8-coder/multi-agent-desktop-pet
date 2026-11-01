@@ -61,17 +61,54 @@ petMenu.addEventListener("click", (event) => {
   else if (action === "overview") window.agentPet.openOverview();
   else if (action === "quit") window.agentPet.quitApp();
 });
-// 点菜单外面收起；Esc 收起
+// 点菜单外面收起；Esc 收起；数字键 1~3 / Enter 快捷操作
+const helpBtn = document.querySelector("#interaction-help-btn");
+const helpPopover = document.querySelector("#interaction-help-popover");
+if (helpBtn && helpPopover) {
+  helpBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    helpPopover.hidden = !helpPopover.hidden;
+  });
+}
 document.addEventListener("pointerdown", (event) => {
-  if (petMenu.hidden) return;
-  if (event.target instanceof Element && petMenu.contains(event.target)) return;
-  petMenu.hidden = true;
+  if (!petMenu.hidden && (!(event.target instanceof Element) || !petMenu.contains(event.target))) {
+    petMenu.hidden = true;
+  }
+  if (helpPopover && !helpPopover.hidden && (!(event.target instanceof Element) || (!helpPopover.contains(event.target) && !helpBtn?.contains(event.target)))) {
+    helpPopover.hidden = true;
+  }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  petMenu.hidden = true;
-  // Esc 跟询问／权限面板的「关闭」一个效果（2026-10-31 他要的）；输入法选字时的 Esc 不算
-  if (!elements.interaction.hidden && !event.isComposing) dismissInteraction();
+  if (event.isComposing || event.keyCode === 229) return;
+  if (event.key === "Escape") {
+    petMenu.hidden = true;
+    if (helpPopover && !helpPopover.hidden) {
+      helpPopover.hidden = true;
+      return;
+    }
+    // Esc 跟询问／权限／完成面板的「关闭」一个效果（2026-10-31 他要的）
+    if (!elements.interaction.hidden) dismissInteraction();
+    else if (completionOpen) closeCompletion();
+    else if (noticeOpen) closeNotice();
+    return;
+  }
+  const inTextField = event.target instanceof Element && Boolean(event.target.closest("textarea, input[type='text'], input[type='search']"));
+  if (!elements.interaction.hidden && !inTextField && ["1", "2", "3"].includes(event.key) && elements.interaction.classList.contains("direct-single")) {
+    const idx = Number(event.key) - 1;
+    const radios = [...elements.interactionPrompts.querySelectorAll("input[data-direct-option='1']")];
+    if (radios[idx]) {
+      event.preventDefault();
+      radios[idx].checked = true;
+      submitInteraction();
+    }
+    return;
+  }
+  if (event.key === "Enter" && !event.shiftKey) {
+    if (!elements.interaction.hidden && !inTextField) {
+      event.preventDefault();
+      submitInteraction();
+    }
+  }
 });
 // 滚轮缩放也一并挡掉，跟 Ctrl +/- 一个道理
  document.addEventListener("wheel", (event) => { if (event.ctrlKey) event.preventDefault(); }, { passive: false });
@@ -122,11 +159,58 @@ document.querySelector("#simulate-button").addEventListener("click", () => windo
 document.querySelector("#interaction-top-close").addEventListener("click", dismissInteraction);
 document.querySelector("#interaction-bottom-close").addEventListener("click", dismissInteraction);
 elements.interactionConfirm.addEventListener("click", submitInteraction);
+for (const header of document.querySelectorAll(".interaction-header")) {
+  header.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest("button, a, input, textarea, .help-popover")) return;
+    beginPetDrag(event, header);
+  });
+}
+// 单题权限按钮：点一下直接算确定（2026-11-01 他拍板省掉二段确认）
+elements.interactionPrompts.addEventListener("click", (event) => {
+  const input = event.target instanceof Element ? event.target.closest("input[data-direct-option='1']") : null;
+  if (!input) return;
+  input.checked = true;
+  submitInteraction();
+});
+// 自己输入单行框：字多了自动撑高并通知窗口跟着长
+elements.interactionPrompts.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLTextAreaElement) || !target.classList.contains("compact-custom-input")) return;
+  target.style.height = "auto";
+  target.style.height = `${Math.min(108, Math.max(32, target.scrollHeight))}px`;
+  syncPanelVisibility();
+});
 // 双击弹窗空白处＝关闭；双击选项、输入框、按钮不算（免得选字、点选项时误关）（2026-10-31 他要的）
 elements.interaction.addEventListener("dblclick", (event) => {
   if (event.target instanceof Element && event.target.closest("input, textarea, label, button, select, a")) return;
   dismissInteraction();
 });
+elements.completionPanel.addEventListener("dblclick", (event) => {
+  if (event.target instanceof Element && event.target.closest("input, textarea, label, button, select, a")) return;
+  closeCompletion();
+});
+// 纯提示窗专属交互（2026-11-01 他定的：只对这个纯提示窗生效，不影响 Agent 面板）：
+// 鼠标放上去立刻暂停倒计时，移开 1.5 秒自动收起，随手点一下左键当场秒关。
+if (elements.noticePanel) {
+  let noticeDownPos = null;
+  elements.noticePanel.addEventListener("mouseenter", () => pauseNoticeOnHover());
+  elements.noticePanel.addEventListener("mousemove", () => pauseNoticeOnHover());
+  elements.noticePanel.addEventListener("mouseleave", () => resumeNoticeOnLeave());
+  elements.noticePanel.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    pauseNoticeOnHover();
+    noticeDownPos = { x: event.screenX, y: event.screenY };
+  });
+  elements.noticePanel.addEventListener("click", (event) => {
+    if (noticeDownPos && Math.hypot(event.screenX - noticeDownPos.x, event.screenY - noticeDownPos.y) > 5) {
+      noticeDownPos = null;
+      return;
+    }
+    noticeDownPos = null;
+    closeNotice();
+  });
+}
 // Enter 跟「确认」一个效果；Shift+Enter 在输入框里换行；输入法还在选字时的 Enter 不算（2026-10-31 他要的）
 elements.interactionPrompts.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
