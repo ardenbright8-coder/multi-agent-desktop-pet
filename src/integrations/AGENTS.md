@@ -28,7 +28,7 @@ ensureGrokHooks()
 - 开机自启动的快捷方式带 `--skip-integration-install`，**启动时不会重写四家配置**。改这块要想清楚会不会破了这条。
   例外（2026-10-31）：钩子桥 `ensureGenericHookBridge()` 和 `ensureAgentHookPaths()` 每次启动都跑——只同步自己那份桥、只改各家配置里带 `agent-pet-hook.mjs` 的命令路径。
 - 🚨 钩子桥的位置只认 `hookBridgePath()`（桌宠数据夹 `\integrations\`，跟 `AGENT_PET_HUB_HOME` 走）。别再写 `%APPDATA%\AgentPetHub`：数据搬到 F 盘后 Claude、Grok、Hermes 就是因为这个一直跑 C 盘旧桥。
-- 🚨 **Antigravity（`~\.gemini\config\hooks.json`）的钩子命令只写裸路径**：`node F:/…/agent-pet-hook.mjs antigravity <事件>`。它按空格切命令、不去引号，路径一带引号就被当成文件名拼在 config 夹后面，PreToolUse 失败会把 Antigravity 所有工具调用拦死（2026-11-01 踩过）。路径带空格时 `ensureAntigravityHooks()` 宁可不挂。Claude Code、Grok 那边照旧带引号。
+- 🚨 **Antigravity（`~\.gemini\config\hooks.json`）的钩子命令只写裸路径，而且只指门卫**：`node C:/Users/<用户>/.gemini/config/agent-pet-hook-stub.mjs antigravity <事件>`。它按空格切命令、不去引号，路径一带引号就被当成文件名拼在 config 夹后面；PreToolUse 一失败就把 Antigravity 所有工具调用拦死（2026-11-01 踩过）。门卫找得到桌宠钩子就转交，找不到、加载出错就放行，所以数据夹挪走、桌宠删掉都不会锁死它。门卫路径带空格就不挂；没装 Node.js 就把桌宠那块摘掉。Claude Code、Grok 那边照旧带引号、直接指桌宠钩子（它们钩子出错不拦）。
 - 接法总纲在项目根 `AGENT_INTEGRATION.md`（新 Agent 怎么判断、可上报哪些事件、字段怎么填），改协议前先读那份。
 - 装完要用 `npm run integration:smoke` 验四条线，别只看有没有报错。
 

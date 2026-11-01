@@ -182,7 +182,42 @@ export function ensureClaudeHooks(settingsFile = join(homedir(), ".claude", "set
  * 核对并补齐 Antigravity（~/.gemini/config/hooks.json）的桌宠钩子。
  * 只管顶层 "multi-agent-desktop-pet" 那一块，其它命名钩子不动。
  */
-export function ensureAntigravityHooks(hooksFile = join(homedir(), ".gemini", "config", "hooks.json")): boolean {
+const ANTIGRAVITY_KEY = "multi-agent-desktop-pet";
+const ANTIGRAVITY_STUB = "agent-pet-hook-stub.mjs";
+
+/** 门卫脚本：住在 Antigravity 自己的配置夹，桌宠钩子找不到或加载出错就放行，免得数据夹挪走、桌宠删掉后 Antigravity 被拦死。 */
+export function antigravityStubSource(bridge: string): string {
+  return [
+    "// multi-agent-desktop-pet antigravity stub v1：桌宠每次启动自动重写，别手改",
+    'import { existsSync } from "node:fs";',
+    'import { pathToFileURL } from "node:url";',
+    `const REAL = ${JSON.stringify(bridge.replaceAll("\\", "/"))};`,
+    "function allow() {",
+    '  const hook = String(process.argv[3] || "").toLowerCase();',
+    '  process.stdout.write(hook.includes("pretooluse") ? \'{"decision":"allow"}\\n\' : "{}\\n");',
+    "  process.exit(0);",
+    "}",
+    "if (!existsSync(REAL)) allow();",
+    "try { await import(pathToFileURL(REAL).href); } catch { allow(); }",
+    "",
+  ].join("\n");
+}
+
+function nodeOnPath(): boolean {
+  const dirs = (process.env.PATH || process.env.Path || "").split(";").filter(Boolean);
+  return dirs.some((dir) => existsSync(join(dir, "node.exe")) || existsSync(join(dir, "node")));
+}
+
+function writeAtomic(file: string, body: string): void {
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, body, "utf8");
+  renameSync(temp, file);
+}
+
+export function ensureAntigravityHooks(
+  hooksFile = join(homedir(), ".gemini", "config", "hooks.json"),
+  hasNode: () => boolean = nodeOnPath,
+): boolean {
   if (!existsSync(dirname(hooksFile))) return false;
   const bridge = hookBridgePath();
   if (!existsSync(bridge)) return false;
@@ -196,10 +231,24 @@ export function ensureAntigravityHooks(hooksFile = join(homedir(), ".gemini", "c
       return false;
     }
   }
+  // 没装 Node.js：命令一跑就失败，PreToolUse 会把 Antigravity 全挡住，所以摘掉自己那块
+  if (!hasNode()) {
+    if (!(ANTIGRAVITY_KEY in config)) return false;
+    delete config[ANTIGRAVITY_KEY];
+    writeAtomic(hooksFile, `${JSON.stringify(config, null, 2)}\n`);
+    return true;
+  }
   // Antigravity 在 Windows 上按空格切命令、不去引号：路径带引号会被当成文件名的一部分，
-  // PreToolUse（matcher "*"）一失败就把它所有工具调用全挡住。所以这里不加引号；路径带空格就不挂，宁可不接也不能锁死。
-  const quoted = bridge.replaceAll("\\", "/");
+  // PreToolUse（matcher "*"）一失败就把它所有工具调用全挡住。所以这里不加引号；门卫路径带空格就不挂，宁可不接也不能锁死。
+  const stubFile = join(dirname(hooksFile), ANTIGRAVITY_STUB);
+  const quoted = stubFile.replaceAll("\\", "/");
   if (/\s|"/.test(quoted)) return false;
+  const stubBody = antigravityStubSource(bridge);
+  let stubChanged = false;
+  if (!existsSync(stubFile) || readFileSync(stubFile, "utf8") !== stubBody) {
+    writeAtomic(stubFile, stubBody);
+    stubChanged = true;
+  }
   const wanted = {
     SessionStart: [{ type: "command", command: `node ${quoted} antigravity SessionStart`, timeout: 8 }],
     PreInvocation: [{ type: "command", command: `node ${quoted} antigravity PreInvocation`, timeout: 8 }],
@@ -207,16 +256,14 @@ export function ensureAntigravityHooks(hooksFile = join(homedir(), ".gemini", "c
     PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `node ${quoted} antigravity PostToolUse`, timeout: 8 }] }],
     Stop: [{ type: "command", command: `node ${quoted} antigravity Stop`, timeout: 8 }],
   };
-  if (JSON.stringify(config["multi-agent-desktop-pet"]) === JSON.stringify(wanted)) return false;
+  if (JSON.stringify(config[ANTIGRAVITY_KEY]) === JSON.stringify(wanted)) return stubChanged;
   if (existsSync(hooksFile)) {
     const backupDir = join(process.env.LOCALAPPDATA || tmpdir(), "AgentPetHub", "改钩子路径前的原件");
     mkdirSync(backupDir, { recursive: true });
     copyFileSync(hooksFile, join(backupDir, "antigravity-hooks.json"));
   }
-  config["multi-agent-desktop-pet"] = wanted;
-  const temp = `${hooksFile}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  renameSync(temp, hooksFile);
+  config[ANTIGRAVITY_KEY] = wanted;
+  writeAtomic(hooksFile, `${JSON.stringify(config, null, 2)}\n`);
   return true;
 }
 
