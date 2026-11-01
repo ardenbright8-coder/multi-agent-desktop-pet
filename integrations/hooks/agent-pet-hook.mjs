@@ -10,10 +10,10 @@ const APP_ID = "multi-agent-desktop-pet";
 const PROTOCOL_VERSION = 1;
 // 对照 Clawd permission.js：回传只有 once / always / reject。
 // 自己填对照 bubble-renderer.js 的 Other 文本框；写 yes/允许/同意 就当放行。
-const ALLOW_WORDS = new Set(["yes", "y", "ok", "okay", "是", "好", "行", "可以", "允许", "同意", "确认", "准", "放行"]);
+const ALLOW_WORDS = new Set(["yes", "y", "ok", "okay", "是", "好", "行", "可以", "允许", "同意", "确认", "准", "放行", "知道了", "我知道了"]);
 const ALWAYS_WORDS = new Set(["always", "一直允许", "以后都允许", "不再问", "都允许"]);
 const REJECT_WORDS = new Set(["no", "n", "deny", "reject", "不", "拒绝", "不准", "不行"]);
-const ALLOW_PREFIXES = ["好", "行", "可以", "允许", "同意", "确认", "放行", "没问题", "嗯", "ok", "yes"];
+const ALLOW_PREFIXES = ["好", "行", "可以", "允许", "同意", "确认", "放行", "没问题", "嗯", "知道了", "我知道了", "ok", "yes"];
 // 带这些就是有条件、有转折，不能当同意：原话交给 Claude 自己看
 const TURN_WORDS = /不|别|但|先等|等等|等一下|停|拒|no|don'?t|but|wait/;
 // ═══ 什么算"大权限"：命中这张表的，桌宠弹窗不给「以后都允许」，每次都问 ═══
@@ -59,20 +59,45 @@ const argv = process.argv.slice(2);
 if (argv[0] === "--self-test") {
   process.exit(runSelfTest() ? 0 : 1);
 }
+if (argv[0] === "--watch-pending") {
+  await watchPendingPermission(argv[1]);
+  process.exit(0);
+}
 
 const [agentArg = "generic", hookArg = "context.updated"] = argv;
 let leftNote = ""; // 桌宠「自己输入」里写的、不是同意／拒绝的那段话
 
-// 桌宠没起来就别耗着——照 app 自带原版的做法：连不上，静默走人，零输出。
+function antigravityDefaultOutput(hook) {
+  return String(hook || "").toLowerCase().includes("pretooluse") ? '{"decision":"allow"}\n' : "{}\n";
+}
+
+// 港大教学等内部教学大脑静默调用：不发桌宠事件、不弹完成气泡，外面的正常 Antigravity 照常通知
+if (
+  process.env.AGY_SILENT_PET === "1" ||
+  /0071_港大教学|agy_bridge_tmp/i.test(process.cwd()) ||
+  /0071_港大教学|agy_bridge_tmp/i.test(String(process.env.DEEPTUTOR_HOME || ""))
+) {
+  if (agentArg === "antigravity") process.stdout.write(antigravityDefaultOutput(hookArg));
+  process.exit(0);
+}
+
+// 桌宠没起来就别耗着——照 app 自带原版的做法：连不上，静默走人，零输出（Antigravity 按契约回空 JSON）。
 // 不加这行的话 publish() 会硬撑重试，然后 failOpen 吐一段 CC 不认的 JSON，
 // 结果就是启动慢 10 秒 + 每次回答后打印一整张 schema。
-if (!existsSync(discoveryPath())) process.exit(0);
+if (!existsSync(discoveryPath())) {
+  if (agentArg === "antigravity") process.stdout.write(antigravityDefaultOutput(hookArg));
+  process.exit(0);
+}
 
 try {
   if (argv[0] === "--live-gate") {
     await runLiveGate(argv.slice(1).join(" ").trim());
   } else {
     const input = await readInput();
+    if (/0071_港大教学|agy_bridge_tmp/i.test(JSON.stringify(input?.workspacePaths || input?.cwd || ""))) {
+      if (agentArg === "antigravity") process.stdout.write(antigravityDefaultOutput(hookArg));
+      process.exit(0);
+    }
     const agent = detectAgent(agentArg, input);
     // 留个底：把权限请求的原始 payload 存下来，字段名对不上时好查。
     if (String(hookArg || "").toLowerCase().includes("permissionrequest")) {
@@ -92,9 +117,15 @@ try {
       // Claude 的权限提醒：PermissionRequest 那边已经弹了可点的窗，这里再报就弹第二个点不了的。
       process.exit(0);
     } else {
-      const event = translate(agent, hookArg, input);
-      if (event) await publish(event);
+      const recentNotice = String(hookArg || "").toLowerCase() === "stop" ? readRecentCustomNotice() : null;
+      if (recentNotice) {
+        await publishNotice(recentNotice);
+      } else {
+        const event = translate(agent, hookArg, input);
+        if (event) await publish(event);
+      }
       await resolveAnsweredInTerminal(agent, hookArg, input);
+      if (agent === "antigravity") process.stdout.write(antigravityDefaultOutput(hookArg));
     }
   }
 } catch (error) {
@@ -107,10 +138,22 @@ function detectAgent(requested, _input) {
   return requested;
 }
 
+function hubRoot() {
+  if (process.env.AGENT_PET_HUB_HOME) return process.env.AGENT_PET_HUB_HOME;
+  if (process.env.AGENT_PET_ISOLATED !== "1") {
+    try {
+      const parent = join(import.meta.dirname, "..");
+      if (basename(import.meta.dirname) === "integrations" && (existsSync(join(parent, "runtime")) || existsSync(join(parent, "data")))) {
+        return parent;
+      }
+      if (existsSync("F:\\应用数据\\AgentPetHub")) return "F:\\应用数据\\AgentPetHub";
+    } catch { /* ignore */ }
+  }
+  return join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
+}
+
 function discoveryPath() {
-  const root = process.env.AGENT_PET_HUB_HOME
-    || join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
-  return join(root, "runtime", "ipc.json");
+  return join(hubRoot(), "runtime", "ipc.json");
 }
 
 async function readInput() {
@@ -132,10 +175,19 @@ function translate(agent, hook, input) {
   const kind = directKind || kindFromHook(normalizedHook, input);
   if (!kind) return null;
 
-  const cwd = firstString(input.cwd, input.workspaceRoot, input.working_directory, input.project_dir, process.env.GROK_WORKSPACE_ROOT, process.env.CLAUDE_PROJECT_DIR, process.cwd());
-  const sessionId = firstString(input.session_id, input.sessionId, input.conversation_id, input.task_id, process.env.GROK_SESSION_ID, `${normalizedAgent}-default`);
-  const tool = firstString(input.tool_name, input.toolName, input.tool, input.name);
-  const toolInput = objectValue(input.tool_input, input.toolInput, input.input, input.arguments);
+  const cwd = firstString(
+    input.cwd,
+    input.workspaceRoot,
+    Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined,
+    input.working_directory,
+    input.project_dir,
+    process.env.GROK_WORKSPACE_ROOT,
+    process.env.CLAUDE_PROJECT_DIR,
+    process.cwd(),
+  );
+  const sessionId = firstString(input.session_id, input.sessionId, input.conversation_id, input.conversationId, input.task_id, process.env.GROK_SESSION_ID, `${normalizedAgent}-default`);
+  const tool = firstString(input.tool_name, input.toolName, input.tool, input.toolCall?.name, input.name);
+  const toolInput = objectValue(input.tool_input, input.toolInput, input.toolCall?.args, input.input, input.arguments);
   const target = targetFrom(toolInput, input);
   const reason = firstString(
     input.reason,
@@ -253,13 +305,17 @@ function kindFromHook(hook, input) {
   if (hook.includes("sessionend") || hook.includes("session.end") || hook === "end") return "session.ended";
   if (hook.includes("sessionstart") || hook.includes("session.start") || hook === "start") return "session.started";
   if (hook.includes("stopfailure") || hook.includes("toolusefailure") || hook.includes("tool.error") || hook.includes("failed")) return "task.failed";
+  if (hook.includes("posttool") && input.error) return "task.failed";
   if (hook === "stop" || hook.includes("task.completed") || hook.includes("complete")) {
+    const term = String(input.terminationReason || "").toUpperCase();
+    if (term === "ERROR") return "task.failed";
+    if (term === "USER_CANCELED") return "session.ended";
     const reason = String(input.reason || input.stopReason || "").toLowerCase();
     if (reason && reason !== "end_turn") return "session.ended";
     return "task.completed";
   }
   if (hook.includes("pretool") || hook.includes("posttool") || hook.includes("tool.") || hook.includes("subagent")) return "state.working";
-  if (hook.includes("prompt") || hook.includes("thinking")) return "state.thinking";
+  if (hook.includes("prompt") || hook.includes("preinvocation") || hook.includes("thinking")) return "state.thinking";
   if (hook.includes("notification")) {
     const notification = notificationText(input);
     if (notification.includes("plan") || notification.includes("approval") || notification.includes("permission") || notification.includes("input")) {
@@ -281,10 +337,34 @@ function isPlanNotification(input) {
   return text.includes("plan") || text.includes("approval");
 }
 
+function readRecentCustomNotice() {
+  try {
+    const customPath = join(hubDataDir(), "last-custom-popup.json");
+    if (!existsSync(customPath)) return null;
+    const popup = JSON.parse(readFileSync(customPath, "utf8"));
+    if (popup && Date.now() - Number(popup.at || 0) < 20_000 && (popup.title || popup.body)) {
+      return {
+        noticeId: randomUUID(),
+        source: popup.source || "系统提示",
+        title: popup.title || "系统提示",
+        body: popup.body || popup.summary || "",
+        durationMs: Number(popup.durationMs) >= 1_000 ? Number(popup.durationMs) : 6_000,
+      };
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+async function publishNotice(notice) {
+  try {
+    await sendRequest("notice.publish", notice);
+  } catch { /* ignore */ }
+}
+
 function summaryFromHook(agent, hook, tool) {
   const label = agentLabel(agent);
   if (hook.includes("sessionstart")) return `${label} 会话已经开始`;
-  if (hook.includes("prompt")) return `${label} 正在理解任务`;
+  if (hook.includes("prompt") || hook.includes("preinvocation")) return `${label} 正在理解任务`;
   if (hook.includes("pretool")) return `正在使用 ${tool || "工具"}`;
   if (hook.includes("posttool")) return `已完成 ${tool || "工具"}，继续处理任务`;
   if (hook.includes("permission")) return `${label} 需要你处理权限`;
@@ -306,7 +386,7 @@ function reasonFromHook(agent, hook, tool) {
 function targetFrom(toolInput, input) {
   for (const source of [toolInput, input]) {
     if (!source || typeof source !== "object") continue;
-    for (const key of ["file_path", "filePath", "path", "command", "url", "query", "pattern", "prompt"]) {
+    for (const key of ["file_path", "filePath", "path", "Path", "command", "CommandLine", "url", "query", "pattern", "prompt"]) {
       if (typeof source[key] === "string" && source[key].trim()) return source[key];
     }
   }
@@ -353,13 +433,11 @@ function clean(value, max) {
 }
 
 function agentLabel(agent) {
-  return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes", grok: "Grok", codex: "Codex" })[agent] || agent;
+  return ({ "claude-code": "Claude Code", opencode: "OpenCode", pi: "Pi", hermes: "Hermes", grok: "Grok", codex: "Codex", antigravity: "Antigravity" })[agent] || agent;
 }
 
 function hubDataDir() {
-  const root = process.env.AGENT_PET_HUB_HOME
-    || join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "AgentPetHub");
-  return join(root, "data");
+  return join(hubRoot(), "data");
 }
 
 function alwaysAllowPath() {
@@ -429,14 +507,30 @@ function permissionPrompt(canRemember = true, alwaysDescription = "这家 Agent 
 // 桌宠上点的允许/拒绝全白点，CC 等钩子退了再回终端问。官方格式见 code.claude.com/docs/en/hooks。
 function writeHookDecision(agent, decision, input = {}) {
   const permissionRequest = isBigDealGate(hookArg);
+  const bigDeal = isBigDeal(input);
   // 记不住的（大事、CC 没给建议规则）：自己写 always 也只算这一次。
-  if (decision === "always" && permissionRequest && !canRememberInClaude(input)) decision = "allow";
-  // PermissionRequest 的「以后都允许」交给 CC 自己记（跟终端选 Yes, don't ask again 一样），不按整家 Agent 记。
-  if (decision === "always" && !permissionRequest) rememberAlways(agent);
+  if (decision === "always" && (bigDeal || (permissionRequest && !canRememberInClaude(input)))) decision = "allow";
+  // PermissionRequest 的「以后都允许」交给 CC 自己记（跟终端选 Yes, don't ask again 一样），不按整家 Agent 记；大事也绝不按整家记。
+  if (decision === "always" && !permissionRequest && !bigDeal) rememberAlways(agent);
   const updatedPermissions = decision === "always" && permissionRequest ? input.permission_suggestions : undefined;
+  const hook = String(hookArg || "").toLowerCase();
+  if (agent === "antigravity") {
+    if (!hook.includes("pretooluse")) {
+      process.stdout.write(antigravityDefaultOutput(hookArg));
+      return;
+    }
+    if (decision === "timeout") {
+      process.stdout.write(`${JSON.stringify({ decision: "deny", reason: "桌宠权限等待超时（2分钟未点击），已自动拦截并收起弹窗" })}\n`);
+      return;
+    }
+    const agReason = decision === "reject"
+      ? (leftNote ? `用户在桌宠上没批准，留了话：「${leftNote}」` : "用户在桌宠上拒绝了这次操作")
+      : undefined;
+    process.stdout.write(`${JSON.stringify({ decision: decision === "reject" ? "deny" : "allow", ...(agReason ? { reason: agReason } : {}) })}\n`);
+    return;
+  }
   // 桌宠上没人点 → 不表态，交回给 CC 自己问。别替用户做主。
   if (decision === "timeout") return;
-  const hook = String(hookArg || "").toLowerCase();
   const permissionDecision = decision === "reject" ? "deny" : "allow";
   // 自己输入的话不是同意／拒绝那几个词：当没批准，但原话交给 Claude 看（弹窗上写着「按你的原话交回 Agent」）
   const reason = decision === "reject"
@@ -499,15 +593,102 @@ function pendingDir() {
   return join(hubDataDir(), "pending-permission");
 }
 
-function markPending(requestId, sessionId) {
+function pendingFile(requestId) {
+  return join(pendingDir(), `${requestId}.json`);
+}
+
+function isPending(requestId) {
+  return Boolean(requestId) && existsSync(pendingFile(requestId));
+}
+
+function transcriptSize(transcriptPath) {
+  if (!transcriptPath || typeof transcriptPath !== "string") return -1;
+  try {
+    return statSync(transcriptPath).size;
+  } catch {
+    return -1;
+  }
+}
+
+function answeredInTranscript(transcriptPath, startSize) {
+  if (!transcriptPath || typeof transcriptPath !== "string" || startSize < 0) return false;
+  try {
+    const size = statSync(transcriptPath).size;
+    if (size <= startSize) return false;
+    const tail = readFileSync(transcriptPath).subarray(startSize).toString("utf8");
+    for (const raw of tail.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry && (entry.type === "user" || entry.type === "assistant")) return true;
+      } catch { /* 写到一半的行跳过 */ }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    return Boolean(err && err.code === "EPERM");
+  }
+}
+
+function markPending(requestId, sessionId, extra = {}) {
   try {
     mkdirSync(pendingDir(), { recursive: true });
-    writeFileSync(join(pendingDir(), `${requestId}.json`), JSON.stringify({ sessionId, at: Date.now() }), "utf8");
+    writeFileSync(pendingFile(requestId), JSON.stringify({
+      sessionId,
+      at: Date.now(),
+      ...extra,
+    }), "utf8");
   } catch { /* 记号留不下也不能挡 */ }
 }
 
+function spawnPendingWatcher(requestId) {
+  try {
+    const scriptPath = process.argv[1];
+    if (!scriptPath || !requestId) return;
+    spawn(process.execPath, [scriptPath, "--watch-pending", requestId], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+  } catch { /* 守护进程起不来也不挡主流程 */ }
+}
+
+async function watchPendingPermission(requestId) {
+  if (!requestId || !isPending(requestId)) return;
+  let mark;
+  try {
+    mark = JSON.parse(readFileSync(pendingFile(requestId), "utf8"));
+  } catch {
+    return;
+  }
+  const deadline = Date.now() + 125_000;
+  while (Date.now() < deadline) {
+    await delay(280);
+    if (!isPending(requestId)) return;
+    const pidDead = mark.pid ? !isPidAlive(mark.pid) : false;
+    const transcriptMoved = answeredInTranscript(mark.transcriptPath, typeof mark.startSize === "number" ? mark.startSize : -1);
+    if (pidDead || transcriptMoved) {
+      if (clearPending(requestId)) {
+        try { await publishResolved(mark.agent || "claude-code", mark.input || {}, requestId); } catch { /* ignore */ }
+      }
+      return;
+    }
+  }
+}
+
 function clearPending(requestId) {
-  try { unlinkSync(join(pendingDir(), `${requestId}.json`)); return true; } catch { return false; }
+  try { unlinkSync(pendingFile(requestId)); return true; } catch { return false; }
 }
 
 async function publishResolved(agent, input, requestId) {
@@ -524,7 +705,7 @@ async function resolveAnsweredInTerminal(agent, hook, input) {
     if (clearPending(requestId)) await publishResolved(agent, input, requestId);
     return;
   }
-  if (!/userpromptsubmit|^stop|stopfailure|sessionend/.test(name)) return;
+  if (!/pretooluse|userpromptsubmit|^stop|stopfailure|sessionend/.test(name)) return;
   for (const file of readdirSync(pendingDir())) {
     const path = join(pendingDir(), file);
     try {
@@ -549,8 +730,8 @@ function failOpen(error) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "hook-error.log"), `${new Date().toISOString()} ${error?.stack || error}\n`, "utf8");
   } catch { /* 记不住也不能挡 */ }
-  // 出错时什么都别输出。上报型钩子的任何 stdout 都会被 CC 当决定去校验，一校验就报错。
-  // 放行本来就是"不表态"的默认结果，闭嘴走人即可。
+  // 出错时什么都别输出（Antigravity 按契约回空 JSON）。上报型钩子的任何 stdout 都会被 CC 当决定去校验，一校验就报错。
+  if (agentArg === "antigravity") process.stdout.write(antigravityDefaultOutput(hookArg));
   process.exit(0);
 }
 
@@ -569,6 +750,9 @@ function shouldGateThroughPet(hook, input, agent) {
   if (name.includes("permissionrequest")) {
     return firstString(input.tool_name, input.toolName, input.tool) !== "AskUserQuestion";
   }
+  if (agent === "antigravity" && name.includes("pretooluse")) {
+    return input.petGate === true || isBigDeal(input);
+  }
   // PreToolUse 不再走桌宠网关：它在 CC 还没决定要不要问你之前就触发，
   // 结果是每一次 Bash/Edit/Write 都要去桌宠上点一下，会话直接没法用。
   // CC 自己放行的照常飞过，等它真要问你时会发 PermissionRequest，那时才弹桌宠。
@@ -583,8 +767,8 @@ function isBigDeal(input) {
     if (Array.isArray(value)) { value.forEach((item) => eat(item, depth + 1)); return; }
     if (typeof value === "object") { Object.values(value).forEach((item) => eat(item, depth + 1)); }
   };
-  eat(objectValue(input.tool_input, input.toolInput, input.input, input.arguments));
-  eat(firstString(input.tool_name, input.toolName, input.tool));
+  eat(objectValue(input.tool_input, input.toolInput, input.toolCall?.args, input.input, input.arguments));
+  eat(firstString(input.tool_name, input.toolName, input.tool, input.toolCall?.name));
   eat(firstString(input.message, input.reason, input.permission, input.action));
   const text = bag.join("\n").slice(0, 20_000);
   return BIG_DEAL.some((rule) => rule.test(text));
@@ -652,6 +836,8 @@ async function announceChoice(agent, decision, extra = {}) {
     tool: extra.tool,
     alwaysRemembered: extra.alwaysRemembered === true,
   });
+  // 点完权限直接收窗，不再闪第二张「你选了允许一次」完成小提示（仅自动放行时弹回执）
+  if (!extra.alwaysRemembered) return;
   try {
     await publish({
       version: 1,
@@ -679,22 +865,38 @@ function isBigDealGate(hook) {
 }
 
 async function gateThroughPet(agent, hook, input) {
-  const tool = firstString(input.tool_name, input.toolName, input.tool) || "命令";
+  const tool = firstString(input.tool_name, input.toolName, input.tool, input.toolCall?.name) || "命令";
   const permissionRequest = isBigDealGate(hook);
-  if (!permissionRequest && isAlwaysRemembered(agent)) {
+  const bigDeal = isBigDeal(input);
+  if (!permissionRequest && !bigDeal && isAlwaysRemembered(agent)) {
     await announceChoice(agent, "always", { alwaysRemembered: true, tool });
     return "always";
   }
-  const canRemember = permissionRequest ? canRememberInClaude(input) : true;
+  const canRemember = permissionRequest ? canRememberInClaude(input) : !bigDeal;
   const alwaysDescription = permissionRequest
     ? "跟终端里选「Yes, and don't ask again」一样，这类以后不问"
     : undefined;
-  const target = targetFrom(objectValue(input.tool_input, input.toolInput, input.input), input) || "未提供目标";
+  const target = targetFrom(objectValue(input.tool_input, input.toolInput, input.toolCall?.args, input.input), input) || "未提供目标";
   const requestId = permissionRequest
     ? permissionKey(input)
     : firstString(input.request_id, input.requestId, input.tool_use_id, input.toolUseId, randomUUID());
-  const sessionId = firstString(input.session_id, input.sessionId, process.env.GROK_SESSION_ID, `${agent}-default`);
-  if (permissionRequest) markPending(requestId, sessionId);
+  const sessionId = firstString(input.session_id, input.sessionId, input.conversationId, process.env.GROK_SESSION_ID, `${agent}-default`);
+  const transcriptPath = firstString(input.transcript_path, input.transcriptPath);
+  const startSize = transcriptSize(transcriptPath);
+  if (permissionRequest) {
+    markPending(requestId, sessionId, {
+      pid: process.pid,
+      agent,
+      input: {
+        session_id: sessionId,
+        cwd: firstString(input.cwd, input.workspaceRoot, process.cwd()),
+        tool_name: tool,
+        tool_input: objectValue(input.tool_input, input.toolInput, input.input),
+      },
+      transcriptPath,
+      startSize,
+    });
+  }
   const event = {
     version: 1,
     eventId: randomUUID(),
@@ -728,6 +930,7 @@ async function gateThroughPet(agent, hook, input) {
     },
   };
   await publish(event);
+  if (permissionRequest) spawnPendingWatcher(requestId);
   // 等多久是个权衡：
   //   等太久 → 桌宠没人管时，CC 在这儿干站着；
   //   等太短 → 钩子先退了，你再点，桌宠那边永远卡在"正在交回…"（app 侧没有超时处理，
@@ -737,6 +940,12 @@ async function gateThroughPet(agent, hook, input) {
   //    CC 的钩子超时默认 60 秒，比这个短的话 CC 会先把进程杀了，白设。
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
+    if (permissionRequest && (!isPending(requestId) || answeredInTranscript(transcriptPath, startSize))) {
+      if (clearPending(requestId)) {
+        try { await publishResolved(agent, input, requestId); } catch { /* ignore */ }
+      }
+      return "timeout";
+    }
     let claim;
     try {
       claim = await sendRequest("interaction.response.claim", {
@@ -754,6 +963,7 @@ async function gateThroughPet(agent, hook, input) {
       await delay(400);
       continue;
     }
+    if (permissionRequest) clearPending(requestId);
     const decision = decideFromClaim(claim);
     const note = String(claim.answers?.[0]?.customText || "").trim();
     if (decision === "reject" && note && !REJECT_WORDS.has(normalizeDecisionText(note))) leftNote = clean(note, 2_000) || "";
@@ -770,15 +980,13 @@ async function gateThroughPet(agent, hook, input) {
       tool,
     });
     if (String(hook || "").toLowerCase().includes("notification")) replyGrokTerminal(decision);
-    if (permissionRequest) clearPending(requestId);
     return decision;
   }
   // 没人点：把桌宠那个窗收掉，别留一个点了没人接的。
-  if (permissionRequest && clearPending(requestId)) {
-    try { await publishResolved(agent, input, requestId); } catch { /* 收不掉就等桌宠自己清 */ }
-  }
+  if (permissionRequest) clearPending(requestId);
+  try { await publishResolved(agent, input, requestId); } catch { /* 收不掉就等桌宠自己清 */ }
   // 等超时了。原来这里直接返回 allow —— 等于"没人管就放行"，太危险。
-  // 改成不表态：钩子什么都不输出，CC 回落到它自己的权限询问。
+  // 改成不表态：CC 回落到它自己的权限询问，Antigravity 直接按超时拦截。
   return "timeout";
 }
 
@@ -822,6 +1030,8 @@ function runSelfTest() {
     [{ answers: [{ optionIds: [], customText: "no" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "随便写点" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "好，没问题测试过Enter了。" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "我知道了，下一个，知道了。" }] }, "allow"],
+    [{ answers: [{ optionIds: [], customText: "知道了但是先别推" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "好的但是先别推" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "好不好再说" }] }, "reject"],
     [{ answers: [{ optionIds: [], customText: "我试试" }] }, "reject"],
@@ -860,6 +1070,23 @@ function runSelfTest() {
     || shouldGateThroughPet("Notification", { message: "Claude needs your permission" }, "claude-code")) {
     process.stderr.write("self-test fail: 该弹的没弹 / 不该弹的弹了\n");
     ok = false;
+  }
+  const tmpTranscript = join(process.env.TEMP || hubDataDir(), `pet-self-test-${process.pid}.jsonl`);
+  try {
+    mkdirSync(join(process.env.TEMP || hubDataDir()), { recursive: true });
+    writeFileSync(tmpTranscript, '{"type":"assistant"}\n', "utf8");
+    const initSize = transcriptSize(tmpTranscript);
+    if (answeredInTranscript(tmpTranscript, initSize) || !isPidAlive(process.pid) || isPidAlive(99999999)) {
+      process.stderr.write("self-test fail: 初始状态误判\n");
+      ok = false;
+    }
+    writeFileSync(tmpTranscript, '{"type":"assistant"}\n{"type":"user","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"content":"The user doesn\'t want to proceed"}]}}\n', "utf8");
+    if (!answeredInTranscript(tmpTranscript, initSize)) {
+      process.stderr.write("self-test fail: 终端先答后 transcript 新增 user 行没认出来\n");
+      ok = false;
+    }
+  } finally {
+    try { unlinkSync(tmpTranscript); } catch { /* ignore */ }
   }
   if (ok) process.stdout.write("SELF-TEST OK\n");
   return ok;
