@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { Notification, app, clipboard } from "electron";
 import { createLogger } from "../shared/log";
 import { bgraToDib24, buildDropFiles, filesToPrune, isBareImage, transitDirectory, transitFileName, utf16z } from "./clip-format";
-import { checkDragPatch, patchCmd, type DragPatchState } from "./drag-patch";
+import { checkDragPatch, needsSharedRegister, patchCmd, SHARED_REGISTER_CMD, vivoAsar, vivoInstallDir, type DragPatchState } from "./drag-patch";
 import { CF_DIB, CF_HDROP, CF_UNICODETEXT, loadVivoWin32, type VivoWin32 } from "./win32";
 
 const log = createLogger("vivo");
@@ -175,20 +175,24 @@ export function vivoClipStatus(): VivoClipStatus {
 
 function watchDragPatch(): void {
   try {
-    status.dragPatch = checkDragPatch();
-    log.记(`vivo 拖图补丁：${status.dragPatch}`, "patch");
+    const dir = vivoInstallDir();
+    status.dragPatch = checkDragPatch(vivoAsar(dir));
+    log.记(`vivo 拖图补丁：${status.dragPatch}（这套系统的 vivo 在 ${dir}）`, "patch");
     if (!Notification.isSupported()) return;
-    if (status.dragPatch === "被升级盖掉了") {
+    if (status.dragPatch !== "没装 vivo" && needsSharedRegister(dir)) {
       new Notification({
-        // 两套系统各装各的 vivo：这套可能从没装过，也可能是升级盖掉了
-        title: "这套系统的 vivo 没有拖图补丁（没装过或被升级盖掉了）",
-        body: `拖 vivo 截图又只能拖出链接了。双击 ${patchCmd(app.getAppPath())} 重新装上（会弹一次管理员确认）`,
+        title: "这套系统的 vivo 还没接到 F 盘共用那份",
+        body: `现在跑的是 ${dir}，补丁要两边各打。双击 ${SHARED_REGISTER_CMD} 接上（会关一下 vivo、弹一次管理员确认）`,
+      }).show();
+    } else if (status.dragPatch === "被升级盖掉了") {
+      new Notification({
+        title: "vivo 拖图补丁被升级盖掉了",
+        body: `拖 vivo 截图又只能拖出链接了。双击 ${patchCmd(app.getAppPath())} 重新装上（会关一下 vivo）`,
       }).show();
     } else if (status.dragPatch === "装的是旧版补丁") {
-      // 补丁出了新版（2026-10-24 v2：点图复制、弹窗回右下角），两套系统各自要重装一次
       new Notification({
         title: "vivo 拖图补丁有新版了",
-        body: `点图就复制、弹窗回到右下角。双击 ${patchCmd(app.getAppPath())} 换上（会关一下 vivo、弹一次管理员确认）`,
+        body: `点图就复制、弹窗回到右下角。双击 ${patchCmd(app.getAppPath())} 换上（会关一下 vivo）`,
       }).show();
     }
   } catch (error) {

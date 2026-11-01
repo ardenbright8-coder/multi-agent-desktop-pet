@@ -7,7 +7,7 @@
 | `vivo-clip.ts` | 入口：`initVivoClip` / `closeVivoClip` / `vivoClipStatus`（给「板块与内存」显示）。轮询、认图、存中转夹、补剪贴板、清旧图 |
 | `clip-format.ts` | 纯函数：认不认「光秃秃一张图」、中转夹起名和留几张、拼「复制的文件」和「一张图」两种格式。测试 `testkit/tests/vivo-clip-format.test.ts` |
 | `win32.ts` | 剪贴板的 Windows 调用（koffi）：看有没有某种格式、一次放几样、换格式编号 |
-| `drag-patch.ts` | 开机看一眼 vivo 拖图补丁还在不在（只读程序包目录和弹窗那个小文件找记号）；被升级盖掉就弹系统通知叫他双击重装。测试 `testkit/tests/vivo-drag-patch.test.ts` |
+| `drag-patch.ts` | 开机看一眼 vivo 拖图补丁还在不在（只读程序包目录和弹窗那个小文件找记号）；被升级盖掉就弹系统通知叫他双击重装；这套系统的 vivo 没登记到 F 盘共用那份就弹通知叫他登记。测试 `testkit/tests/vivo-drag-patch.test.ts` |
 
 ## 对外露出什么
 
@@ -29,7 +29,7 @@
 - 🚨 **拖图靠改 vivo 程序包，不靠本块**（2026-10-18 他拍板改、实测拖进 Claude Code 出 `[Image #N]`）：vivo 原版弹窗里只有一张 160 像素宽的预览图（blob 链接），原图在手机上，点「复制」「保存」才下到 `%APPDATA%\pcsuite\data\Notification\`。补丁改 vivo `app.asar` 两处：弹窗一出就后台下原图（约 0.5 秒）、拖图时主程序 `startDrag` 交原图文件、该夹只留最新 10 张。补丁脚本、Claude Code 和 Pi 插件正本、换电脑一键装、体检都在 `app\vivo配套（拖图补丁·插件·一键装）\`，大文件备份在 `D:\Downloads\vivo办公套件\拖图补丁备份\`。本块只管开机看补丁在不在
 - 🚨 **看补丁要用 `original-fs`**（2026-10-24）：Electron 里普通 fs 把 `.asar` 当文件夹，`openSync` 报 ENOENT，开机天天记「看 vivo 拖图补丁出错」、状态永远「看不出来」。单测在普通 Node 里没有 original-fs，自动退回 node:fs
 - 🚨 **弹窗分块文件名每版不同**（8 月版 `174.js`、7.0.6 版 `184.js`）：`drag-patch.ts` 挨个读 `dist/electron` 下 1MB 以内的小分块找记号，别再写死名字
-- 🚨 **两套系统各装各的 vivo**（各自 C 盘），补丁也得各装一遍：根这边 2026-10-24 才装上（之前只装了燊一修）。弹的通知写「没装过或被升级盖掉了」
+- 🚨 **两套系统共用 F 盘一份 vivo**（`F:\程序\0072_vivo办公套件`，2026-11-01 起），补丁打一次两边生效。vivo 在哪只认注册表 `HKLM\SOFTWARE\WOW6432Node\pcsuite` 的 `InstPath`（`vivoInstallDir()`，补丁脚本同样），别写死路径。还指着别处的系统，开机弹通知叫他双击那夹的 `在这套系统上登记（vivo指向F盘这份）.cmd`（`needsSharedRegister`）
 - 补丁没装上或原图还没下好时拖，交出去的仍是 blob 链接：Claude Code 插件、兜底钩子 `70_钩子\脚本\拖图-vivo截图换成文件.cjs`、Pi 插件删链接、提示「等 1 秒再拖或点复制」。🚨 别拿「夹里最新一张」顶，会拿成上一次的图（2026-10-18 拿错过）
 - 🚨 **看门狗（2026-10-24）**：10-24 2:45–3:24 一张没补、日志一句没留，重开才好。`watch()` 每 5 秒看：轮询停没停、剪贴板主人小窗口（`win32.alive()`）还在不在、有没有认出来却没补上的光秃秃的图（`missedSequence`，隔 2 秒重试、最多 3 次）；连着 3 次放不进剪贴板就 `rebuild()` 重开接口。有图但不补（带文件、网页片段、字）记一句为什么，同一句 1 分钟内只记一次（`note`）
 - 🚨 **补丁有版本号**：`drag-patch.ts` 的 `MARK` 跟 `打补丁.cjs` 一致（现在 v2：点图复制、弹窗回右下角）。旧记号报「装的是旧版补丁」并弹通知叫他双击重装；改补丁就两边一起升号

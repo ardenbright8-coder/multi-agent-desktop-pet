@@ -4,7 +4,10 @@
 try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
-$src = "C:\Program Files (x86)\pcsuite\resources\app.asar"
+# 这套系统登记的 vivo 在哪（2026-11-01 起两套共用 F 盘一份；登记脚本搬家时改 InstPath）
+$vivoDir = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\WOW6432Node\pcsuite' -ErrorAction SilentlyContinue).InstPath
+if (-not $vivoDir) { $vivoDir = "C:\Program Files (x86)\pcsuite" }
+$src = Join-Path $vivoDir.TrimEnd('\') "resources\app.asar"
 $store = if ($env:VIVO拖图补丁备份) { $env:VIVO拖图补丁备份 } else { "D:\Downloads\vivo办公套件\拖图补丁备份" }
 $backupDir = Join-Path $store "原版备份"
 $patched = Join-Path $store "app.asar.改好的"

@@ -21,12 +21,21 @@ const MARK_ANY = "AGENTPET_VIVO_DRAG_PATCH_v";
 const KEEP = 10;
 const BLOCK = 4 * 1024 * 1024;
 
-const VIVO_ASAR = "C:\\Program Files (x86)\\pcsuite\\resources\\app.asar";
+// 不给路径时看这套系统登记的 vivo（InstPath；两套共用 F 盘那份后登记脚本会改它）。reg.exe 吐 GBK，用 PowerShell 读
+function vivoAsar() {
+  try {
+    const dir = require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\WOW6432Node\\pcsuite' -ErrorAction SilentlyContinue).InstPath"],
+      { encoding: "utf8", windowsHide: true, timeout: 8000 }).trim().replace(/\\+$/, "");
+    if (dir) return require("path").join(dir, "resources", "app.asar");
+  } catch { /* 读不到用默认位置 */ }
+  return "C:\\Program Files (x86)\\pcsuite\\resources\\app.asar";
+}
 // 只认图片那行后半截：前半截的 click 会被本补丁改掉，打过补丁的包也要认得出
 const POPUP_ANCHOR = "load:i.imgLoadEnd,error:i.imgErr";
 const [src, dst] = process.argv.slice(2);
 if (src === "--看") {
-  const file = dst || VIVO_ASAR;
+  const file = dst || vivoAsar();
   if (!fs.existsSync(file)) { console.log("没找到 vivo 程序包"); process.exit(2); }
   const a = readHeader(file);
   const popup = findPopup(a);
