@@ -8,7 +8,7 @@
 //   Antigravity  .gemini\antigravity\brain\<会话号>\.system_generated\logs\transcript.jsonl  一行 type:"USER_INPUT"，source:"USER_EXPLICIT"
 // 费不费电脑：Windows 有变化才通知（fs.watch），只读新写进来的那截，读完就停。出任何错只记日志，不连坐看板。
 
-import { closeSync, existsSync, openSync, readSync, statSync, watch, type FSWatcher } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createLogger } from "../shared/log";
 
@@ -129,6 +129,91 @@ export function watchRoots(home: string): { agent: WatchedAgent; dir: string; ac
     { agent: "Pi", dir: join(home, ".pi", "agent", "sessions"), accept: (rel) => rel.toLowerCase().endsWith(".jsonl") },
     { agent: "Antigravity", dir: join(home, ".gemini", "antigravity", "brain"), accept: (rel) => /[\\/]\.system_generated[\\/]logs[\\/]transcript\.jsonl$/i.test(rel) },
   ];
+}
+
+/** 掉线接手（2026-11-03 用户：窗口关了单子还锁着）：窗口名 → 那家会话记录最后写的时间、AI 最后说的两句。
+ *  只认看板起的「家名-会话号末 4 位」（Claude-d981）；六个点起的 Claude-1 这类、AI 自己起的名字认不出，返回 null。
+ *  同一个末 4 位撞上好几份记录，取最近写的那份。只读文件尾巴 256KB。 */
+export function lookupWindow(home: string, name: string): { lastAt: number; lastWords: string[] } | null {
+  const m = /^(claude|pi|antigravity)-([0-9a-z]{4})$/i.exec(String(name ?? "").trim());
+  if (!m || !home) return null;
+  const agent = (["Claude", "Pi", "Antigravity"] as const).find((a) => a.toLowerCase() === m[1].toLowerCase())!;
+  const tail = m[2].toLowerCase();
+  const root = watchRoots(home).find((r) => r.agent === agent)!.dir;
+  const ends = (session: string) => session.replace(/[^0-9a-z]/gi, "").toLowerCase().endsWith(tail);
+  const hits: string[] = [];
+  const list = (dir: string) => {
+    try {
+      return readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+  };
+  for (const a of list(root)) {
+    if (!a.isDirectory()) continue;
+    if (agent === "Antigravity") {
+      if (ends(a.name)) hits.push(join(root, a.name, ".system_generated", "logs", "transcript.jsonl"));
+      continue;
+    }
+    for (const f of list(join(root, a.name))) {
+      if (!f.isFile() || !f.name.toLowerCase().endsWith(".jsonl")) continue;
+      const session = agent === "Pi" ? (basename(f.name, ".jsonl").split("_").pop() ?? "") : basename(f.name, ".jsonl");
+      if (ends(session)) hits.push(join(root, a.name, f.name));
+    }
+  }
+  let best: { file: string; at: number } | null = null;
+  for (const file of hits) {
+    try {
+      const at = statSync(file).mtimeMs;
+      if (!best || at > best.at) best = { file, at };
+    } catch {
+      /* 刚删掉的不算 */
+    }
+  }
+  if (!best) return null;
+  return { lastAt: best.at, lastWords: lastAiWords(agent, best.file, 2) };
+}
+
+/** 会话记录尾巴里 AI 最后说的几句（每句压成一行、最长 80 字）。读不了就空着。 */
+function lastAiWords(agent: WatchedAgent, file: string, count: number): string[] {
+  let text = "";
+  try {
+    const size = statSync(file).size;
+    const want = Math.min(size, 256 * 1024);
+    const fd = openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(want);
+      readSync(fd, buf, 0, want, size - want);
+      text = buf.toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/).reverse()) {
+    if (out.length >= count) break;
+    let o: Record<string, unknown>;
+    try {
+      o = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue; // 截断的头一行、坏行跳过
+    }
+    const msg = (o.message ?? {}) as { role?: unknown; content?: unknown };
+    // Antigravity 的 AI 回话长啥样还没核对过，先只给时间不给话
+    const said = agent === "Claude" ? o.type === "assistant" : agent === "Pi" && o.type === "message" && msg.role === "assistant";
+    if (!said) continue;
+    const content = msg.content;
+    const words = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.filter((c) => c && typeof c === "object" && (c as { type?: unknown }).type === "text").map((c) => String((c as { text?: unknown }).text ?? "")).join(" ")
+        : "";
+    const one = words.replace(/\s+/g, " ").trim();
+    if (one) out.push(one.length > 80 ? `${one.slice(0, 80)}…` : one);
+  }
+  return out.reverse();
 }
 
 /** 只认刚发的：开看板之前写进去的、续上旧会话重写的老话一概不认。 */

@@ -87,7 +87,20 @@ function bmForSystemTag(name) {
 }
 /** 状态小标：圆角小方块＋细线图标，说明放在鼠标碰到才冒的提示里（2026-10-13 用户：省地方给标题）。 */
 // 干活的两个状态用表情（2026-10-13 用户：正在干＝绿的，干完等审＝勾，一眼分得出）；别的小标照旧细线图标。
-const BM_STATUS_EMOJI = { busy: "♻️", review: "✅" };
+const BM_STATUS_EMOJI = { busy: "♻️", review: "✅", hold: "⏸️", idle: "🕸️" };
+// 交接单收尾（2026-11-03 用户）：跟 handoff-hygiene.ts 同一套数，改那边这里一起改
+const BM_STALE_CLAIM_MS = 60 * 60_000; // 领着的窗口这么久没碰：标「可能掉线」，next 它就接走
+const BM_STALE_DAYS = 7; // 交接单这么多天没人碰：标灰，等他删，程序不删
+let bmHeldOpen = false; // 交接单专区底下的挂起单摊开没有
+function bmLastActive(record) {
+  const t = (v) => { const n = Date.parse(v || ""); return Number.isFinite(n) ? n : 0; };
+  return Math.max(t(record.createdAt), t(record.claimedAt), t(record.touchedAt));
+}
+function bmIdleDays(record) {
+  if (record.kind !== "handoff" || record.hold || record.report || record.claimedBy) return 0;
+  const days = Math.floor((Date.now() - bmLastActive(record)) / 86_400_000);
+  return days >= BM_STALE_DAYS ? days : 0;
+}
 // 交给 AI 的几种办法（拖出去、点号码、复制、捆复制路径）都标「已交出」，提示同一句（2026-10-29）
 const BM_HANDOUT_UNDO = "（不对就 Ctrl+Z，按一下退一步）";
 function bmStatusBadge(kind, label) {
@@ -524,7 +537,9 @@ function bmGroupRecords(records) {
     if (!byAgent.has(key)) byAgent.set(key, []);
     byAgent.get(key).push(record);
   }
-  return { inbox, byAgent, handoffZone };
+  // 挂起的交接单沉到专区最底下（2026-11-03）。🚨 board-index.ts indexBoard 同一个排法，号码才对得上
+  const zone = [...handoffZone.filter((r) => !r.hold), ...handoffZone.filter((r) => r.hold)];
+  return { inbox, byAgent, handoffZone: zone };
 }
 
 // ── 渲染 ─────────────────────────────────────────────────
@@ -1442,8 +1457,12 @@ function bmBuildTask(record, groupKey, order) {
     item.classList.add("claimed");
     // 「已交出」＝拖出去或复制了路径、还没哪个窗口认（2026-10-29 接活自动标），AI 一敲看板命令就换成它的窗口名
     const handed = record.claimedBy === "已交出";
-    const claim = bmStatusBadge("busy", handed ? "已交给 AI，等它认领（点一下放回去）" : `${record.claimedBy} 在干`);
+    // 掉线（2026-11-03）：领着的窗口一小时没碰这张，多半关了；别的窗口 next 它会直接接走
+    const quiet = !handed && Date.now() - bmLastActive(record) >= BM_STALE_CLAIM_MS;
+    const claim = bmStatusBadge("busy", handed ? "已交给 AI，等它认领（点一下放回去）"
+      : quiet ? `${record.claimedBy} 领着，但一小时以上没碰过，可能掉线了（别的窗口接它会直接接走）` : `${record.claimedBy} 在干`);
     claim.classList.add("claim");
+    if (quiet) claim.classList.add("claim-stale");
     // 「已交出」点一下就放回去（2026-10-29 用户：撤销了状态不消）；点错了 Ctrl+Z 拿回来
     if (handed) {
       claim.classList.add("claim-handed");
@@ -1461,6 +1480,12 @@ function bmBuildTask(record, groupKey, order) {
     item.appendChild(claim);
   } else if (record.report) {
     item.appendChild(bmStatusBadge("review", `${record.reportedBy ?? "AI"} 干完了，等你审（报告在这条下面）`));
+  } else if (record.hold) {
+    item.classList.add("held");
+    item.appendChild(bmStatusBadge("hold", `挂起：${record.hold.why}（右键「取消挂起」，或叫 AI 接它）`));
+  } else if (bmIdleDays(record)) {
+    item.classList.add("idle");
+    item.appendChild(bmStatusBadge("idle", `${bmIdleDays(record)} 天没人碰了：还要就叫 AI 接，不要了就删（程序不替你删）`));
   }
   // AI 检查觉得放错了（第四版）：右边一个小橙点，碰到冒气泡，点「知道了」就不再提。
   const hint = bmHints.get(record.id);
@@ -1545,6 +1570,20 @@ function bmBuildHandoffZone(records) {
   list.className = "task-list";
   bmFillTaskList(list, records, BM_HANDOFF_ZONE_KEY);
   if (list.childElementCount) group.appendChild(list);
+  // 挂起的（2026-11-03 用户：先不做的别跟烂尾的混一起，眼不见心不烦）：沉在最底下、默认收着，点一下摊开
+  const held = records.filter((r) => r.hold).length;
+  if (held) {
+    if (bmHeldOpen) group.classList.add("show-held");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "held-toggle";
+    toggle.textContent = bmHeldOpen ? `⏸️ 挂起的 ${held} 张（点一下收起）` : `⏸️ 挂起的 ${held} 张（等你说做再做，点一下看）`;
+    toggle.addEventListener("click", () => {
+      bmHeldOpen = !bmHeldOpen;
+      void bmRefresh();
+    });
+    group.appendChild(toggle);
+  }
   return group;
 }
 
@@ -2570,6 +2609,13 @@ function bmShowCtxMenu(record, groupKey, anchor, insertPlace) {
     back.textContent = record.kind === "handoff" ? "收回交接单专区" : "收回待定";
     back.addEventListener("click", () => { void bmReassign(record.id, null); });
     menu.appendChild(back);
+  }
+
+  // 挂起（2026-11-03）：只给交接单。先不做、等他说做再做的收到专区最底下，不算久没动
+  if (record.kind === "handoff") {
+    menu.appendChild(record.hold
+      ? bmCtxButton("取消挂起（要做了）", async () => { await window.bookmark.unhold(record.id); await bmRefresh(); })
+      : bmCtxButton("挂起（先不做，等我说）", async () => { await window.bookmark.hold(record.id); bmToast("挂起了，收在交接单专区最底下（点错了 Ctrl+Z）", 3000); await bmRefresh(); }));
   }
 
   // 交给哪套系统（2026-10-27）：只给交接单，点一下就标上，再点「不标」拿掉。

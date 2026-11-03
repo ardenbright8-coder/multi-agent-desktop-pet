@@ -740,6 +740,17 @@ body {
 /* 「已交出」的 ♻️ 点一下放回去（2026-10-29） */
 .status-badge.claim-handed { cursor: pointer; }
 .status-badge.claim-handed:hover { filter: saturate(0.4); }
+/* 交接单收尾（2026-11-03）：领着的窗口可能掉线 ♻️ 发灰；久没人碰的单子整条淡下去；挂起的默认收着，点底下那颗钮摊开 */
+.status-badge.claim-stale { filter: grayscale(1); opacity: 0.6; }
+.task.idle { opacity: 0.55; }
+.task.held { opacity: 0.6; }
+.handoff-zone:not(.show-held) .task.held { display: none; }
+.held-toggle {
+  display: block; margin: 4px 8px 6px; padding: 2px 8px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: inherit; opacity: 0.6; font: inherit; font-size: 0.85em; cursor: pointer;
+}
+.held-toggle:hover { opacity: 1; background: rgba(120, 140, 110, 0.12); }
 /* 小按钮按住左右拖、「＋」加（2026-10-29）：按钮多了换行不挤掉夹名；拖着的那个变淡，落点那条缝亮一道绿竖线 */
 .proj-kit { flex: 0 1 auto; flex-wrap: wrap; min-width: 0; }
 .proj-kit-btn { user-select: none; touch-action: none; }

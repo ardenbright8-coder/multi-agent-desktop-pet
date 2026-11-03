@@ -24,7 +24,8 @@ import { ensureBookmarkInboxStarted, readInboxConfig, stopBookmarkInbox } from "
 import { buildBoardSnapshot, collectProjects, startBoardPublisher, type BoardProjectNode } from "./board-sync";
 import { formatClaimMessage, startBookmarkCliServer, type CliRecord } from "./cli-server";
 import { indexBoard } from "./board-index";
-import { findHandoffs, startAgentWatch, windowNameFor, type AgentWatchHandle, type SentMessage } from "./agent-watch";
+import { findHandoffs, lookupWindow, startAgentWatch, windowNameFor, type AgentWatchHandle, type SentMessage } from "./agent-watch";
+import { DEFAULT_RECORD_DIRS, makeIssueGuard } from "./issue-guard";
 import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
@@ -411,6 +412,11 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
   // 一条一份小文件（设定24）：每次存盘后对齐一次，开机先对齐一次。
   store.onSaved = scheduleItemFileSync;
   scheduleItemFileSync();
+  // 交接单收尾（2026-11-03）：掉线接手看会话记录，收单前查问题账。验证脚本给了假夹才接，免得读真记录、跑真 git
+  const watchHome = process.env.BOOKMARK_WATCH_HOME || (isIsolatedRun() ? "" : app.getPath("home"));
+  if (watchHome) store.setWindowLookup((name) => lookupWindow(watchHome, name));
+  const issueDirs = (process.env.BOOKMARK_ISSUE_DIRS ?? "").split(";").filter(Boolean);
+  if (issueDirs.length || !isIsolatedRun()) store.setCloseGuard(makeIssueGuard(app.getAppPath(), issueDirs.length ? issueDirs : DEFAULT_RECORD_DIRS));
   liveRestart = Boolean(options?.liveRestart);
   // 启动 Agent 真打开桌面快捷方式只在真机。验证脚本不带自测开关（照样常驻），靠 isIsolatedRun 认出来（同 pet/focus-agent）。
   // 2026-09-24 踩过：只看常驻，验证脚本跑一次开一个真 Claude 窗口。
@@ -484,6 +490,13 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
           log.记(`新交接单顶掉旧单 ${oldId}`, "cli");
         },
         appendProgress: (id, by, text) => requireStore().appendProgress(id, by, text),
+        // 挂起（2026-11-03）：先不做、等他说做再做的另放
+        hold: (id, by, why) => {
+          const record = requireStore().hold(id, by, why);
+          log.记(`${by || "用户"} 挂起「${record.text.slice(0, 30)}」：${why.slice(0, 60)}`, "cli");
+          return record;
+        },
+        unhold: (id) => requireStore().unhold(id),
         // 打勾清单（2026-10-28）：交清单、勾一项；全勾完 store 自己收掉这张
         setChecklist: (id, items, by) => requireStore().setChecklist(id, items, by),
         tick: (id, no, by) => {
@@ -1257,6 +1270,9 @@ function registerIpc(): void {
   ipcMain.handle("bookmark:unbundle", (_event, bundleId: unknown) => act("拆开一捆", () => requireStore().unbundle(String(bundleId ?? ""))));
   // 放回去也进撤回账（2026-10-29）：点 ♻️ 放回去点错了，Ctrl+Z 能拿回来
   ipcMain.handle("bookmark:release", (_event, id: unknown) => act("放回去", () => requireStore().release(String(id ?? ""))));
+  // 挂起 / 取消挂起（2026-11-03）：右键点的算他亲手挂的
+  ipcMain.handle("bookmark:hold", (_event, id: unknown) => act("挂起", () => requireStore().hold(String(id ?? ""), "用户", "他在看板上点的：先不做，等他说做再做")));
+  ipcMain.handle("bookmark:unhold", (_event, id: unknown) => act("取消挂起", () => requireStore().unhold(String(id ?? ""))));
   // 启动 Agent（设定15）：看板给这个窗口起名，拼一句「领看板的活」进剪贴板，再打开这个组对应的桌面快捷方式，
   // 新窗口启动好后替用户按一次 Ctrl+V。🚨 绝不替他按回车。开不了窗、贴不了只提示，照旧能手动来。
   ipcMain.handle("bookmark:launch-line", async (_event, payload: unknown) => {

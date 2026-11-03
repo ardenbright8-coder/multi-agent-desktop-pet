@@ -12,6 +12,7 @@ import { reconcileImages } from "./inline-images";
 import { checklistAllDone, checklistProgress, normalizeChecklist, toggleItem, type ChecklistItem } from "./checklist";
 import { CoordinationStore } from "./coordination";
 import type { TaskBundle } from "./coordination";
+import { lastActiveAt, sayDuration, STALE_CLAIM_MS, type HoldMark } from "./handoff-hygiene";
 
 const log = createLogger("bookmark");
 /** 正文里的贴图标记，起捆名时去掉。 */
@@ -68,6 +69,10 @@ export interface BookmarkRecord {
   checklist?: ChecklistItem[];
   /** 边干边记的进度（log 命令，一句一行「月-日 时:分 窗口名：一句」，最多留 30 句）。跟原话分开放，原话不动。 */
   progress?: string[];
+  /** 窗口最后一次用看板命令碰它的时间（2026-11-03：算掉线、算久没动用）。没碰过就不带这个字段。 */
+  touchedAt?: string;
+  /** 挂起（2026-11-03 用户：先不做、等我说做再做的单子另放，别跟烂尾的混一起）。没挂起就不带这个字段。 */
+  hold?: HoldMark;
   /** 贴图文件名（不含路径）。旧库无此字段读入时回落 []。 */
   attachments: string[];
   /** 捆号（2026-09-24 设定15）：同组里挨着的几条捆成一捆，一捆交给一个 AI 窗口。null = 没捆。 */
@@ -100,6 +105,11 @@ interface ResetSnapshot {
   meta: Record<string, BundleMeta>;
 }
 
+/** 窗口的动静（掉线接手用）：最后一次写会话记录的时间、它最后说的一两句。认不出这个窗口返回 null。 */
+export type WindowLookup = (name: string) => { lastAt: number; lastWords: string[] } | null;
+/** 收单前的把关（2026-11-03 用户：改看板的单子没写问题账不准收）：返回一句拦下的理由，放行返回 null。 */
+export type CloseGuard = (record: BookmarkRecord) => string | null;
+
 /** 领活结果：record 为 null 表示没活可领（busy 是正在干的窗口名）。position/total 是这条在捆里第几条/共几条。 */
 export interface ClaimResult {
   record: BookmarkRecord | null;
@@ -128,6 +138,13 @@ const MAX_UNDO = 30;
 /** 连着改同一条字，隔多久以内算一步。 */
 const UNDO_MERGE_MS = 120_000;
 
+/** 挂起标记读盘：时间和原因都是字才算，坏的当没挂起。 */
+function normalizeHold(value: unknown): HoldMark | undefined {
+  const h = (value ?? null) as Partial<HoldMark> | null;
+  if (!h || typeof h !== "object" || typeof h.at !== "string" || typeof h.why !== "string") return undefined;
+  return { at: h.at, by: typeof h.by === "string" ? h.by : "用户", why: h.why };
+}
+
 /** 交给哪套系统：只留名字（去空格、最长 12 字），空的算没标。 */
 export function normalizeForSystem(value: unknown): string | null {
   const name = typeof value === "string" ? value.trim().slice(0, 12) : "";
@@ -140,10 +157,22 @@ export class BookmarkStore {
   private readonly path: string;
   private loaded = false;
   private readonly coordination: CoordinationStore;
+  private windowLookup: WindowLookup | null = null;
+  private closeGuard: CloseGuard | null = null;
 
   constructor(path?: string) {
     this.path = path ?? bookmarksDataPath();
     this.coordination = new CoordinationStore(`${this.path}.coordination.json`);
+  }
+
+  /** 掉线接手时去哪看窗口的动静（panel-window 接会话记录；不接就只看单子自己的时间）。 */
+  setWindowLookup(fn: WindowLookup | null): void {
+    this.windowLookup = fn;
+  }
+
+  /** 收单把关（panel-window 接问题账检查；不接就不拦）。 */
+  setCloseGuard(fn: CloseGuard | null): void {
+    this.closeGuard = fn;
   }
 
   taskBundles(): TaskBundle[] {
@@ -672,7 +701,82 @@ export class BookmarkStore {
       return { ...got, position: got.record ? all.findIndex(r => r.id === got.record!.id) + 1 : 0,
         total: all.length, bundleId: controlled.id, coordinator: controlled.coordinator };
     }
-    return this.claimFrom(candidates, who);
+    // 点名领一条（不是捆）：他叫接的挂起单先取消挂起；别的窗口领着却早没动静了，直接接过来
+    if (!inBundle.length) {
+      const one = candidates[0];
+      if (one.hold) {
+        delete one.hold;
+        this.note(one, who, "他叫接这张，取消挂起");
+      }
+      this.takeOverStale(one, who);
+    }
+    return this.claimFrom(candidates, who, true);
+  }
+
+  /** 掉线接手（2026-11-03 用户：窗口关了单子还锁着，新窗口接不了）：领着它的窗口超过 STALE_CLAIM_MS 没动静，
+   *  就换成 who，把原窗口停了多久、最后说的话记进进度。会话记录认得出的看记录的时间，认不出的看它最后碰单子的时间。 */
+  private takeOverStale(record: BookmarkRecord, who: string, now = Date.now()): boolean {
+    const old = record.claimedBy;
+    if (!old || old === HANDED_OUT || old === who) return false;
+    let seen: { lastAt: number; lastWords: string[] } | null = null;
+    try {
+      seen = this.windowLookup?.(old) ?? null;
+    } catch (error) {
+      log.出事("查窗口动静出错，只看单子自己的时间", error, "store");
+    }
+    const lastAt = Math.max(lastActiveAt(record), seen?.lastAt ?? 0);
+    if (now - lastAt < STALE_CLAIM_MS) return false;
+    const words = seen?.lastWords?.length ? `；它最后说：${seen.lastWords.join(" ／ ")}` : "";
+    record.claimedBy = who;
+    record.claimedAt = new Date(now).toISOString();
+    const how = seen ? "看的会话记录" : "看的单子最后被碰的时间";
+    this.note(record, who, `系统自动接手：原窗口 ${old} 已 ${sayDuration(now - lastAt)}没动静（${how}）${words}`.slice(0, 400));
+    return true;
+  }
+
+  /** 程序替窗口记一句进度（不查谁领着）。 */
+  private note(record: BookmarkRecord, who: string, words: string): void {
+    const d = new Date();
+    const stamp = `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    record.progress = [...(record.progress ?? []), `${stamp} ${who}：${words}`].slice(-MAX_PROGRESS);
+    this.touch(record);
+  }
+
+  /** 记一笔「刚有人碰过」。 */
+  private touch(record: BookmarkRecord): void {
+    record.touchedAt = new Date().toISOString();
+  }
+
+  /** 挂起（2026-11-03 用户：先不做、等我说做再做）：放回没人领、记下为啥，不参加久没动，按组领活跳过它。
+   *  别的窗口正领着的，只有用户能挂。点名 next 它就自动取消挂起。 */
+  hold(id: string, by: string, why: string): BookmarkRecord {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了）");
+    const who = String(by ?? "").trim() || "用户";
+    if (record.claimedBy && record.claimedBy !== HANDED_OUT && record.claimedBy !== who && who !== "用户") {
+      throw new Error(`这条是 ${record.claimedBy} 领着的，挂不了（真没人干了先 release）`);
+    }
+    const reason = String(why ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!reason) throw new Error("缺挂起的原因（--why），比如「他说先不做，等他说做再做」");
+    record.hold = { at: new Date().toISOString(), by: who, why: reason };
+    record.claimedBy = null;
+    record.claimedAt = null;
+    this.save();
+    return record;
+  }
+
+  /** 取消挂起，回到正常的单子。 */
+  unhold(id: string): BookmarkRecord {
+    this.ensureLoaded();
+    const record = this.records.find((r) => r.id === id);
+    if (!record) throw new Error("没找到这条（可能已经删了）");
+    if (record.hold) {
+      delete record.hold;
+      this.touch(record);
+      this.save();
+    }
+    return record;
   }
 
   /** 按组领（睡觉档 `next --to 组名`）：这组从上到下第一条没人领、没报告过的；组名大小写不管。 */
@@ -686,8 +790,9 @@ export class BookmarkStore {
   }
 
   /** 领活的共同规矩：报告过的不算活；自己手里有没干完的还给它那条；别人领走的跳过。 */
-  private claimFrom(all: BookmarkRecord[], who: string): ClaimResult {
-    const candidates = all.filter((r) => !r.report);
+  private claimFrom(all: BookmarkRecord[], who: string, named = false): ClaimResult {
+    // 挂起的只在点名领时算活（2026-11-03）
+    const candidates = all.filter((r) => !r.report && (named || !r.hold));
     const total = candidates.length;
     // 「已交出」的算空着：交出去还没人认，谁来领就是谁的
     const free = (r: BookmarkRecord) => !r.claimedBy || r.claimedBy === HANDED_OUT;
@@ -696,6 +801,9 @@ export class BookmarkStore {
     if (pick && !mine) {
       pick.claimedBy = who;
       pick.claimedAt = new Date().toISOString();
+    }
+    if (pick) {
+      this.touch(pick);
       this.save();
     }
     return {
@@ -742,9 +850,15 @@ export class BookmarkStore {
 
   /** 「已交出」的条目：头一个拿窗口名碰它的窗口接走（不用先 next）。 */
   private takeOver(record: BookmarkRecord, who: string): void {
-    if (record.claimedBy !== HANDED_OUT || !who || who === HANDED_OUT) return;
+    if (!who || who === HANDED_OUT || who === "用户") return;
+    if (record.claimedBy === who) {
+      this.touch(record); // 自己领着的再碰一下：记个动静，掉线接手看它
+      return;
+    }
+    if (record.claimedBy !== HANDED_OUT) return;
     record.claimedBy = who;
     record.claimedAt = new Date().toISOString();
+    this.touch(record);
   }
 
   /** 干完：只有领它的窗口能删，而且必须带上用户说「可以」的原话。删掉返回那条。 */
@@ -755,9 +869,21 @@ export class BookmarkStore {
     this.takeOver(record, String(by ?? "").trim());
     if (record.claimedBy !== String(by ?? "").trim()) throw new Error(`这条不是你领的（现在是 ${record.claimedBy ?? "没人"} 在干）`);
     if (!String(userOk ?? "").trim()) throw new Error("缺用户确认：先把做了啥、怎么验告诉用户，等他说可以，再把他的原话放进 --ok");
+    this.checkCloseGuard(record);
     this.closeWithLinks(record);
     this.save();
     return record;
+  }
+
+  /** 收单把关：拦下就抛错（错误话给 AI 看）；把关自己出错不拦（不能因为检查坏了收不了单）。 */
+  private checkCloseGuard(record: BookmarkRecord): void {
+    let why: string | null = null;
+    try {
+      why = this.closeGuard?.(record) ?? null;
+    } catch (error) {
+      log.出事("收单把关出错，这次放行", error, "store");
+    }
+    if (why) throw new Error(why);
   }
 
   /** 删掉这张，连它管着的那几条（2026-10-28 用户：干完了别让我一条条删）；别的窗口正领着的不动。返回管着的删了几条。 */
@@ -793,8 +919,18 @@ export class BookmarkStore {
     if (!record.checklist?.length) throw new Error("这条还没有打勾清单：先整理好、跟用户对齐，再用「清单」命令交进来");
     if (by && by.trim() !== "用户") this.takeOver(record, by.trim());
     const who = String(by ?? "").trim() || record.claimedBy || "AI";
+    const before = record.checklist;
     record.checklist = toggleItem(record.checklist, no, who, new Date().toISOString());
     const { done, total } = checklistProgress(record.checklist);
+    // 勾完最后一项就收单：AI 勾的先过把关（他在看板上亲手勾的不拦），拦下就这一下不算
+    if (checklistAllDone(record.checklist) && who !== "用户") {
+      try {
+        this.checkCloseGuard(record);
+      } catch (error) {
+        record.checklist = before;
+        throw error;
+      }
+    }
     if (!checklistAllDone(record.checklist)) {
       this.save();
       return { record, done, total, closed: false, linksRemoved: 0 };
@@ -1179,11 +1315,15 @@ export class BookmarkStore {
           userPinned: record.userPinned === true,
           checklist: normalizeChecklist(record.checklist),
           progress: Array.isArray(record.progress) ? record.progress.filter((x): x is string => typeof x === "string").slice(-MAX_PROGRESS) : undefined,
+          touchedAt: typeof record.touchedAt === "string" ? record.touchedAt : undefined,
+          hold: normalizeHold(record.hold),
         }))
         .map((record) => {
-          // 没有的就不带这两个字段（跟 links 一样），存出去的 JSON 不多两个空字段
+          // 没有的就不带这几个字段（跟 links 一样），存出去的 JSON 不多空字段
           if (!record.checklist) delete record.checklist;
           if (!record.progress?.length) delete record.progress;
+          if (!record.touchedAt) delete record.touchedAt;
+          if (!record.hold) delete record.hold;
           return record;
         });
     } catch (error) {

@@ -73,6 +73,8 @@ contextBridge.exposeInMainWorld("bookmark", {
     ipcRenderer.on("bookmark:organized", (_event, text) => callback(String(text ?? "")));
   },
   release: (id: string) => ipcRenderer.invoke("bookmark:release", id),
+  hold: (id: string) => ipcRenderer.invoke("bookmark:hold", id),
+  unhold: (id: string) => ipcRenderer.invoke("bookmark:unhold", id),
   // model：Pi 组六个点挑的模型，开窗前替用户在 Pi 里换成它（2026-10-27）。
   launchLine: (target: string, group: string, coding: boolean, model: string | null = null) =>
     ipcRenderer.invoke("bookmark:launch-line", { target, group, coding, model }) as Promise<{ line: string; label: string; model: string | null; opened: string | null; freshWindow: boolean; pasting: boolean; problem: string | null }>,

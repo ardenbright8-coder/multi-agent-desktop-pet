@@ -18,6 +18,7 @@ import { formatBrief, formatShow, indexBoard, parseShowSpec, type BoardNames } f
 import { imagesForAgent } from "./inline-images";
 import { checklistProgress, formatPending, lastProgress, parseChecklist, type ChecklistItem } from "./checklist";
 import { HANDED_OUT } from "./store";
+import { similarHandoffs, type HoldMark } from "./handoff-hygiene";
 
 /** bookmark-cli.mjs 交清单前先在本地查格式，写错了不用连看板就报。 */
 export { parseChecklist };
@@ -41,6 +42,10 @@ export interface CliRecord {
   /** 打勾清单 / 边干边记的进度（2026-10-28）；老适配器可以不给。 */
   checklist?: ChecklistItem[];
   progress?: string[];
+  /** 窗口最后一次碰它 / 挂起（2026-11-03）；老适配器可以不给。 */
+  touchedAt?: string;
+  claimedAt?: string | null;
+  hold?: HoldMark;
   /** list 出口会把文件名展开成 attachmentsRoot 下的完整路径。 */
   attachments: string[];
   createdAt: string;
@@ -71,6 +76,9 @@ export interface CliStoreAdapter {
   /** 打勾清单（2026-10-28）：交一份整理好的清单 / 勾一项（拨开关，全勾完自动收掉）。 */
   setChecklist?(id: string, items: ChecklistItem[], by: string): CliRecord;
   tick?(id: string, no: string, by: string | null): { record: CliRecord; done: number; total: number; closed: boolean; linksRemoved: number };
+  /** 挂起 / 取消挂起（2026-11-03 用户：先不做、等我说做再做的另放）。 */
+  hold?(id: string, by: string, why: string): CliRecord;
+  unhold?(id: string): CliRecord;
   /** 「原话」那份副本的完整路径（有清单才有）；没有返回 null。 */
   originalFile?(id: string): string | null;
   list(): CliRecord[];
@@ -121,7 +129,9 @@ export interface BookmarkCliServerHandle {
 // ── CLI 参数解析（纯函数，scripts/bookmark-cli.mjs 经 dist 调用；node:test 直接测） ──
 
 export interface CliArgs {
-  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "log" | "checklist" | "tick" | "dispatch" | "show" | "paihuo" | "launch";
+  command: "add" | "list" | "handoff" | "remove" | "next" | "done" | "release" | "report" | "log" | "checklist" | "tick" | "hold" | "unhold" | "dispatch" | "show" | "paihuo" | "launch";
+  /** handoff 的 --new：跟已有交接单像也照样写（确认是另一件事）。 */
+  force?: boolean;
   /** tick 要勾的项号（可以一次几个：勾 <单号> 2.1 2.2）。 */
   nos?: string[];
   /** handoff 的 --closes：这张交接单管着哪几条（号码或 id，逗号隔开），done 时一起删。 */
@@ -158,10 +168,11 @@ export interface CliArgs {
 const CLI_USAGE =
   '用法：bookmark-cli list [--to 组名] [--handoff]（只列号码和标题）| show <号码：7 / 7-9 / 7,8,9 / 捆2>（号码全板统一，只读点名的全文）| '
   + 'list [--to 组名] [--handoff] --json（整组原文，费字，少用）| add "内容" [--to Agent名] [--url 网址] [--attach 图片路径] [--json] | '
-  + 'handoff "标题" [--to Agent名] [--detail 详情] [--for 系统名：交给另一套 Windows（根／燊一修）时才写] [--by 你的窗口名：你领着交接单时写，新单顶掉旧单] [--closes 号码,号码：这张管着的条目，done 时一起删] | log <条目id> --by 窗口名 --text "一句进度" | remove <条目id> | '
+  + 'handoff "标题" [--to Agent名] [--detail 详情] [--for 系统名：交给另一套 Windows（根／燊一修）时才写] [--by 你的窗口名：你领着交接单时写，新单顶掉旧单] [--closes 号码,号码：这张管着的条目，done 时一起删] [--new：跟已有交接单像、确认是另一件事才加] | log <条目id> --by 窗口名 --text "一句进度" | remove <条目id> | '
   + '清单 <单号或id> --file 清单.md --by 窗口名（交整理好的打勾清单：- [ ] 1 那件事 ／ 缩进 - [ ] 1.1 小项）| 勾 <单号或id> 2.1 [2.2 …]（拨开关，再勾一次取消；全勾完单子自动收掉）| '
   + 'next <捆号或条目id> --by 窗口名 [--coding] | next --to 组名 --by 窗口名 | done <条目id> --by 窗口名 --ok "用户原话" | '
   + 'report <条目id> --by 窗口名 --text "大白话报告" | release <条目id> --by 窗口名 | '
+  + '挂起 <单号或id> --why "他原话：先不做，等他说做再做" [--by 窗口名] | 取消挂起 <单号或id> | '
   + 'paihuo --file 单子.json [--to 组名]（派活单一批 1～3 张，不写组默认 Pi 组）| '
   + 'launch <号码> [--model 供应商/模型] [--coding]（替用户点这批的一键启动；他说「直接开」才用）';
 
@@ -201,6 +212,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   if (command === "next" || command === "done" || command === "release" || command === "report" || command === "log") return parseClaimArgs(command, argv);
   if (command === "清单" || command === "checklist" || command === "勾" || command === "tick") return parseChecklistArgs(command === "清单" || command === "checklist" ? "checklist" : "tick", argv);
+  if (command === "挂起" || command === "hold" || command === "取消挂起" || command === "unhold") return parseHoldArgs(command === "挂起" || command === "hold" ? "hold" : "unhold", argv);
   if (command === "show") {
     // 号码全板统一（2026-10-15）：直接写号码就行；前面多写一个组名也认（不在那组时会提一句）
     const rest = argv.slice(1).filter((a) => a !== "--json");
@@ -253,6 +265,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
       const value = argv[++i];
       if (value == null || !value.trim()) throw new Error("--for 后面要跟交给哪套系统（根 / 燊一修），只写名字");
       args.forSystem = value.trim();
+    } else if (flag === "--new" && command === "handoff") {
+      args.force = true;
     } else if (flag.startsWith("--")) {
       throw new Error(`不认识的参数 ${flag}。${CLI_USAGE}`);
     } else if (command === "remove" && args.id == null) {
@@ -382,6 +396,38 @@ function parseChecklistArgs(command: "checklist" | "tick", argv: string[]): CliA
   }
   if (!nos.length) throw new Error("勾 后面要跟项号：勾 <单号> 2.1（一次几项写 2.1 2.2）");
   return { command, target, by, nos, json: argv.includes("--json"), attach: [] };
+}
+
+/** 挂起两个命令（2026-11-03）：挂起 <单号> --why "为啥" [--by 窗口名]；取消挂起 <单号>。--why 后面几个词拼成一句。 */
+function parseHoldArgs(command: "hold" | "unhold", argv: string[]): CliArgs {
+  let target: string | undefined;
+  let by: string | undefined;
+  const why: string[] = [];
+  let inWhy = false;
+  for (let i = 1; i < argv.length; i++) {
+    const flag = argv[i];
+    if (flag === "--by") {
+      by = argv[++i]?.trim();
+      if (!by) throw new Error("--by 后面要跟你的窗口名");
+      inWhy = false;
+    } else if (flag === "--why" && command === "hold") {
+      inWhy = true;
+    } else if (flag === "--json") {
+      continue;
+    } else if (flag.startsWith("--")) {
+      throw new Error(`不认识的参数 ${flag}。写法：${command === "hold" ? '挂起 <单号> --why "他说先不做，等他说做再做"' : "取消挂起 <单号>"}`);
+    } else if (inWhy) {
+      why.push(flag);
+    } else if (target == null) {
+      target = flag;
+    } else {
+      throw new Error(`多了一个参数 ${flag}`);
+    }
+  }
+  if (!target) throw new Error(`${command === "hold" ? "挂起" : "取消挂起"} 后面要跟单号（屏幕上的号码或条目 id）`);
+  const text = why.join(" ").trim();
+  if (command === "hold" && !text) throw new Error('挂起 缺 --why "为啥"：他原话怎么说的，比如「先不做，等他说做再做」');
+  return { command, target, by, text, json: argv.includes("--json"), attach: [] };
 }
 
 /** 派活单文件（设定23）：JSON，一个数组或 { cards: [...] }，每张 { text 标题, detail 完整单子, to 组名 }（也认 标题/详情/组）。
@@ -657,6 +703,19 @@ export function handleCliRequest(
     if (old?.checklist?.length) {
       return { status: 400, body: { ok: false, error: `你领着的「${old.text.slice(0, 30)}」有打勾清单，它本身就是交接单，不用另写新单：看板 log ${old.id} --by ${by} --text "停在哪、下一步"，再 看板 release ${old.id} --by ${by}` } };
     }
+    // 同一件事别写第二张（2026-11-03 用户：43/45/46 三张都是同一件事）：跟已有交接单像就拦下，指给 AI 往旧单上记
+    if (raw.force !== true) {
+      const rows = indexBoard(all, ctx.store.boardNames?.().agents ?? []).flatMap((g) => g.rows);
+      const alike = similarHandoffs(text, all.filter((r) => r.id !== old?.id)).slice(0, 3);
+      if (alike.length) {
+        const say = alike.map(({ record: r }) => {
+          const no = rows.find((row) => row.record.id === r.id)?.no;
+          return `第 ${no ?? "?"} 条「${r.text.replace(/\s+/g, " ").slice(0, 50)}」（id ${r.id}${r.claimedBy ? `，${r.claimedBy} 领着` : ""}${r.hold ? "，挂起中" : ""}）`;
+        }).join("；");
+        const first = alike[0].record;
+        return { status: 409, body: { ok: false, error: `看板上已经有像同一件事的交接单：${say}。是同一件事 → 别写新单，接那张往上记：看板 next ${first.id} --by <你的窗口名>，再 看板 log ${first.id} --by <你的窗口名> --text "新情况"；确认是另一件事 → 原命令末尾加 --new 再写` } };
+      }
+    }
     const record = ctx.store.add({
       text,
       url: null,
@@ -743,7 +802,10 @@ export function handleCliRequest(
   if (method === "POST" && (path === "/checklist" || path === "/tick")) {
     return handleChecklistRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
   }
-  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /launch | /remove | /next | /done | /release | /report | /log | /checklist | /tick | GET /list | /view）" } };
+  if (method === "POST" && (path === "/hold" || path === "/unhold")) {
+    return handleHoldRequest(path, (body ?? {}) as Record<string, unknown>, ctx);
+  }
+  return { status: 404, body: { ok: false, error: "未知端点（POST /add | /handoff | /paihuo | /launch | /remove | /next | /done | /release | /report | /log | /checklist | /tick | /hold | /unhold | GET /list | /view）" } };
 }
 
 /** 命令行 launch（2026-10-16）：开窗要等一个个贴完，是异步的，单独一个口子；token 照样查。 */
@@ -874,6 +936,29 @@ function resolveRecord(ctx: CliRequestContext, token: string): CliRecord | undef
     return indexBoard(all, ctx.store.boardNames?.().agents ?? []).flatMap((g) => g.rows).find((row) => row.no === Number(token))?.record;
   }
   return all.find((r) => r.id === token);
+}
+
+/** 挂起两个口子（2026-11-03）：单号认法跟清单一样；store 抛的错原样回给 AI。 */
+function handleHoldRequest(path: string, raw: Record<string, unknown>, ctx: CliRequestContext): CliReply {
+  const store = ctx.store;
+  if (!store.hold || !store.unhold) return { status: 500, body: { ok: false, error: "看板还不支持挂起（看板里点「升级」换新版）" } };
+  const token = String(raw.id ?? "").trim();
+  if (!token) return { status: 400, body: { ok: false, error: "缺单号（屏幕上的号码或条目 id）" } };
+  const record = resolveRecord(ctx, token);
+  if (!record) return { status: 404, body: { ok: false, error: `看板上找不到 ${token}（号码跟着看板变，先 list 看一眼）` } };
+  try {
+    const after = path === "/hold"
+      ? store.hold(record.id, String(raw.by ?? "").trim(), String(raw.text ?? ""))
+      : store.unhold(record.id);
+    try {
+      ctx.onChanged?.();
+    } catch {
+      /* 刷新失败无所谓 */
+    }
+    return { status: 200, body: { ok: true, id: after.id, title: after.text.slice(0, 40), held: Boolean(after.hold) } };
+  } catch (error) {
+    return { status: 400, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+  }
 }
 
 /** 打勾清单两个口子（2026-10-28）。store 抛的错（不是你领的、项号对不上）原样回给 AI，400。 */

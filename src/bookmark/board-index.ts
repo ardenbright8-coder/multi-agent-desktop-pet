@@ -6,6 +6,7 @@
 // 纯函数：数据由 cli-server 的 /view 端点喂进来，读图片标注的那一下由调用方注入（测试不碰磁盘）。
 
 import type { CliRecord } from "./cli-server";
+import { idleDays, lastActiveAt, sayDuration, STALE_CLAIM_MS } from "./handoff-hygiene";
 
 /** 交接单专区、待定区在命令里的叫法（屏幕上看到的字）。 */
 export const HANDOFF_GROUP = "交接单";
@@ -46,6 +47,9 @@ export function indexBoard(records: CliRecord[], agents: string[]): BoardGroup[]
     const owner = r.assignee ? owners.get(r.assignee.toLowerCase()) : undefined;
     buckets.get(owner ?? (r.kind === "handoff" ? HANDOFF_GROUP : INBOX_GROUP))!.push(r);
   }
+  // 挂起的交接单沉到专区最底下（2026-11-03）。🚨 renderer bmGroupRecords 同一个排法
+  const zone = buckets.get(HANDOFF_GROUP)!;
+  buckets.set(HANDOFF_GROUP, [...zone.filter((r) => !r.hold), ...zone.filter((r) => r.hold)]);
   let no = 0;
   let bundleNo = 0;
   return [...buckets].map(([name, list]) => {
@@ -106,9 +110,17 @@ function rowTitle(r: CliRecord, names: BoardNames): string {
   return mark + (own.length > 80 ? `${own.slice(0, 80)}…` : own || "（只有图）");
 }
 
-function rowStatus(r: CliRecord): string {
-  if (r.claimedBy) return `♻️ ${r.claimedBy} 在干`;
+function rowStatus(r: CliRecord, now = Date.now()): string {
+  if (r.hold) return `⏸ 挂起（${r.hold.why}）`;
+  if (r.claimedBy) {
+    const quiet = now - lastActiveAt(r);
+    // 掉线接手（2026-11-03）：一小时没碰过这张，多半窗口关了；真接走时 next 还会再看会话记录
+    if (r.claimedBy !== "已交出" && quiet >= STALE_CLAIM_MS) return `♻️ ${r.claimedBy} 在干（${sayDuration(quiet)}没碰过，可能掉线了：next 它就接走）`;
+    return `♻️ ${r.claimedBy} 在干`;
+  }
   if (r.report) return "✅ 干完待审";
+  const idle = idleDays(r, now);
+  if (idle) return `🕸 ${idle} 天没人碰`;
   return "";
 }
 

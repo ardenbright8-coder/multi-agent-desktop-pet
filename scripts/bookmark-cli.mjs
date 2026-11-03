@@ -122,7 +122,7 @@ try {
     res = await fetch(`${base}/handoff`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
-      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null, forSystem: args.forSystem ?? null, by: args.by ?? null, closes: args.closes ?? null }),
+      body: JSON.stringify({ text: args.text, assignee: args.to ?? null, detail: args.detail ?? null, forSystem: args.forSystem ?? null, by: args.by ?? null, closes: args.closes ?? null, force: args.force === true }),
       signal: AbortSignal.timeout(5_000),
     });
   } else if (args.command === "next" || args.command === "done" || args.command === "release" || args.command === "report" || args.command === "log") {
@@ -158,6 +158,14 @@ try {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } else if (args.command === "hold" || args.command === "unhold") {
+    // 挂起（2026-11-03）：单号（屏幕号码或条目 id）由看板那边换成条目
+    res = await fetch(`${base}/${args.command}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ id: args.target, by: args.by ?? "", text: args.text ?? "" }),
       signal: AbortSignal.timeout(5_000),
     });
   } else if (args.command === "show" || (args.command === "list" && !args.json)) {
@@ -238,6 +246,10 @@ if (args.command === 'dispatch') {
   console.log(args.json ? JSON.stringify(data) : cli.formatTickResult(data));
 } else if (args.command === "release") {
   console.log(args.json ? JSON.stringify(data) : "↩️ 已放回去，别的窗口可以领了。");
+} else if (args.command === "hold") {
+  console.log(args.json ? JSON.stringify(data) : `⏸ 挂起了「${data.title}」：收进交接单专区最底下，不算久没动；他说做了，直接 next 它就自动取消挂起。`);
+} else if (args.command === "unhold") {
+  console.log(args.json ? JSON.stringify(data) : `▶️ 取消挂起了「${data.title}」，回到正常单子。`);
 } else if (args.command === "show" || !args.json) {
   console.log(data.text);
 } else {
