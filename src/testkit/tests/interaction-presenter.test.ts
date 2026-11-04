@@ -52,7 +52,30 @@ test("permission presenter names exact action, resources and unknown rollback", 
   assert.equal(presentation.mode, "permission");
   assert.match(presentation.explanation, /修改回传模块/);
   assert.match(presentation.explanation, /src\/main\/hub\.ts/);
-  assert.match(presentation.explanation, /能否回退还没核实/);
+  assert.doesNotMatch(presentation.explanation, /能否回退还没核实/, "没核实的套话不再塞进去");
+});
+
+test("Claude 权限：第一行用它自己写的说明，原命令放第二行，长路径只留最后一层", () => {
+  const command = "Set-Location 'C:\\Users\\嘉楷\\AppData\\Local\\Temp\\claude\\permtest\\repo'; git push origin master";
+  const presentation = presentInteraction(baseEvent("permission.requested", {
+    summary: "把测试仓库推送到远端",
+    tool: "PowerShell",
+    target: command,
+    interaction: {
+      mode: "permission",
+      title: "允许 Claude Code 使用 PowerShell 吗？",
+      providerRequestId: "permission-2",
+      prompts: [{ id: "permission", question: "点一个", options: [{ id: "once", label: "允许一次" }], multiple: false, allowCustomInput: true }],
+      action: "PowerShell",
+      resources: [command],
+      responseCapability: true,
+      responseStatus: "pending",
+    },
+  }));
+  const [first, second] = presentation.explanation.split("\n");
+  assert.match(first, /^要干啥：把测试仓库推送到远端/);
+  assert.match(first, /可能改不回来/, "git push 要提醒改不回来");
+  assert.equal(second, "原命令：Set-Location '…\\repo'; git push origin master");
 });
 
 function baseEvent(kind: AgentEvent["kind"], overrides: Partial<AgentEvent>): AgentEvent {

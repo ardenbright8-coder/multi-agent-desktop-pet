@@ -11,7 +11,7 @@ export function presentInteraction(event: AgentEvent): InteractionPresentation {
     title: interaction.title || directTitle(event, mode),
     explanation: mode === "question"
       ? questionExplanation(event, interaction)
-      : permissionExplanation(event, interaction, permission.impact),
+      : permissionExplanation(event, interaction, permission.irreversible),
     providerRequestId: interaction.providerRequestId || event.requestId,
     prompts: interaction.prompts,
     recommendation: interaction.recommendation,
@@ -50,19 +50,32 @@ function questionExplanation(event: AgentEvent, interaction: InteractionPayload)
   return `${situation}${cause}${recommendation}${differences}${impact}请按下面 Agent 给出的原选项选择，也可以在支持时自己输入。`;
 }
 
-function permissionExplanation(event: AgentEvent, interaction: InteractionPayload, inferredImpact: string): string {
-  const action = interaction.action || event.tool || "未提供具体操作";
+// 权限说明（2026-11-04 他嫌满屏英文命令看不懂，学 clawd-on-desk）：
+// 第一行「要干啥」用干活的 AI 自己写的那句说明（Claude 的 description），没有再用 action；
+// 第二行才是原命令，长路径只留最后一层文件夹名。
+function permissionExplanation(event: AgentEvent, interaction: InteractionPayload, irreversible: boolean): string {
   const resources = interaction.resources?.length
     ? interaction.resources.join("、")
-    : event.paths?.length ? event.paths.join("、") : event.target || "未提供作用范围";
-  const rawSummary = (event.summary || event.title || "Agent 正在处理当前任务").trim();
-  const situation = rawSummary && rawSummary !== resources ? sentence(rawSummary) : "";
-  const reason = event.reason && event.reason.trim() ? sentence(event.reason) : "";
-  const scope = sentence(`这次权限只覆盖“${action}”，涉及 ${resources}`);
-  const impact = sentence(interaction.impact || inferredImpact || "负面影响还没核实");
-  const rollback = sentence(interaction.rollback || "能否回退还没核实");
-  const unknowns = interaction.unknowns ? sentence(`仍未核实：${interaction.unknowns}`) : "";
-  return `${situation}${reason}${scope}${impact}${rollback}${unknowns}`;
+    : event.paths?.length ? event.paths.join("、") : event.target || "";
+  const meaningful = (text: string) => Boolean(text) && text !== resources && text !== event.target && text !== event.tool;
+  const summary = (event.summary || "").trim();
+  const action = (interaction.action || "").trim();
+  const parts: string[] = [];
+  if (meaningful(summary)) parts.push(sentence(`要干啥：${summary}`));
+  // 别家 Agent 的 action 本身就是一句人话（Claude 的只是工具名，会被上面筛掉）
+  if (meaningful(action) && action !== summary) parts.push(sentence(meaningful(summary) ? `具体：${action}` : `要干啥：${action}`));
+  if (event.reason && event.reason.trim()) parts.push(sentence(`为什么：${event.reason.trim()}`));
+  if (interaction.impact) parts.push(sentence(interaction.impact));
+  if (irreversible) parts.push("⚠️ 这一步可能改不回来，看清再点。");
+  if (interaction.rollback) parts.push(sentence(interaction.rollback));
+  if (interaction.unknowns) parts.push(sentence(`仍未核实：${interaction.unknowns}`));
+  const head = parts.join("") || sentence(`要用 ${event.tool || "一个工具"}，没写要干啥`);
+  return resources ? `${head}\n原命令：${shortenPaths(resources)}` : head;
+}
+
+/** 命令里的长路径只留最后一层：C:\Users\嘉楷\…\permtest\repo → …\repo */
+export function shortenPaths(text: string): string {
+  return text.replace(/[A-Za-z]:[\\/](?:[^\\/'"\s;|]+[\\/])+([^\\/'"\s;|]+)/g, "…\\$1");
 }
 
 function optionDifference(interaction: InteractionPayload): string {

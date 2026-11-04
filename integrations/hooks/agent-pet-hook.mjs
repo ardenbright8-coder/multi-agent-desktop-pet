@@ -960,7 +960,9 @@ async function gateThroughPet(agent, hook, input) {
     project: basename(firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()) || agent),
     cwd: firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()),
     title: `${agentLabel(agent)} 要用 ${tool}`,
-    summary: target && target !== "未提供目标" ? target : `是否允许使用 ${tool}？`,
+    // 「要干啥」先用 AI 自己写的那句说明（Claude 的 description），没有才用原命令（2026-11-04）
+    summary: firstString(objectValue(input.tool_input, input.toolInput, input.input)?.description)
+      || (target && target !== "未提供目标" ? target : `是否允许使用 ${tool}？`),
     reason: "",
     tool,
     target,
