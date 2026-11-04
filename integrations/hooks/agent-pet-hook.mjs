@@ -128,6 +128,7 @@ try {
         if (event) await publish(event);
       }
       await resolveAnsweredInTerminal(agent, hookArg, input);
+      if (agent === "claude-code") deliverAllowNote(hookArg, input);
       if (agent === "antigravity") process.stdout.write(antigravityDefaultOutput(hookArg));
     }
   }
@@ -528,7 +529,7 @@ function writeHookDecision(agent, decision, input = {}) {
     }
     const agReason = decision === "reject"
       ? (leftNote ? `用户在桌宠上没批准，留了话：「${leftNote}」` : "用户在桌宠上拒绝了这次操作")
-      : undefined;
+      : (leftNote ? `用户在桌宠上允许了，同时留了话：「${leftNote}」` : undefined);
     process.stdout.write(`${JSON.stringify({ decision: decision === "reject" ? "deny" : "allow", ...(agReason ? { reason: agReason } : {}) })}\n`);
     return;
   }
@@ -727,6 +728,43 @@ async function resolveAnsweredInTerminal(agent, hook, input) {
       if (mark.sessionId === sessionId) await publishResolved(agent, input, file.replace(/\.json$/, ""), `${hook}：会话往下走了`);
     } catch { /* 坏记号跳过 */ }
   }
+}
+
+// ═══ 允许时的附言 ═══
+// PermissionRequest 的「允许」回话格式里没有放字的地方（只有拒绝带 message），
+// 所以先按 会话+工具+参数 的固定号存下，命令跑完 PostToolUse（失败走 PostToolUseFailure）用 additionalContext 递给 Claude。
+function isPlainDecisionWord(note) {
+  const text = normalizeDecisionText(note);
+  return ALLOW_WORDS.has(text) || ALWAYS_WORDS.has(text) || REJECT_WORDS.has(text);
+}
+
+function noteFile(requestId) {
+  return join(hubDataDir(), "pending-note", `${requestId}.json`);
+}
+
+function saveAllowNote(requestId, note, tool) {
+  try {
+    mkdirSync(join(hubDataDir(), "pending-note"), { recursive: true });
+    writeFileSync(noteFile(requestId), JSON.stringify({ note, tool, at: Date.now() }), "utf8");
+  } catch { /* 存不下就算了，不挡命令 */ }
+}
+
+function deliverAllowNote(hook, input) {
+  const name = String(hook || "").toLowerCase();
+  const eventName = name === "posttooluse" ? "PostToolUse" : name === "posttoolusefailure" ? "PostToolUseFailure" : "";
+  if (!eventName) return;
+  const file = noteFile(permissionKey(input));
+  if (!existsSync(file)) return;
+  let note = "";
+  try {
+    note = String(JSON.parse(readFileSync(file, "utf8")).note || "");
+    unlinkSync(file);
+  } catch { return; }
+  if (!note) return;
+  process.stdout.write(`${JSON.stringify({
+    hookSpecificOutput: { hookEventName: eventName, additionalContext: `用户在桌宠上允许这一步时，留了话：「${note}」` },
+  })}
+`);
 }
 
 function isPermissionNotification(hook, input) {
@@ -980,7 +1018,10 @@ async function gateThroughPet(agent, hook, input) {
     if (permissionRequest) clearPending(requestId);
     const decision = decideFromClaim(claim);
     const note = String(claim.answers?.[0]?.customText || "").trim();
-    if (decision === "reject" && note && !REJECT_WORDS.has(normalizeDecisionText(note))) leftNote = clean(note, 2_000) || "";
+    // 附言（2026-11-04 他定）：点哪个按钮都能顺带写一句话给 AI。光写「好」「拒绝」这种只表态的词不算附言。
+    if (note && !isPlainDecisionWord(note)) leftNote = clean(note, 2_000) || "";
+    // Claude 的「允许」回话里没地方放字：先存着，等这条命令跑完由 PostToolUse 递给 Claude
+    if (leftNote && permissionRequest && agent === "claude-code" && (decision === "allow" || decision === "always")) saveAllowNote(requestId, leftNote, tool);
     try {
       await sendRequest("interaction.response.complete", {
         responseId: claim.responseId,
