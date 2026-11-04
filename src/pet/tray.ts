@@ -50,13 +50,19 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
   const rebuild = () => {
     const diagnostics = hub.diagnostics();
     appTray.setContextMenu(Menu.buildFromTemplate([
-      // 隐藏是个开关（2026-10-27 用户）：勾上一直藏着、开机也不出来，取消勾才出来；勾没勾记在 preferences.json
-      { label: "隐藏桌宠", type: "checkbox", checked: isPetHidden(), click: (item) => { setPetHidden(item.checked); rebuild(); } },
-      { label: "把幼苗叫回来（回默认位置）", click: () => { actions.recall(); rebuild(); } },
+      // 「隐藏桌宠」「找回桌宠」是一对长期开关（2026-11-04 用户定）：菜单只露当前能做的那一项，
+      // 藏了就一直藏、开机也不出来，点「找回」才出来；状态记在 preferences.json 的 hidden。
+      // 找回＝出来并回默认位置；露着时另给一项「回默认位置」，没藏却找不着时点它。
+      ...(isPetHidden()
+        ? [{ label: "找回桌宠", click: () => { setPetHidden(false); actions.recall(); rebuild(); } }]
+        : [
+            { label: "隐藏桌宠", click: () => { setPetHidden(true); rebuild(); } },
+            { label: "桌宠回默认位置", click: () => { actions.recall(); rebuild(); } },
+          ]),
       { type: "separator" },
       { label: "详情（事件与搜索）", click: actions.openDrawer },
       { label: "设置（大小与活泼程度）", click: actions.openSettings },
-      { label: "书签台（随手记）", click: () => actions.openBookmark?.() },
+      { label: "Agent 看板", click: () => actions.openBookmark?.() },
       { label: "板块与内存", click: () => actions.openOverview?.() },
       ...(actions.openGeminiQuota ? [{ label: "Gemini用量提示球（显示/收起）", click: actions.openGeminiQuota }] : []),
       { label: "聊天框换个边", click: actions.flipNote },
@@ -71,7 +77,7 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
   };
   rebuild();
   hub.on("snapshot", rebuild);
-  // 单击托盘图标：没勾「隐藏桌宠」才把幼苗叫到前面，勾着就不出来
+  // 单击托盘图标：没隐藏才把桌宠叫到前面，隐藏着就不出来（要出来点「找回桌宠」）
   appTray.on("click", () => { if (!isPetHidden()) showMainWindow(); });
   return appTray;
 }

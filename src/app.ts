@@ -104,7 +104,7 @@ async function bootstrap(): Promise<void> {
     log.出事("本机通道出错，事件中心已标记为异常", error, "server-error");
     logError(error);
   });
-  if (!testMode && !skipIntegrationInstall) {
+  if (!testMode && !isIsolatedRun() && !skipIntegrationInstall) {
     try {
       ensureOpenCodeIntegration();
       ensureGrokHooks();
@@ -116,7 +116,8 @@ async function bootstrap(): Promise<void> {
   }
   // 钩子桥和各家指过来的路径每次启动都对一遍，不看 --skip-integration-install：
   // 只动自己那份桥和自己那几条钩子命令。程序或数据夹换了地方，重开一次就接上（2026-10-31）。
-  if (!testMode) {
+  // 验证脚本起的隔离实例（数据夹在临时夹）不算真机，不许改各家钩子（2026-11-04）。
+  if (!testMode && !isIsolatedRun()) {
     try {
       const bridge = ensureGenericHookBridge();
       if (bridge.reason) log.记(`钩子桥没更新（${bridge.reason}）：${bridge.target}`, "bootstrap");

@@ -4,7 +4,7 @@ import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appDataRoot, isIsolatedRun } from "../../shared/paths";
-import { ensureClaudeHooks } from "../../integrations/manager";
+import { ensureAgentHookPaths, ensureClaudeHooks } from "../../integrations/manager";
 
 // 2026-10-24：真机设了 AGENT_PET_HUB_HOME（两套共用数据）就被当成测试，六个点开不了 Agent。这里盯住判法。
 test("isolated run is decided by the explicit marker or a temp/test-runs data folder, not by the data env var alone", () => {
@@ -64,5 +64,21 @@ test("ensureClaudeHooks：只有旧的 3 条钩子时，开机自检自动补齐
     if (savedHome === undefined) delete process.env.AGENT_PET_HUB_HOME;
     else process.env.AGENT_PET_HUB_HOME = savedHome;
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+// 2026-11-04：看板验证脚本起的隔离实例把真 Claude／Antigravity／Grok 钩子改指到临时夹，临时夹一清钩子全断。
+test("隔离实例（数据夹在临时夹）不碰各家真钩子配置", () => {
+  const saved = { home: process.env.AGENT_PET_HUB_HOME, flag: process.env.AGENT_PET_ISOLATED };
+  try {
+    delete process.env.AGENT_PET_ISOLATED;
+    process.env.AGENT_PET_HUB_HOME = join(tmpdir(), "bm-hold-guard");
+    assert.deepEqual(ensureAgentHookPaths(), { changed: [], skipped: "isolated-run" });
+    process.env.AGENT_PET_HUB_HOME = "F:\\应用数据\\AgentPetHub";
+    process.env.AGENT_PET_ISOLATED = "1";
+    assert.deepEqual(ensureAgentHookPaths(), { changed: [], skipped: "isolated-run" });
+  } finally {
+    if (saved.home === undefined) delete process.env.AGENT_PET_HUB_HOME; else process.env.AGENT_PET_HUB_HOME = saved.home;
+    if (saved.flag === undefined) delete process.env.AGENT_PET_ISOLATED; else process.env.AGENT_PET_ISOLATED = saved.flag;
   }
 });

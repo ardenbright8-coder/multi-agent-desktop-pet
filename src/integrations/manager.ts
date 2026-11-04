@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { appDataRoot } from "../shared/paths";
+import { appDataRoot, isIsolatedRun } from "../shared/paths";
 
 const OPENCODE_MARKER = "multi-agent-desktop-pet managed opencode plugin v1";
 const HOOK_BRIDGE_MARKER = "multi-agent-desktop-pet managed generic hook bridge v1";
@@ -273,6 +273,10 @@ export function ensureAntigravityHooks(
  * 改之前把原件拷一份到本机 LOCALAPPDATA（不放共用盘，Claude 配置两套各管各）。
  */
 export function ensureAgentHookPaths(): { changed: string[]; skipped?: string } {
+  // 🚨 测试、验证脚本起的隔离实例一律不碰各家真配置（2026-11-04）：
+  // 看板验证脚本起的实例数据夹在系统临时夹，它把 Claude／Antigravity／Grok 的钩子全改指到临时夹，
+  // 编译时临时夹一被清，三家钩子全断，桌宠就「有时候不提示」。
+  if (isIsolatedRun()) return { changed: [], skipped: "isolated-run" };
   const bridge = hookBridgePath();
   if (!existsSync(bridge)) return { changed: [], skipped: "bridge-missing" };
   const changed: string[] = [];

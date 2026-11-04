@@ -388,9 +388,20 @@ function panelFitHeight() {
   let height = 2; // 面板上下边框
   for (const child of panel.children) {
     if (child.hidden) continue;
-    height += child.classList.contains("interaction-scroll") ? child.scrollHeight : child.offsetHeight;
+    height += child.classList.contains("interaction-scroll") ? naturalScrollHeight(child) : child.offsetHeight;
   }
   return Math.ceil(height + PANEL_TOP_BAND + PANEL_BOTTOM_GAP);
+}
+
+// 滚动区是 flex:1，会被撑到跟窗口一样高，直接读 scrollHeight 量到的是「窗口多高」不是「内容多高」。
+// 179% 缩放下 Electron 每次定尺寸会多出 1 像素 → 量出来又高一点 → 再撑大，面板越开越高（2026-11-04）。
+// 量之前临时取消撑开，读到的才是内容本身的高度。
+function naturalScrollHeight(element) {
+  const previous = element.style.flex;
+  element.style.flex = "0 0 auto";
+  const height = element.scrollHeight;
+  element.style.flex = previous;
+  return height;
 }
 
 function syncPanelVisibility() {

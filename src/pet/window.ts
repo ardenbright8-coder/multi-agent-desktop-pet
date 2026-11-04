@@ -49,6 +49,7 @@ function ensurePetWindowSize(): void {
 // 询问／权限／完成面板由界面量好内容高度传过来，内容少窗口就矮（2026-10-01，用户嫌面板挡东西）。
 export const PANEL_WINDOW_SIZE = { width: 400, height: 740 };
 const PANEL_MIN_HEIGHT = 140;
+const PANEL_HEIGHT_JITTER = 2;
 let panelHeight = PANEL_WINDOW_SIZE.height;
 
 function fitPanelHeight(requested?: number): number {
@@ -161,19 +162,31 @@ export function createPetWindow(hub: AgentHub): BrowserWindow {
       if (!win.isDestroyed()) persistWindowPosition();
     }, 300);
   });
+  // 被系统或 Alt+F4 关窗：当成「隐藏桌宠」记下来，托盘那项跟着变「找回桌宠」。
+  // 以前只 hide 不记，托盘还写着「隐藏桌宠」，桌宠却不见了，看着像自己没了（2026-11-04）。
   win.on("close", (event) => {
     if (!shuttingDown) {
       event.preventDefault();
-      win.hide();
+      log.记("窗口被关，按「隐藏桌宠」处理", "close");
+      hideMainWindow();
     }
   });
+  // 界面那半边崩了：窗口还在、里面全透明，看着就是「桌宠没了」，面板也弹不出来。重载一次救回来。
+  win.webContents.on("render-process-gone", (_event, details) => {
+    log.出事(`桌宠界面挂了：${details.reason}，重新载入`, undefined, "render-process-gone");
+    if (!win.isDestroyed() && !shuttingDown) win.loadFile(join(__dirname, "renderer", "index.html"));
+  });
+  win.on("unresponsive", () => log.出事("桌宠界面卡住没响应", undefined, "unresponsive"));
   mainWindow = win;
+  // 置顶标记还在、窗口却被别的置顶窗口压到底下时，isAlwaysOnTop() 照样报 true，
+  // 所以光查标记守不住，每次再 moveTop() 把它提回最上层（不抢焦点）。2026-11-04 用户报「桌宠不在最前面」。
   keepOnTopTimer = setInterval(() => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || dragging) return;
     if (!mainWindow.isAlwaysOnTop()) {
       mainWindow.setAlwaysOnTop(true, "screen-saver");
       log.记("有别的窗口把桌宠挤下去了，已重新置顶", "keepOnTop");
     }
+    mainWindow.moveTop();
   }, 3_000);
   keepOnTopTimer.unref();
   win.on("blur", () => {
@@ -268,12 +281,12 @@ function rememberHidden(hidden: boolean): void {
   savePreferences({ hidden });
 }
 
-/** 托盘「隐藏桌宠」勾选框读这个。 */
+/** 托盘那对开关读这个：藏着就显示「找回桌宠」，露着显示「隐藏桌宠」。 */
 export function isPetHidden(): boolean {
   return petHiddenNow();
 }
 
-/** 托盘勾选框：勾上＝藏起来并记住，取消＝出来并记住。 */
+/** 托盘开关：true＝藏起来并记住（开机也藏），false＝出来并记住。 */
 export function setPetHidden(hidden: boolean): void {
   if (hidden) hideMainWindow();
   else showMainWindow();
@@ -383,7 +396,8 @@ export function setPanelVisibility(visible: boolean, height?: number, needsActio
     const nextHeight = fitPanelHeight(height);
     if (panelOpen) {
       // 面板开着换了内容（比如完成面板换成权限面板），高度跟着换，左上角不动
-      if (nextHeight !== panelHeight) {
+      // 差 2 像素以内不改：那是缩放取整的零头，跟着改会一点点滚大（2026-11-04）
+      if (Math.abs(nextHeight - panelHeight) > PANEL_HEIGHT_JITTER) {
         panelHeight = nextHeight;
         const current = mainWindow.getBounds();
         moveTo(current.x, current.y);
@@ -439,7 +453,7 @@ export function setPanelVisibility(visible: boolean, height?: number, needsActio
 // 把幼苗叫回默认位置（右下角）。拖丢了、跑到看不见的地方了，托盘菜单点一下就回来。
 export function recallPetWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  log.记("用户从托盘把幼苗叫回来了", "recallPetWindow");
+  log.记("用户从托盘把桌宠叫回默认位置", "recallPetWindow");
   const workArea = screen.getPrimaryDisplay().workArea;
   const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);
   const home = defaultWindowPosition(workArea, designSize(), margin);
