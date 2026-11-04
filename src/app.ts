@@ -29,7 +29,7 @@ import { closeBookmarkPanel, initBookmarkPanel, relaunchWithNewCode, toggleBookm
 import { closeQuickCmd, initQuickCmd } from "./quickcmd/quickcmd-window";
 import { closeVivoClip, initVivoClip, vivoClipStatus } from "./vivo/vivo-clip";
 import { closeOverview, initOverview, openOverview, type BlockInfo } from "./overview/overview-window";
-import { initGeminiQuota, closeGeminiQuota, toggleGeminiQuota, geminiQuotaStatus } from "./gemini/gemini-quota";
+import { initGeminiQuota, closeGeminiQuota, geminiQuotaStatus } from "./gemini/gemini-quota";
 import { controlsMode, lifecycleMode, screenshotMode, singleInstanceHostMode, smokeMode, testMode, testModeName } from "./testkit/modes";
 import { runControlsTest } from "./testkit/controls-test";
 import { runLifecycleTest } from "./testkit/lifecycle";
@@ -47,7 +47,9 @@ if (testMode && !isIsolatedRun()) {
   process.env.AGENT_PET_HUB_HOME = testRoot;
 }
 if (testMode) process.env.AGENT_PET_ISOLATED = "1";
-if (process.env.AGENT_PET_HUB_HOME) app.setPath("userData", join(process.env.AGENT_PET_HUB_HOME, "electron"));
+const resolvedDataRoot = appDataRoot();
+if (!process.env.AGENT_PET_HUB_HOME) process.env.AGENT_PET_HUB_HOME = resolvedDataRoot;
+app.setPath("userData", join(resolvedDataRoot, "electron"));
 
 const log = createLogger("app");
 
@@ -144,8 +146,8 @@ async function bootstrap(): Promise<void> {
   if (!testMode) initQuickCmd();
   // vivo 截图复制（独立板块，2026-10-18 并入）：后台盯剪贴板。自测不起，别动真机剪贴板。
   if (!testMode) initVivoClip();
-  // Gemini额度（独立第五板块）：官网只读采集，提示球不聚焦、不截鼠标，异常不连坐原有板块。
-  if (!testMode) await initGeminiQuota({ anchor: () => getPetWindow()?.getBounds() });
+  // Gemini额度（独立第五板块）：只保留后台只读取数；旧黑条不再创建，也不再绑定主宠位置。
+  if (!testMode) await initGeminiQuota({ backgroundOnly: true });
   // 板块与内存（2026-10-18）：右键「板块与内存」看装了几个板块、占多少内存。新并入板块记得往 blockList 里加一行。
   initOverview(blockList);
   const cleanupTimer = setInterval(() => hub.cleanup(), 10_000);
@@ -175,7 +177,7 @@ async function bootstrap(): Promise<void> {
     });
   }
   watchDisplayChanges();
-  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel, openOverview, openGeminiQuota: toggleGeminiQuota });
+  const trayActions = createTrayActions(hub, { openBookmark: toggleBookmarkPanel, openOverview });
   tray = createTray(hub, trayActions);
   hub.on("snapshot", (snapshot) => {
     const window = getPetWindow();
@@ -241,7 +243,7 @@ function blockList(): BlockInfo[] {
       state: vivo.state,
       detail: `${vivo.converted ? `这次开机补了 ${vivo.converted} 张` : "这次开机还没补过"}｜拖图补丁：${vivo.dragPatch}`,
     },
-    { name: "Gemini 用量", what: "每账号一个小提示球，只常显5小时额度和重置时间；周额度后台保留", state: gemini.state, detail: gemini.detail },
+    { name: "Gemini 用量", what: "官网用量后台只读采集，旧提示条已停显；新小球仍在独立预览", state: gemini.state, detail: gemini.detail },
   ];
 }
 

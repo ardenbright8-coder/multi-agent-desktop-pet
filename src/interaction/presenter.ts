@@ -51,17 +51,18 @@ function questionExplanation(event: AgentEvent, interaction: InteractionPayload)
 }
 
 function permissionExplanation(event: AgentEvent, interaction: InteractionPayload, inferredImpact: string): string {
-  const situation = sentence(event.summary || event.title || "Agent 正在处理当前任务");
-  const reason = sentence(event.reason || "Agent 没有说明为什么需要这项权限，原因还没核实");
   const action = interaction.action || event.tool || "未提供具体操作";
   const resources = interaction.resources?.length
     ? interaction.resources.join("、")
     : event.paths?.length ? event.paths.join("、") : event.target || "未提供作用范围";
+  const rawSummary = (event.summary || event.title || "Agent 正在处理当前任务").trim();
+  const situation = rawSummary && rawSummary !== resources ? sentence(rawSummary) : "";
+  const reason = event.reason && event.reason.trim() ? sentence(event.reason) : "";
   const scope = sentence(`这次权限只覆盖“${action}”，涉及 ${resources}`);
   const impact = sentence(interaction.impact || inferredImpact || "负面影响还没核实");
   const rollback = sentence(interaction.rollback || "能否回退还没核实");
   const unknowns = interaction.unknowns ? sentence(`仍未核实：${interaction.unknowns}`) : "";
-  return `${situation}${reason}${scope}${impact}${rollback}${unknowns}你从下面选择这次要给的权限就行。`;
+  return `${situation}${reason}${scope}${impact}${rollback}${unknowns}`;
 }
 
 function optionDifference(interaction: InteractionPayload): string {

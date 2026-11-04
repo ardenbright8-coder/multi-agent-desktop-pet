@@ -449,6 +449,14 @@ export function initBookmarkPanel(options?: BookmarkPanelOptions): void {
     startIdleOrganizer();
   }
   startHandoffWatch();
+  if (liveRestart && !isIsolatedRun() && !process.argv.includes(RELAUNCH_FLAG)) {
+    const codeAt = latestSourceTime();
+    const builtAt = distBuiltTime();
+    if (codeAt > builtAt + 2_000) {
+      log.记(`开机自检：发现源码（${new Date(codeAt).toISOString()}）比 dist（${new Date(builtAt).toISOString()}）新，后台自动编译换新…`, "reload");
+      setTimeout(() => { void relaunchWithNewCode(); }, 1_500);
+    }
+  }
   if (options?.resident) {
     try {
       const win = ensurePanel();
@@ -778,9 +786,9 @@ function startSinkTimer(): void {
   sinkTimer.unref();
 }
 
-/** 源码夹里最新一份文件的改动时间。只扫 src，不扫 node_modules。 */
+/** 源码夹里最新一份文件的改动时间。扫 src 和 integrations，不扫 node_modules。 */
 function latestSourceTime(): number {
-  const root = join(app.getAppPath(), "src");
+  const appRoot = app.getAppPath();
   let latest = 0;
   const walk = (dir: string): void => {
     let entries;
@@ -804,8 +812,18 @@ function latestSourceTime(): number {
       }
     }
   };
-  walk(root);
+  walk(join(appRoot, "src"));
+  walk(join(appRoot, "integrations"));
   return latest;
+}
+
+/** 当前 dist/app.js 的编译时间（用来判另一套系统改了源码却没编译的情况）。 */
+function distBuiltTime(): number {
+  try {
+    return statSync(join(app.getAppPath(), "dist", "app.js")).mtimeMs;
+  } catch {
+    return PROCESS_STARTED_AT;
+  }
 }
 
 type RelaunchResult = { ok: boolean; mode: "relaunch"; error?: string };
@@ -1014,10 +1032,11 @@ function registerIpc(): void {
   });
   ipcMain.handle("bookmark:code-status", () => {
     const codeAt = latestSourceTime();
+    const builtAt = Math.min(PROCESS_STARTED_AT, distBuiltTime());
     return {
-      startedAt: PROCESS_STARTED_AT,
+      startedAt: builtAt,
       codeAt,
-      stale: codeAt > PROCESS_STARTED_AT + 2000,
+      stale: codeAt > builtAt + 2000,
     };
   });
 

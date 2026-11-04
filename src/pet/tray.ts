@@ -58,7 +58,7 @@ export function createTray(hub: AgentHub, actions: PetTrayActions): Tray {
       { label: "设置（大小与活泼程度）", click: actions.openSettings },
       { label: "书签台（随手记）", click: () => actions.openBookmark?.() },
       { label: "板块与内存", click: () => actions.openOverview?.() },
-      { label: "Gemini用量提示球（显示/收起）", click: () => actions.openGeminiQuota?.() },
+      ...(actions.openGeminiQuota ? [{ label: "Gemini用量提示球（显示/收起）", click: actions.openGeminiQuota }] : []),
       { label: "聊天框换个边", click: actions.flipNote },
       { label: `事件中心：${diagnostics.server.running ? "正常" : "异常"}`, enabled: false },
       { label: `已索引：${diagnostics.journal.count} 条`, enabled: false },

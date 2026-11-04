@@ -23,7 +23,7 @@ Report ($backups.Count -gt 0) "原版备份：$($backups.Count) 份（$store\原
 
 Write-Host "== 桌宠的 vivo 截图复制（点「复制」后 Ctrl+V 能贴）"
 $pet = @(Get-CimInstance Win32_Process -Filter "name='electron.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*多Agent桌面宠物*" })
-Report ($pet.Count -gt 0) "桌宠在跑" "打开桌宠（入口在桌宠项目「入口（开发版·跑源码）」）"
+Report ($pet.Count -gt 0) "桌宠在跑" "打开桌宠（入口 F:\程序\0016_多Agent桌面宠物\入口）"
 $log = Get-ChildItem (Join-Path $env:LOCALAPPDATA "我的App日志\多Agent桌面宠物") -Filter "vivo-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $ready = $log -and (Select-String -LiteralPath $log.FullName -Pattern "vivo 截图复制就绪" -Quiet)
 Report $ready "vivo 截图复制板块起来过$(if ($log) { "（日志 $($log.Name)）" })" "重开桌宠；还不行看桌宠日志 vivo-*.log"

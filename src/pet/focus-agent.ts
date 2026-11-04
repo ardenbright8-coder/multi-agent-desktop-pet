@@ -20,6 +20,7 @@ const AGENT_NEEDLES: Record<string, string[]> = {
   pi: ["pi coding", "pi-ai", "pi agent"],
   grok: ["grok", "grok build"],
   codex: ["codex"],
+  antigravity: ["antigravity", "反重力"],
   simulator: [],
 };
 
@@ -105,6 +106,7 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "elseif ($agent -eq 'pi') { $needles += 'pi coding','pi-ai','pi agent' }",
     "elseif ($agent -eq 'grok') { $needles += 'grok','grok build' }",
     "elseif ($agent -eq 'codex') { $needles += 'codex' }",
+    "elseif ($agent -eq 'antigravity') { $needles += 'antigravity','反重力' }",
     "elseif ($agent) { $needles += $agent }",
     "if ($project -and $project.Length -ge 2) { $needles += $project }",
     "function Activate-Handle([IntPtr]$hwnd, [string]$label) {",

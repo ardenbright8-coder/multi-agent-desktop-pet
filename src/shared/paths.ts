@@ -1,8 +1,39 @@
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
+const DATA_LOCATION_FILE = join(__dirname, "..", "..", "数据夹位置.json");
+const DEFAULT_DATA_CANDIDATES = ["F:\\应用数据\\AgentPetHub"];
+
+function resolveSharedDataRoot(): string | null {
+  let candidates = DEFAULT_DATA_CANDIDATES;
+  try {
+    if (existsSync(DATA_LOCATION_FILE)) {
+      const parsed = JSON.parse(readFileSync(DATA_LOCATION_FILE, "utf8").replace(/^\uFEFF/, "")) as { 候选?: unknown };
+      if (Array.isArray(parsed?.候选)) {
+        const list = parsed.候选.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim());
+        if (list.length) candidates = list;
+      }
+    }
+  } catch {
+    // 坏档回落默认候选
+  }
+  for (const dir of candidates) {
+    try {
+      if (existsSync(dir)) return dir;
+    } catch {
+      // 盘符不存在时跳过
+    }
+  }
+  return null;
+}
+
 export function appDataRoot(): string {
   if (process.env.AGENT_PET_HUB_HOME) return process.env.AGENT_PET_HUB_HOME;
+  if (process.env.AGENT_PET_ISOLATED !== "1") {
+    const shared = resolveSharedDataRoot();
+    if (shared) return shared;
+  }
   const roaming = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
   return join(roaming, "AgentPetHub");
 }

@@ -47,8 +47,8 @@ function ensurePetWindowSize(): void {
 }
 // 面板窗口最高 740（这台机工作区 778）。抽屉、设置用满高；
 // 询问／权限／完成面板由界面量好内容高度传过来，内容少窗口就矮（2026-10-01，用户嫌面板挡东西）。
-export const PANEL_WINDOW_SIZE = { width: 440, height: 740 };
-const PANEL_MIN_HEIGHT = 200;
+export const PANEL_WINDOW_SIZE = { width: 400, height: 740 };
+const PANEL_MIN_HEIGHT = 140;
 let panelHeight = PANEL_WINDOW_SIZE.height;
 
 function fitPanelHeight(requested?: number): number {
@@ -307,23 +307,49 @@ export function hideMainWindow(): void {
   rememberHidden(true);
 }
 
-function readPreferences(): { x?: unknown; y?: unknown; hidden?: unknown } {
+function readPreferences(): { x?: unknown; y?: unknown; panelX?: unknown; panelY?: unknown; hidden?: unknown } {
   try {
     if (!existsSync(preferencesPath())) return {};
-    return JSON.parse(readFileSync(preferencesPath(), "utf8")) as { x?: unknown; y?: unknown; hidden?: unknown };
+    return JSON.parse(readFileSync(preferencesPath(), "utf8")) as { x?: unknown; y?: unknown; panelX?: unknown; panelY?: unknown; hidden?: unknown };
   } catch {
     return {};
   }
 }
 
 /** 只改给的那几项，别的照旧（存位置别把「藏起来」冲掉）。 */
-function savePreferences(patch: { x?: number; y?: number; hidden?: boolean }): void {
+function savePreferences(patch: { x?: number; y?: number; panelX?: number; panelY?: number; hidden?: boolean }): void {
   writeJsonAtomic(preferencesPath(), { ...readPreferences(), ...patch });
 }
 
 function loadWindowBounds(): { x: number; y: number } | null {
   const value = readPreferences();
   return Number.isFinite(value.x) && Number.isFinite(value.y) ? { x: value.x as number, y: value.y as number } : null;
+}
+
+function loadPanelBounds(): { x: number; y: number } | null {
+  const value = readPreferences();
+  return Number.isFinite(value.panelX) && Number.isFinite(value.panelY)
+    ? { x: value.panelX as number, y: value.panelY as number }
+    : null;
+}
+
+/** 弹窗默认落点：最右那块屏幕的右侧、垂直约 2/3 高度处（2026-11-01 用户拍板）。 */
+function defaultPanelPosition(height: number): { x: number; y: number } {
+  const displays = screen.getAllDisplays();
+  const area = displays.length
+    ? displays.reduce((best, cur) =>
+        (cur.workArea.x + cur.workArea.width > best.workArea.x + best.workArea.width ? cur : best),
+      ).workArea
+    : screen.getPrimaryDisplay().workArea;
+  const margin = Math.round(PET_PHYSICAL_MARGIN / PET_SCALE);
+  const x = area.x + area.width - PANEL_WINDOW_SIZE.width - margin;
+  const y = area.y + Math.round((area.height * 2) / 3) - Math.round(height / 2);
+  const workAreas = displays.length ? displays.map((d) => d.workArea) : [area];
+  return clampWindowPosition(
+    { x, y },
+    workAreas,
+    { width: PANEL_WINDOW_SIZE.width + EDGE_SAFETY, height: height + EDGE_SAFETY },
+  );
 }
 
 export function persistWindowPosition(): void {
@@ -367,14 +393,17 @@ export function setPanelVisibility(visible: boolean, height?: number, needsActio
       syncHiddenReveal(needsAction);
       return;
     }
-    // 只把窗口撑大，左上角不动 —— 幼苗贴在窗口顶部，所以它在屏幕上原地不动。
     const before = mainWindow.getBounds();
     positionBeforePanel = { x: before.x, y: before.y };
     panelOpen = true;
     panelHeight = nextHeight;
+    const savedPanel = loadPanelBounds();
+    const target = savedPanel
+      ? clampWindowPosition(savedPanel, workAreas, safeWindowSize())
+      : defaultPanelPosition(panelHeight);
     mainWindow.setBounds({
-      x: before.x,
-      y: before.y,
+      x: target.x,
+      y: target.y,
       width: PANEL_WINDOW_SIZE.width,
       height: panelHeight,
     }, false);
@@ -393,10 +422,10 @@ export function setPanelVisibility(visible: boolean, height?: number, needsActio
     shownForPanel = false;
     if (petHiddenNow()) mainWindow.hide();
   }
-  // 缩回幼苗大小：左上角还是不动，幼苗照样不跳。
-  const current = mainWindow.getBounds();
+  // 缩回幼苗大小并归还面板展开前的位置。
+  const base = positionBeforePanel ?? mainWindow.getBounds();
   const shrunk = clampWindowPosition(
-    { x: current.x, y: current.y },
+    { x: base.x, y: base.y },
     workAreas,
     { width: PET_WINDOW_SIZE.width + EDGE_SAFETY, height: PET_WINDOW_SIZE.height + EDGE_SAFETY },
   );
@@ -473,7 +502,11 @@ export function stopDragging(): void {
   }
   dragging = false;
   applyMouseMode();
-  persistWindowPosition();
+  if (panelOpen && landed) {
+    savePreferences({ panelX: landed.x, panelY: landed.y });
+  } else {
+    persistWindowPosition();
+  }
 }
 
 // 按光标位置挪一格。整窗一律锁在工作区内——用户明确要求「框不要超出屏幕」，

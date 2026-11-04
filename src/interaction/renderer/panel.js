@@ -1,6 +1,18 @@
 // 询问／权限面板的界面侧：怎么画、怎么收答案、怎么交回 Agent。
 // 面板文字一律来自事件本身（主进程 interaction\presenter.ts 生成），这儿不许写死任何一句说明。
 
+function isDirectSingleChoice(pending) {
+  return Boolean(
+    pending
+    && pending.responseCapability
+    && Array.isArray(pending.prompts)
+    && pending.prompts.length === 1
+    && !pending.prompts[0].multiple
+    && Array.isArray(pending.prompts[0].options)
+    && pending.prompts[0].options.length > 0
+  );
+}
+
 function renderInteraction(session) {
   const pending = session?.pendingInteraction;
   if (!pending || drawerOpen || settingsOpen || dismissedInteractions.has(pending.eventId)) {
@@ -13,17 +25,36 @@ function renderInteraction(session) {
   activeInteractionEventId = pending.eventId;
   openPanel("interaction");
   elements.interaction.hidden = false;
+  const directSingle = isDirectSingleChoice(pending);
+  elements.interaction.classList.toggle("direct-single", directSingle);
+  const actions = document.querySelector("#interaction-actions");
+  if (actions) actions.hidden = directSingle;
+  const helpPopover = document.querySelector("#interaction-help-popover");
+  if (helpPopover && !samePending) helpPopover.hidden = true;
   document.querySelector("#interaction-agent").textContent = labels[session.agent] || session.agent;
   const type = document.querySelector("#interaction-type");
   type.textContent = pending.mode === "question" ? "询问" : "权限";
   type.className = `type-badge ${pending.mode}`;
+  const queueBadge = document.querySelector("#interaction-queue");
+  if (queueBadge) {
+    const pendingList = snapshot.sessions.filter(
+      (item) => item.pendingInteraction && !dismissedInteractions.has(item.pendingInteraction.eventId),
+    );
+    if (pendingList.length > 1) {
+      const idx = Math.max(0, pendingList.findIndex((item) => item.pendingInteraction?.eventId === pending.eventId)) + 1;
+      queueBadge.textContent = `${idx}/${pendingList.length}`;
+      queueBadge.hidden = false;
+    } else {
+      queueBadge.hidden = true;
+    }
+  }
   document.querySelector("#interaction-heading").textContent = pending.title;
   document.querySelector("#interaction-explanation").textContent = pending.explanation;
   // 同一个弹窗（eventId 没变）时不重建选项/输入区——每次快照都重建的话，
   // 用户在“自己输入”里打的字会被清掉（2026-08-13 实机：输 1234 过一会就没了，
   // 其实是别的窗口状态事件一进来就把整个面板重画了）。
   if (!samePending) {
-    elements.interactionPrompts.innerHTML = pending.prompts.map(renderPrompt).join("");
+    elements.interactionPrompts.innerHTML = pending.prompts.map((prompt, index) => renderPrompt(prompt, index, directSingle)).join("");
   }
   const fallback = document.querySelector("#interaction-fallback");
   fallback.hidden = pending.responseCapability;
@@ -38,7 +69,24 @@ function renderInteraction(session) {
   syncPanelVisibility();
 }
 
-function renderPrompt(prompt, promptIndex) {
+function renderPrompt(prompt, promptIndex, directSingle = false) {
+  if (directSingle) {
+    const hasRec = prompt.options.some((o) => o.recommended);
+    const options = `<div class="interaction-options-row">${prompt.options.map((option, idx) => {
+      const isRec = option.recommended || (!hasRec && idx === 0);
+      const isDanger = option.id === "reject" || /拒绝|不准|deny|reject/i.test(option.label);
+      return `
+        <label class="interaction-option pill-option${isRec ? " recommended" : ""}${isDanger ? " danger" : ""}" title="${escapeHtml(option.description || option.label)}">
+          <input type="radio" name="prompt-${promptIndex}" value="${escapeHtml(option.id)}" data-direct-option="1" />
+          <span><strong>${escapeHtml(option.label)}</strong></span>
+        </label>
+      `;
+    }).join("")}</div>`;
+    const custom = prompt.allowCustomInput ? `
+      <textarea class="compact-custom-input" data-custom-input="${escapeHtml(prompt.id)}" rows="1" placeholder="或直接写你的话，按 Enter 交回…"></textarea>
+    ` : "";
+    return `<fieldset class="interaction-prompt" data-prompt-id="${escapeHtml(prompt.id)}"><legend>${escapeHtml(prompt.question)}</legend>${options}${custom}</fieldset>`;
+  }
   const inputType = prompt.multiple ? "checkbox" : "radio";
   const options = prompt.options.map((option) => `
     <label class="interaction-option">
@@ -51,7 +99,7 @@ function renderPrompt(prompt, promptIndex) {
       <input type="${inputType}" name="prompt-${promptIndex}" value="__custom__" />
       <span><strong>自己输入</strong><em>按你的原话交回 Agent，不替你扩写。</em></span>
     </label>
-    <textarea data-custom-input="${escapeHtml(prompt.id)}" rows="3" placeholder="写下你的做法、限制或回答"></textarea>
+    <textarea data-custom-input="${escapeHtml(prompt.id)}" rows="2" placeholder="写下你的做法、限制或回答"></textarea>
   ` : "";
   return `<fieldset class="interaction-prompt" data-prompt-id="${escapeHtml(prompt.id)}"><legend>${escapeHtml(prompt.question)}</legend>${options}${custom}</fieldset>`;
 }
@@ -81,6 +129,7 @@ function openInteraction(session) {
 function advanceToNextPending() {
   const next = snapshot.sessions.find((session) => session.pendingInteraction && !dismissedInteractions.has(session.pendingInteraction.eventId));
   renderInteraction(next);
+  if (!next && typeof flushQueuedCompletion === "function") flushQueuedCompletion();
 }
 
 async function submitInteraction() {
@@ -94,12 +143,17 @@ async function submitInteraction() {
     window.agentPet.focusAgent(target);
     return;
   }
+  const directSingle = isDirectSingleChoice(pending);
   const answers = [];
   for (const prompt of pending.prompts) {
     const fieldset = elements.interactionPrompts.querySelector(`[data-prompt-id="${cssEscape(prompt.id)}"]`);
     const selected = [...fieldset.querySelectorAll("input:checked")].map((input) => input.value);
     const customText = fieldset.querySelector("textarea")?.value.trim() || "";
     const optionIds = selected.filter((value) => value !== "__custom__");
+    if (!optionIds.length && !customText && directSingle && prompt.options?.length) {
+      const def = prompt.options.find((o) => o.recommended) || prompt.options[0];
+      if (def?.id) optionIds.push(def.id);
+    }
     // 写了字就算自己填，不必先点「自己输入」那个圈。对照 Clawd Other 文本框：有字就能提交。
     if (!optionIds.length && !customText) {
       showInteractionError("请先为每个问题选择一项，或写下自己的回答。");

@@ -13,11 +13,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import cli from "../dist/bookmark/cli-server.js";
+import paths from "../dist/shared/paths.js";
 
-const appData = process.env.APPDATA || join(process.env.USERPROFILE ?? homedir(), "AppData", "Roaming");
-const portFile = process.env.AGENT_PET_HUB_HOME
-  ? join(process.env.AGENT_PET_HUB_HOME, "bookmark", "cli-port.json")
-  : join(appData, "AgentPetHub", "bookmark", "cli-port.json");
+const portFile = paths.bookmarkCliPortPath();
 
 function die(message, code = 1) {
   console.error(message);
