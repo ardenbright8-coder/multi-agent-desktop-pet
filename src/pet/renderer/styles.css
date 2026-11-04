@@ -877,3 +877,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--success); o
 @media (prefers-reduced-transparency: reduce) {
   .status-note, .interaction-panel, .drawer, .settings-panel { background: var(--forest); backdrop-filter: none; }
 }
+
+/* 面板输入框粘进来的图（2026-11-04）：一排小缩略图，右上角 × 去掉 */
+.panel-images { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.panel-images[hidden] { display: none; }
+.panel-image { position: relative; width: 52px; height: 52px; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.18); background: rgba(0,0,0,0.25); }
+.panel-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.panel-image-remove { position: absolute; top: 1px; right: 1px; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,0.65); color: #fff; font-size: 13px; line-height: 18px; cursor: pointer; }
+.panel-image-remove:hover { background: rgba(200,60,60,0.9); }

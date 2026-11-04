@@ -1,6 +1,10 @@
 // 询问／权限面板的界面侧：怎么画、怎么收答案、怎么交回 Agent。
 // 面板文字一律来自事件本身（主进程 interaction\presenter.ts 生成），这儿不许写死任何一句说明。
 
+// 输入框里粘进来的图（2026-11-04）：存进 24 小时临时夹，交回时在附言后面带上「附图：位置」，AI 自己打开看。
+let panelImages = []; // { path, url }
+let panelImageSaves = [];
+
 function isDirectSingleChoice(pending) {
   return Boolean(
     pending
@@ -54,6 +58,8 @@ function renderInteraction(session) {
   // 用户在“自己输入”里打的字会被清掉（2026-08-13 实机：输 1234 过一会就没了，
   // 其实是别的窗口状态事件一进来就把整个面板重画了）。
   if (!samePending) {
+    panelImages = [];
+    panelImageSaves = [];
     elements.interactionPrompts.innerHTML = pending.prompts.map((prompt, index) => renderPrompt(prompt, index, directSingle)).join("");
   }
   const fallback = document.querySelector("#interaction-fallback");
@@ -144,11 +150,19 @@ async function submitInteraction() {
     return;
   }
   const directSingle = isDirectSingleChoice(pending);
+  // 图还在存就等它存完，免得点得快把图丢了
+  if (panelImageSaves.length) await Promise.allSettled(panelImageSaves);
+  const imageLines = panelImages.map((image) => `附图：${image.path}`).join("\n");
+  let imagesAttached = false;
   const answers = [];
   for (const prompt of pending.prompts) {
     const fieldset = elements.interactionPrompts.querySelector(`[data-prompt-id="${cssEscape(prompt.id)}"]`);
     const selected = [...fieldset.querySelectorAll("input:checked")].map((input) => input.value);
-    const customText = fieldset.querySelector("textarea")?.value.trim() || "";
+    let customText = fieldset.querySelector("textarea")?.value.trim() || "";
+    if (imageLines && !imagesAttached && fieldset.querySelector("textarea")) {
+      customText = [customText, imageLines].filter(Boolean).join("\n");
+      imagesAttached = true;
+    }
     const optionIds = selected.filter((value) => value !== "__custom__");
     if (!optionIds.length && !customText && directSingle && prompt.options?.length) {
       const def = prompt.options.find((o) => o.recommended) || prompt.options[0];
@@ -199,3 +213,69 @@ function showInteractionError(message) {
   elements.interactionError.hidden = !message;
   elements.interactionError.textContent = message;
 }
+
+// ═══ 输入框粘图 / 拖图 ═══
+function addPanelImageFile(file, textarea) {
+  if (!file || !file.type?.startsWith("image/")) return;
+  const save = new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const url = String(reader.result || "");
+      const path = await window.agentPet.savePanelImage(url).catch(() => null);
+      if (path) {
+        panelImages.push({ path, url });
+        renderPanelImages(textarea);
+      } else {
+        showInteractionError("这张图存不下来（太大或格式不认），换一张试试。");
+      }
+      resolve();
+    };
+    reader.onerror = () => resolve();
+    reader.readAsDataURL(file);
+  });
+  panelImageSaves.push(save);
+}
+
+function renderPanelImages(textarea) {
+  const fieldset = textarea?.closest("fieldset") || elements.interactionPrompts.querySelector("fieldset");
+  if (!fieldset) return;
+  let strip = fieldset.querySelector(".panel-images");
+  if (!strip) {
+    strip = document.createElement("div");
+    strip.className = "panel-images";
+    fieldset.appendChild(strip);
+  }
+  strip.innerHTML = panelImages.map((image, index) => `
+    <span class="panel-image" title="${escapeHtml(image.path)}">
+      <img src="${escapeHtml(image.url)}" alt="附图 ${index + 1}" />
+      <button type="button" class="panel-image-remove" data-remove-image="${index}" aria-label="去掉这张图">×</button>
+    </span>`).join("");
+  strip.hidden = panelImages.length === 0;
+  syncPanelVisibility();
+}
+
+elements.interactionPrompts.addEventListener("paste", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLTextAreaElement)) return;
+  const files = [...(event.clipboardData?.items || [])].filter((item) => item.kind === "file" && item.type.startsWith("image/")).map((item) => item.getAsFile());
+  if (!files.length) return; // 纯文字照常粘
+  event.preventDefault();
+  for (const file of files) addPanelImageFile(file, target);
+});
+elements.interaction.addEventListener("dragover", (event) => {
+  if ([...(event.dataTransfer?.items || [])].some((item) => item.kind === "file")) event.preventDefault();
+});
+elements.interaction.addEventListener("drop", (event) => {
+  const files = [...(event.dataTransfer?.files || [])].filter((file) => file.type.startsWith("image/"));
+  if (!files.length) return;
+  event.preventDefault();
+  const textarea = elements.interactionPrompts.querySelector("textarea");
+  for (const file of files) addPanelImageFile(file, textarea);
+});
+elements.interactionPrompts.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-remove-image]") : null;
+  if (!button) return;
+  event.stopPropagation();
+  panelImages.splice(Number(button.dataset.removeImage), 1);
+  renderPanelImages(button.closest("fieldset")?.querySelector("textarea"));
+});
