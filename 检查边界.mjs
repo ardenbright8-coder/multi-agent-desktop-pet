@@ -58,7 +58,7 @@ const publicEntries = {
   shared: ["protocol.ts", "paths.ts", "atomic-file.ts", "log.ts"],
   events: ["hub.ts", "simulation.ts"],
   interaction: ["broker.ts", "presenter.ts", "permission-explainer.ts"],
-  channel: ["ipc-server.ts", "ipc-client.ts", "ipc-handlers.ts", "preload.ts", "cli-emit.ts"],
+  channel: ["ipc-server.ts", "ipc-client.ts", "ipc-handlers.ts", "preload.ts", "cli-emit.ts", "permission-http.ts"],
   pet: ["window.ts", "window-ipc.ts", "tray.ts"],
   integrations: ["manager.ts"],
   bookmark: ["panel-window.ts", "store.ts", "preload.ts", "dock.ts"],

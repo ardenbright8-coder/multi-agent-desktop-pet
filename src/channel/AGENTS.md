@@ -9,11 +9,13 @@
 | `ipc-handlers.ts` | 界面要快照／搜索／诊断／交答案／发模拟事件 |
 | `preload.ts` | 渲染层能看见的那点 API（contextBridge，沙箱开着） |
 | `cli-emit.ts` | 命令行往桌宠发一条事件 |
+| `permission-http.ts` | Claude 权限直拨线：Claude 用网址钩子把权限请求打到 `127.0.0.1:23380` 起的端口，挂断＝终端先答了 |
 
 ## 对外露出什么
 
 ```
 LocalIpcServer     start  close
+startPermissionHttp(hub, { hookScript })  → { port, url, close }
 LocalIpcClient     request  publish  search
 registerHubIpc(hub, options)
 ```
@@ -24,6 +26,7 @@ registerHubIpc(hub, options)
 
 ## 改之前先知道
 
+- **唯一例外：Claude 权限直拨线**（2026-11-04）。Claude 的钩子只认网址，所以给它开了本机端口（23380–23384 轮着试，避开 clawd 的 23333–23337）。只管这一件，事件主链路照旧走管道；端口换了由启动和每 3 分钟体检改 settings.json，打不通 Claude 自己回终端问，不卡。
 - 🚫 **不用固定 localhost 端口做主链路**：端口冲突、缓存旧端口、连错服务，全都更难查。现在用的是**每次随机命名的管道**，每次请求重新读 discovery，不缓存旧连接。
 - 🚫 **不把长期 WebSocket 当唯一真相**：桌宠重启后应该靠下一次短请求自然恢复。
 - 改 `preload.ts` 暴露的 API，**渲染层那几份 js 和 `pet\renderer\global.d.ts` 要一起改**，否则界面调了个不存在的方法，运行时才炸。

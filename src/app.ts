@@ -13,7 +13,8 @@ import { createLogger, lastLogError, logRoot, startLog } from "./shared/log";
 import { AgentHub } from "./events/hub";
 import { LocalIpcServer } from "./channel/ipc-server";
 import { registerHubIpc } from "./channel/ipc-handlers";
-import { ensureAgentHookPaths, ensureGenericHookBridge, ensureGrokHooks, ensureOpenCodeIntegration } from "./integrations/manager";
+import { startPermissionHttp, type PermissionHttpServer } from "./channel/permission-http";
+import { ensureAgentHookPaths, ensureGenericHookBridge, ensureGrokHooks, ensureOpenCodeIntegration, hookBridgePath } from "./integrations/manager";
 import {
   createPetWindow,
   ensureFullyVisible,
@@ -55,6 +56,7 @@ const log = createLogger("app");
 
 let tray: Tray | null = null;
 let ipcServer: LocalIpcServer | null = null;
+let permissionHttp: PermissionHttpServer | null = null;
 let quitCleanupStarted = false;
 let cleanupComplete = false;
 let secondInstanceCount = 0;
@@ -81,6 +83,20 @@ if (!gotLock) {
     logError(error);
     app.exit(1);
   });
+}
+
+/** 对一遍钩子桥和三家钩子：歪了就修、记一笔；没歪什么都不写。启动和每 3 分钟体检共用。 */
+function checkAgentHooks(when: "启动" | "体检"): void {
+  try {
+    const bridge = ensureGenericHookBridge();
+    if (bridge.reason) log.记(`钩子桥没更新（${bridge.reason}）：${bridge.target}`, "hook-audit");
+    else if (bridge.changed) log.记(`${when}：钩子桥补回来了 ${bridge.target}`, "hook-audit");
+    const paths = ensureAgentHookPaths({ permissionUrl: permissionHttp?.url });
+    if (paths.changed.length) log.记(`${when}：钩子已改对（桥 ${bridge.target}${permissionHttp ? `，Claude 权限走直拨 ${permissionHttp.url}` : ""}）：${paths.changed.join("、")}`, "hook-audit");
+  } catch (error) {
+    log.出事(`${when}：对钩子失败`, error, "hook-audit");
+    logError(error);
+  }
 }
 
 async function bootstrap(): Promise<void> {
@@ -118,15 +134,17 @@ async function bootstrap(): Promise<void> {
   // 只动自己那份桥和自己那几条钩子命令。程序或数据夹换了地方，重开一次就接上（2026-10-31）。
   // 验证脚本起的隔离实例（数据夹在临时夹）不算真机，不许改各家钩子（2026-11-04）。
   if (!testMode && !isIsolatedRun()) {
+    // Claude 权限直拨线（2026-11-04，学 clawd-on-desk）：Claude 直接把权限请求打到本机端口，挂断＝终端先答了。
     try {
-      const bridge = ensureGenericHookBridge();
-      if (bridge.reason) log.记(`钩子桥没更新（${bridge.reason}）：${bridge.target}`, "bootstrap");
-      const paths = ensureAgentHookPaths();
-      if (paths.changed.length) log.记(`钩子路径已改指 ${bridge.target}：${paths.changed.join("、")}`, "bootstrap");
+      permissionHttp = await startPermissionHttp(hub, { hookScript: hookBridgePath });
     } catch (error) {
-      log.出事("对钩子路径失败", error, "bootstrap");
-      logError(error);
+      log.出事("直拨线起不来，Claude 权限退回老办法", error, "bootstrap");
     }
+    checkAgentHooks("启动");
+    // 钩子体检（2026-11-04，学 clawd 的设置看门）：程序自己每 3 分钟对一遍三家钩子，
+    // 被测试、别的程序、手改弄歪了自己修回来，不再「一整天没人发现」。没歪就什么都不写。
+    const hookAudit = setInterval(() => checkAgentHooks("体检"), 3 * 60_000);
+    hookAudit.unref();
   }
 
   registerHubIpc(hub, {
@@ -204,7 +222,7 @@ async function bootstrap(): Promise<void> {
     closeQuickCmd();
     closeVivoClip();
     closeOverview();
-    Promise.all([ipcServer?.close(), closeGeminiQuota()])
+    Promise.all([ipcServer?.close(), permissionHttp?.close(), closeGeminiQuota()])
       .catch(logError)
       .finally(() => {
         cleanupComplete = true;

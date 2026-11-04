@@ -1,6 +1,6 @@
 // multi-agent-desktop-pet managed generic hook bridge v1
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
@@ -65,6 +65,9 @@ if (argv[0] === "--watch-pending") {
 }
 
 const [agentArg = "generic", hookArg = "context.updated"] = argv;
+// 「直拨」接法（2026-11-04，学 clawd-on-desk）：Claude 用网址钩子把权限请求直接打给桌宠，桌宠再起本脚本处理。
+// 这时谁先答由桌宠盯着电话线定（Claude 挂断＝终端先答了），本脚本不再靠「钩子进程活没活、聊天记录动没动」去猜。
+const httpGate = process.env.AGENT_PET_HTTP_GATE === "1";
 let leftNote = ""; // 桌宠「自己输入」里写的、不是同意／拒绝的那段话
 
 function antigravityDefaultOutput(hook) {
@@ -573,7 +576,7 @@ function canRememberInClaude(input) {
 // CC 终端的确认框和桌宠弹窗同时在，哪边先答算哪边。终端先答时钩子可能被 CC 掐掉，来不及报，
 // 所以弹窗时留个记号（按 会话+工具+参数 算出固定号），之后这几种事件看到记号就报 permission.resolved：
 //   PostToolUse / PostToolUseFailure：同一个工具同样参数跑了 → 那条已经答了
-//   UserPromptSubmit / Stop / StopFailure / SessionEnd：这个会话往下走了 → 它名下的全收掉
+//   Stop / StopFailure / SessionEnd：这一轮结束了 → 它名下的全收掉
 function permissionKey(input) {
   const session = firstString(input.session_id, input.sessionId) || "";
   const tool = firstString(input.tool_name, input.toolName, input.tool) || "";
@@ -680,7 +683,7 @@ async function watchPendingPermission(requestId) {
     const transcriptMoved = answeredInTranscript(mark.transcriptPath, typeof mark.startSize === "number" ? mark.startSize : -1);
     if (pidDead || transcriptMoved) {
       if (clearPending(requestId)) {
-        try { await publishResolved(mark.agent || "claude-code", mark.input || {}, requestId); } catch { /* ignore */ }
+        try { await publishResolved(mark.agent || "claude-code", mark.input || {}, requestId, pidDead ? "看门：钩子进程没了" : "看门：记录里往下走了"); } catch { /* ignore */ }
       }
       return;
     }
@@ -691,7 +694,12 @@ function clearPending(requestId) {
   try { unlinkSync(pendingFile(requestId)); return true; } catch { return false; }
 }
 
-async function publishResolved(agent, input, requestId) {
+async function publishResolved(agent, input, requestId, reason = "") {
+  // 记一笔是谁、为什么把桌宠的权限窗收掉（2026-11-04：面板弹出两三秒没人点就被收，查原因用）
+  try {
+    appendFileSync(join(hubDataDir(), "permission-resolve.log"),
+      `${new Date().toLocaleString("zh-CN", { hour12: false })} ${agent} ${firstString(input.session_id, input.sessionId) || "?"} ${requestId} 原因=${reason} 钩子进程=${process.pid}\n`, "utf8");
+  } catch { /* 记不下不挡 */ }
   const event = translate(agent, "permission.resolved", { ...input, request_id: requestId, tool_use_id: undefined });
   if (event) await publish(event);
 }
@@ -702,10 +710,13 @@ async function resolveAnsweredInTerminal(agent, hook, input) {
   if (!sessionId || !existsSync(pendingDir())) return;
   if (name.includes("posttooluse")) {
     const requestId = permissionKey(input);
-    if (clearPending(requestId)) await publishResolved(agent, input, requestId);
+    if (clearPending(requestId)) await publishResolved(agent, input, requestId, `${hook}：同一工具跑完了`);
     return;
   }
-  if (!/pretooluse|userpromptsubmit|^stop|stopfailure|sessionend/.test(name)) return;
+  // 只认「这一轮真结束了」：Stop / StopFailure / SessionEnd。
+  // 2026-11-04 去掉 PreToolUse、UserPromptSubmit：你等权限时在终端补一句话、或同一批里别的工具先跑，
+  // 都会被误当成「已经答了」把桌宠的窗收掉；终端先答这件事改由直拨电话线挂断来认。
+  if (!/^stop|stopfailure|sessionend/.test(name)) return;
   for (const file of readdirSync(pendingDir())) {
     const path = join(pendingDir(), file);
     try {
@@ -713,7 +724,7 @@ async function resolveAnsweredInTerminal(agent, hook, input) {
       const stale = Date.now() - statSync(path).mtimeMs > 6 * 60 * 60 * 1000;
       if (mark.sessionId !== sessionId && !stale) continue;
       unlinkSync(path);
-      if (mark.sessionId === sessionId) await publishResolved(agent, input, file.replace(/\.json$/, ""));
+      if (mark.sessionId === sessionId) await publishResolved(agent, input, file.replace(/\.json$/, ""), `${hook}：会话往下走了`);
     } catch { /* 坏记号跳过 */ }
   }
 }
@@ -883,9 +894,11 @@ async function gateThroughPet(agent, hook, input) {
   const sessionId = firstString(input.session_id, input.sessionId, input.conversationId, process.env.GROK_SESSION_ID, `${agent}-default`);
   const transcriptPath = firstString(input.transcript_path, input.transcriptPath);
   const startSize = transcriptSize(transcriptPath);
+  if (httpGate) process.stderr.write(`PET_REQUEST_ID=${requestId}
+`);
   if (permissionRequest) {
     markPending(requestId, sessionId, {
-      pid: process.pid,
+      pid: httpGate ? undefined : process.pid,
       agent,
       input: {
         session_id: sessionId,
@@ -914,7 +927,7 @@ async function gateThroughPet(agent, hook, input) {
     tool,
     target,
     requestId,
-    originPid: Number(process.ppid) > 0 ? Number(process.ppid) : process.pid,
+    originPid: httpGate ? undefined : (Number(process.ppid) > 0 ? Number(process.ppid) : process.pid),
     interaction: {
       mode: "permission",
       title: `允许 ${agentLabel(agent)} 使用 ${tool} 吗？`,
@@ -930,7 +943,7 @@ async function gateThroughPet(agent, hook, input) {
     },
   };
   await publish(event);
-  if (permissionRequest) spawnPendingWatcher(requestId);
+  if (permissionRequest && !httpGate) spawnPendingWatcher(requestId);
   // 等多久是个权衡：
   //   等太久 → 桌宠没人管时，CC 在这儿干站着；
   //   等太短 → 钩子先退了，你再点，桌宠那边永远卡在"正在交回…"（app 侧没有超时处理，
@@ -940,9 +953,10 @@ async function gateThroughPet(agent, hook, input) {
   //    CC 的钩子超时默认 60 秒，比这个短的话 CC 会先把进程杀了，白设。
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    if (permissionRequest && (!isPending(requestId) || answeredInTranscript(transcriptPath, startSize))) {
+    if (permissionRequest && (!isPending(requestId) || (!httpGate && answeredInTranscript(transcriptPath, startSize)))) {
       if (clearPending(requestId)) {
-        try { await publishResolved(agent, input, requestId); } catch { /* ignore */ }
+        const why = !isPending(requestId) ? "等待中：记号被别人删了" : "等待中：记录里往下走了";
+        try { await publishResolved(agent, input, requestId, why); } catch { /* ignore */ }
       }
       return "timeout";
     }
@@ -984,7 +998,7 @@ async function gateThroughPet(agent, hook, input) {
   }
   // 没人点：把桌宠那个窗收掉，别留一个点了没人接的。
   if (permissionRequest) clearPending(requestId);
-  try { await publishResolved(agent, input, requestId); } catch { /* 收不掉就等桌宠自己清 */ }
+  try { await publishResolved(agent, input, requestId, "等满 2 分钟没人点"); } catch { /* 收不掉就等桌宠自己清 */ }
   // 等超时了。原来这里直接返回 allow —— 等于"没人管就放行"，太危险。
   // 改成不表态：CC 回落到它自己的权限询问，Antigravity 直接按超时拦截。
   return "timeout";

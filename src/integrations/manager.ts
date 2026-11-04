@@ -117,7 +117,22 @@ const CLAUDE_EVENTS = [
  * 核对并补齐 Claude Code 的 11 个桌宠钩子（只改/补带 agent-pet-hook.mjs 的条目，用户自己的其它设置和钩子一个字不碰）。
  * 2026-11-01：之前只替换已有条目的路径，导致在「根」新加的钩子切到「燊一修」后缺了 8 个事件（终端答完桌宠窗不收）。
  */
-export function ensureClaudeHooks(settingsFile = join(homedir(), ".claude", "settings.json")): boolean {
+/** 桌宠直拨线网址里固定带这一段，认「这条网址钩子是不是桌宠的」靠它（端口会换）。 */
+const PERMISSION_URL_MARK = "/agent-pet/permission/";
+
+export interface ClaudeHookOptions {
+  /** 桌宠直拨线的网址。给了：PermissionRequest 挂网址钩子；没给（直拨线没起来）：挂回老的命令钩子。 */
+  permissionUrl?: string;
+}
+
+type ClaudeHookEntry = { type?: unknown; command?: unknown; url?: unknown; timeout?: unknown };
+
+function isPetPermissionHook(hook: ClaudeHookEntry): boolean {
+  if (typeof hook?.url === "string" && hook.url.includes(PERMISSION_URL_MARK)) return true;
+  return typeof hook?.command === "string" && hook.command.includes(HOOK_FILE) && hook.command.includes("claude-code PermissionRequest");
+}
+
+export function ensureClaudeHooks(settingsFile = join(homedir(), ".claude", "settings.json"), options: ClaudeHookOptions = {}): boolean {
   if (!existsSync(settingsFile)) return false;
   const bridge = hookBridgePath();
   if (!existsSync(bridge)) return false;
@@ -135,9 +150,13 @@ export function ensureClaudeHooks(settingsFile = join(homedir(), ".claude", "set
   let changed = false;
 
   for (const event of CLAUDE_EVENTS) {
+    if (event === "PermissionRequest") {
+      if (ensurePermissionHook(settings.hooks, `node ${quoted} claude-code ${event}`, options.permissionUrl)) changed = true;
+      continue;
+    }
     const command = `node ${quoted} claude-code ${event}`;
-    const minTimeout = event === "PreToolUse" || event === "PermissionRequest" || event === "Notification" ? 130 : 8;
-    const defaultTimeout = event === "PreToolUse" || event === "PermissionRequest" || event === "Notification" ? 180 : 8;
+    const minTimeout = event === "PreToolUse" || event === "Notification" ? 130 : 8;
+    const defaultTimeout = event === "PreToolUse" || event === "Notification" ? 180 : 8;
     const groups = Array.isArray(settings.hooks[event])
       ? (settings.hooks[event] as { matcher?: unknown; hooks?: { type?: unknown; command?: unknown; timeout?: unknown }[] }[])
       : [];
@@ -176,6 +195,39 @@ export function ensureClaudeHooks(settingsFile = join(homedir(), ".claude", "set
   writeFileSync(temp, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   renameSync(temp, settingsFile);
   return true;
+}
+
+/**
+ * PermissionRequest 只留桌宠的一条：直拨线起来了挂网址钩子（学 clawd-on-desk，2026-11-04），
+ * 没起来挂回命令钩子。Claude 打不通网址时不卡，照常在终端问（官方：连不上算非阻塞错误）。
+ */
+function ensurePermissionHook(hooks: Record<string, unknown>, command: string, permissionUrl?: string): boolean {
+  const wanted: ClaudeHookEntry = permissionUrl
+    ? { type: "http", url: permissionUrl, timeout: 180 }
+    : { type: "command", command, timeout: 180 };
+  if (!Array.isArray(hooks.PermissionRequest)) hooks.PermissionRequest = [];
+  const groups = hooks.PermissionRequest as { matcher?: unknown; hooks?: ClaudeHookEntry[] }[];
+  let kept = false;
+  let changed = false;
+  for (const group of groups) {
+    if (!Array.isArray(group?.hooks)) continue;
+    const next: ClaudeHookEntry[] = [];
+    for (const hook of group.hooks) {
+      if (!isPetPermissionHook(hook)) { next.push(hook); continue; }
+      if (kept) { changed = true; continue; } // 桌宠的只留一条
+      kept = true;
+      if (JSON.stringify(hook) !== JSON.stringify(wanted)) changed = true;
+      next.push(wanted);
+    }
+    group.hooks = next;
+  }
+  if (!kept) {
+    groups.push({ matcher: "", hooks: [wanted] });
+    changed = true;
+  }
+  const before = groups.length;
+  hooks.PermissionRequest = groups.filter((group) => !Array.isArray(group?.hooks) || group.hooks.length > 0);
+  return changed || (hooks.PermissionRequest as unknown[]).length !== before;
 }
 
 /**
@@ -272,7 +324,7 @@ export function ensureAntigravityHooks(
  * 只改/补命令里带 agent-pet-hook.mjs 的那几条，别人的钩子、其余设置一个字不碰；
  * 改之前把原件拷一份到本机 LOCALAPPDATA（不放共用盘，Claude 配置两套各管各）。
  */
-export function ensureAgentHookPaths(): { changed: string[]; skipped?: string } {
+export function ensureAgentHookPaths(options: ClaudeHookOptions = {}): { changed: string[]; skipped?: string } {
   // 🚨 测试、验证脚本起的隔离实例一律不碰各家真配置（2026-11-04）：
   // 看板验证脚本起的实例数据夹在系统临时夹，它把 Claude／Antigravity／Grok 的钩子全改指到临时夹，
   // 编译时临时夹一被清，三家钩子全断，桌宠就「有时候不提示」。
@@ -281,7 +333,7 @@ export function ensureAgentHookPaths(): { changed: string[]; skipped?: string } 
   if (!existsSync(bridge)) return { changed: [], skipped: "bridge-missing" };
   const changed: string[] = [];
   const claudeSettings = join(homedir(), ".claude", "settings.json");
-  if (ensureClaudeHooks(claudeSettings)) changed.push(claudeSettings);
+  if (ensureClaudeHooks(claudeSettings, options)) changed.push(claudeSettings);
   const antigravityHooks = join(homedir(), ".gemini", "config", "hooks.json");
   if (ensureAntigravityHooks(antigravityHooks)) changed.push(antigravityHooks);
   const grokSettings = join(homedir(), ".grok", "hooks", "multi-agent-desktop-pet.json");
