@@ -95,3 +95,20 @@ test("hub enforces source binding and never writes response text to the journal"
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("他正在用权限窗：界面报一声，钩子问得到最后一次的时刻；没报过的、乱传的回 null", () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-pet-held-test-"));
+  try {
+    const hub = new AgentHub(join(root, "events.ndjson"), { running: true, endpoint: "test", discoveryPath: "test", ownerPid: process.pid, protocolVersion: 1 });
+    assert.deepEqual(hub.interactionHeld({ eventId: "event-held" }), { heldAt: null });
+    const before = Date.now();
+    hub.holdInteraction("event-held");
+    const held = hub.interactionHeld({ eventId: "event-held" }).heldAt;
+    assert.ok(held !== null && held >= before && held <= Date.now());
+    hub.holdInteraction(42);
+    assert.deepEqual(hub.interactionHeld(null), { heldAt: null });
+    assert.deepEqual(hub.interactionHeld({ eventId: 42 }), { heldAt: null });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -69,6 +69,7 @@ const [agentArg = "generic", hookArg = "context.updated"] = argv;
 // 这时谁先答由桌宠盯着电话线定（Claude 挂断＝终端先答了），本脚本不再靠「钩子进程活没活、聊天记录动没动」去猜。
 const httpGate = process.env.AGENT_PET_HTTP_GATE === "1";
 let leftNote = ""; // 桌宠「自己输入」里写的、不是同意／拒绝的那段话
+const PET_IDLE_MS = 60_000; // 权限窗没人管多久退回终端（2026-11-04 他定 1 分钟）
 
 function antigravityDefaultOutput(hook) {
   return String(hook || "").toLowerCase().includes("pretooluse") ? '{"decision":"allow"}\n' : "{}\n";
@@ -676,7 +677,7 @@ async function watchPendingPermission(requestId) {
   } catch {
     return;
   }
-  const deadline = Date.now() + 125_000;
+  const deadline = Date.now() + 175_000; // 比命令钩子的封顶 170 秒多一点
   while (Date.now() < deadline) {
     await delay(280);
     if (!isPending(requestId)) return;
@@ -988,11 +989,17 @@ async function gateThroughPet(agent, hook, input) {
   //   等太久 → 桌宠没人管时，CC 在这儿干站着；
   //   等太短 → 钩子先退了，你再点，桌宠那边永远卡在"正在交回…"（app 侧没有超时处理，
   //            它不知道对面已经没人了）。30 秒实测就短了，人还没走到跟前就超时。
-  // 2 分钟（用户定的）：宁可多等，也别出现"点了没人接"。
-  // ⚠️ 改这个数就得同步改 settings.json 里 PermissionRequest 那条钩子的 timeout，
-  //    CC 的钩子超时默认 60 秒，比这个短的话 CC 会先把进程杀了，白设。
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
+  // 2026-11-04 他定：没人管 1 分钟就退回终端；他鼠标在窗上、光标在输入框里闪着时不计时，
+  // 手离开再从头数 1 分钟（界面每 2 秒报一声，问 interaction.held.get 拿最后一次的时刻）。
+  // 封顶：直拨线 10 分钟；命令钩子 170 秒（Antigravity/Grok 那几条钩子 timeout 是 180）。
+  // ⚠️ 改封顶就得同步改钩子 timeout（manager.ts ensurePermissionHook / Antigravity / Grok 那几条），
+  //    钩子超时比这个短，Agent 会先把进程杀了，白设。
+  const startedAt = Date.now();
+  const hardStop = startedAt + (httpGate ? 600_000 : 170_000);
+  let touchedAt = startedAt;
+  let heldCheckedAt = 0;
+  const waitingUntil = () => Math.min(hardStop, touchedAt + PET_IDLE_MS);
+  while (Date.now() < waitingUntil()) {
     if (permissionRequest && (!isPending(requestId) || (!httpGate && answeredInTranscript(transcriptPath, startSize)))) {
       if (clearPending(requestId)) {
         const why = !isPending(requestId) ? "等待中：记号被别人删了" : "等待中：记录里往下走了";
@@ -1014,6 +1021,13 @@ async function gateThroughPet(agent, hook, input) {
       continue;
     }
     if (!claim) {
+      if (Date.now() - heldCheckedAt >= 1_000) {
+        heldCheckedAt = Date.now();
+        try {
+          const held = await sendRequest("interaction.held.get", { eventId: event.eventId });
+          if (Number(held?.heldAt) > touchedAt) touchedAt = Math.min(Number(held.heldAt), Date.now());
+        } catch { /* 老版桌宠没这个方法：照常按 1 分钟算 */ }
+      }
       await delay(400);
       continue;
     }
@@ -1041,7 +1055,10 @@ async function gateThroughPet(agent, hook, input) {
   }
   // 没人点：把桌宠那个窗收掉，别留一个点了没人接的。
   if (permissionRequest) clearPending(requestId);
-  try { await publishResolved(agent, input, requestId, "等满 2 分钟没人点"); } catch { /* 收不掉就等桌宠自己清 */ }
+  const why = Date.now() >= hardStop
+    ? `等满 ${Math.round((hardStop - startedAt) / 60_000)} 分钟封顶`
+    : touchedAt > startedAt ? "手离开窗口后 1 分钟没人点" : "等满 1 分钟没人管";
+  try { await publishResolved(agent, input, requestId, why); } catch { /* 收不掉就等桌宠自己清 */ }
   // 等超时了。原来这里直接返回 allow —— 等于"没人管就放行"，太危险。
   // 改成不表态：CC 回落到它自己的权限询问，Antigravity 直接按超时拦截。
   return "timeout";

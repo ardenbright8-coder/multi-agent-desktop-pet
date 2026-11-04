@@ -212,7 +212,8 @@ export interface RpcRequest {
     | "search.query"
     | "diagnostics.get"
     | "interaction.response.claim"
-    | "interaction.response.complete";
+    | "interaction.response.complete"
+    | "interaction.held.get";
   params?: unknown;
 }
 

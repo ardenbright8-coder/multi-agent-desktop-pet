@@ -89,7 +89,7 @@ function renderPrompt(prompt, promptIndex, directSingle = false) {
       `;
     }).join("")}</div>`;
     const custom = prompt.allowCustomInput ? `
-      <textarea class="compact-custom-input" data-custom-input="${escapeHtml(prompt.id)}" rows="1" placeholder="或直接写你的话，按 Enter 交回…"></textarea>
+      <textarea class="compact-custom-input" data-custom-input="${escapeHtml(prompt.id)}" rows="1" placeholder="${prompt.id === "permission" ? "可写句话带给 AI，按 Enter＝允许一次" : "或直接写你的话，按 Enter 交回…"}"></textarea>
     ` : "";
     return `<fieldset class="interaction-prompt" data-prompt-id="${escapeHtml(prompt.id)}"><legend>${escapeHtml(prompt.question)}</legend>${options}${custom}</fieldset>`;
   }
@@ -164,7 +164,11 @@ async function submitInteraction() {
       imagesAttached = true;
     }
     const optionIds = selected.filter((value) => value !== "__custom__");
-    if (!optionIds.length && !customText && directSingle && prompt.options?.length) {
+    // 权限窗按 Enter（没点按钮）＝默认允许一次，写了字就当附言一起带上（2026-11-04 他定）。
+    // 只有开头就是「不／别／拒绝／no」这类的，还按原来的算没批准、原话交回。
+    const sayNo = /^\s*(不|别|拒绝|否|no\b|nope|deny|reject)/i.test(customText);
+    const enterAllows = pending.mode === "permission" && !sayNo;
+    if (!optionIds.length && (!customText || enterAllows) && directSingle && prompt.options?.length) {
       const def = prompt.options.find((o) => o.recommended) || prompt.options[0];
       if (def?.id) optionIds.push(def.id);
     }
@@ -213,6 +217,23 @@ function showInteractionError(message) {
   elements.interactionError.hidden = !message;
   elements.interactionError.textContent = message;
 }
+
+// ═══ 他正在用这个窗：倒计时停住（2026-11-04 他要的）═══
+// 鼠标在窗上，或光标在输入框里闪着（窗口有焦点），每 2 秒告诉桌宠一声；
+// 钩子那边看到就不往下数，手离开后再从头数 1 分钟。
+// 鼠标在不在用 :hover 现查，不自己记——鼠标甩出窗口时 mouseleave 可能漏发，自己记的会一直当它还在。
+function interactionInUse() {
+  if (elements.interaction.hidden || !activeInteractionEventId) return false;
+  const typing = document.hasFocus() && document.activeElement instanceof HTMLTextAreaElement && elements.interaction.contains(document.activeElement);
+  return typing || elements.interaction.matches(":hover");
+}
+function reportInteractionHeld() {
+  if (interactionInUse()) window.agentPet.holdInteraction(activeInteractionEventId);
+}
+elements.interaction.addEventListener("mouseenter", reportInteractionHeld);
+elements.interaction.addEventListener("focusin", reportInteractionHeld);
+elements.interaction.addEventListener("input", reportInteractionHeld);
+setInterval(reportInteractionHeld, 2_000);
 
 // ═══ 输入框粘图 / 拖图 ═══
 function addPanelImageFile(file, textarea) {

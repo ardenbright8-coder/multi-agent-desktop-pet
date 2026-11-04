@@ -9,6 +9,7 @@ declare global {
       simulate(kind?: string): Promise<HubSnapshot>;
       respondInteraction(response: InteractionResponseInput): Promise<InteractionSubmitResult>;
       savePanelImage(dataUrl: string): Promise<string | null>;
+      holdInteraction(eventId: string): void;
       moveWindowToPointer(position: { screenX: number; screenY: number; anchorX: number; anchorY: number }): void;
       finishWindowMove(): void;
       setPetPickedUp(pickedUp: boolean): void;

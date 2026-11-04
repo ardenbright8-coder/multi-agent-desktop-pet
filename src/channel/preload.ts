@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("agentPet", {
   respondInteraction: (response: InteractionResponseInput): Promise<InteractionSubmitResult> => ipcRenderer.invoke("hub:interaction-respond", response),
   // 面板输入框粘进来的图：存进 24 小时临时夹，回文件位置（存不了回 null）
   savePanelImage: (dataUrl: string): Promise<string | null> => ipcRenderer.invoke("hub:save-panel-image", dataUrl),
+  // 他正在用权限/询问窗：报一声「别倒计时」
+  holdInteraction: (eventId: string): void => ipcRenderer.send("hub:interaction-hold", eventId),
   startDragging: (offset: { x: number; y: number }): void => ipcRenderer.send("window:drag-start", offset),
   stopDragging: (): void => ipcRenderer.send("window:drag-stop"),
   setHoveringInteractive: (hovering: boolean): void => ipcRenderer.send("window:hover-interactive", hovering),

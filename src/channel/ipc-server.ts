@@ -138,6 +138,8 @@ export class LocalIpcServer {
         return okResponse(request.id, this.hub.claimInteractionResponse(request.params));
       case "interaction.response.complete":
         return okResponse(request.id, this.hub.completeInteractionResponse(request.params));
+      case "interaction.held.get":
+        return okResponse(request.id, this.hub.interactionHeld(request.params));
       default:
         return errorResponse(request.id, "method-not-found", "不支持的方法");
     }

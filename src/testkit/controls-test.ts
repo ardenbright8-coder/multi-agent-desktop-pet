@@ -35,7 +35,7 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.focus();
 
     const exposed = await evaluate<string[]>(win, "Object.keys(window.agentPet).sort()");
-    assert.deepEqual(exposed, ["diagnostics", "focusAgent", "hideWindow", "onNoteSide", "onPetCommand", "onSnapshot", "openLogs", "openOverview", "quitApp", "reportError", "respondInteraction",
+    assert.deepEqual(exposed, ["diagnostics", "focusAgent", "hideWindow", "holdInteraction", "onNoteSide", "onPetCommand", "onSnapshot", "openLogs", "openOverview", "quitApp", "reportError", "respondInteraction",
       "savePanelImage", "search", "setHoveringInteractive", "setPanelVisibility", "showWindow", "simulate", "snapshot", "startDragging", "stopDragging"]);
 
     const marker = `controls-${Date.now()}`;

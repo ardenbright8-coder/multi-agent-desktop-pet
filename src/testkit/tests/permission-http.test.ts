@@ -39,7 +39,7 @@ test("ensureClaudeHooks：给了直拨网址就把桌宠的 PermissionRequest �
   assert.equal(ensureClaudeHooks(settingsFile, { permissionUrl: url }), false, "已经对了就不重复写盘");
   let hooks = JSON.parse(readFileSync(settingsFile, "utf8")).hooks.PermissionRequest;
   const flat = () => hooks.flatMap((group: { hooks: unknown[] }) => group.hooks) as { type: string; url?: string; command?: string }[];
-  assert.deepEqual(flat().filter((h) => h.type === "http"), [{ type: "http", url, timeout: 180 }]);
+  assert.deepEqual(flat().filter((h) => h.type === "http"), [{ type: "http", url, timeout: 660 }]);
   assert.equal(flat().filter((h) => h.command?.includes("agent-pet-hook.mjs")).length, 0, "老的命令钩子摘掉，不留两条");
   assert.ok(flat().some((h) => h.command === "node \"E:/someone-else.js\""), "别人的钩子留着");
 

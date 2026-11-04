@@ -35,6 +35,7 @@ export class AgentHub extends EventEmitter {
   private readonly seenEventIds = new Set<string>();
   private readonly counters = { accepted: 0, duplicate: 0, stale: 0, invalid: 0 };
   private readonly integrationSeenAt = new Map<string, number>();
+  private readonly interactionHeldAt = new Map<string, number>();
   private lastAcceptedAt: number | null = null;
   private lastAgent: string | null = null;
   private latestNotice: NoticePayload | undefined;
@@ -186,6 +187,19 @@ export class AgentHub extends EventEmitter {
         typeof value.error === "string" ? value.error : undefined,
       ),
     };
+  }
+
+  /** 他正在用权限/询问窗（鼠标在上面、光标在输入框里闪）：界面每 2 秒报一声，钩子据此停住倒计时（2026-11-04 他要的） */
+  holdInteraction(eventId: unknown): void {
+    if (typeof eventId !== "string" || !eventId.trim()) return;
+    const now = Date.now();
+    this.interactionHeldAt.set(eventId.slice(0, 160), now);
+    for (const [id, at] of this.interactionHeldAt) if (now - at > 15 * 60_000) this.interactionHeldAt.delete(id);
+  }
+
+  interactionHeld(raw: unknown): { heldAt: number | null } {
+    const eventId = raw && typeof raw === "object" ? (raw as Record<string, unknown>).eventId : undefined;
+    return { heldAt: typeof eventId === "string" ? this.interactionHeldAt.get(eventId.slice(0, 160)) ?? null : null };
   }
 
   cleanup(): void {

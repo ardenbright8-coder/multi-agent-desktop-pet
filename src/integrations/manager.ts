@@ -202,8 +202,9 @@ export function ensureClaudeHooks(settingsFile = join(homedir(), ".claude", "set
  * 没起来挂回命令钩子。Claude 打不通网址时不卡，照常在终端问（官方：连不上算非阻塞错误）。
  */
 function ensurePermissionHook(hooks: Record<string, unknown>, command: string, permissionUrl?: string): boolean {
+  // 直拨线最长等 10 分钟（他在用窗口时倒计时停着，见钩子 gateThroughPet），超时再多留 1 分钟余量
   const wanted: ClaudeHookEntry = permissionUrl
-    ? { type: "http", url: permissionUrl, timeout: 180 }
+    ? { type: "http", url: permissionUrl, timeout: 660 }
     : { type: "command", command, timeout: 180 };
   if (!Array.isArray(hooks.PermissionRequest)) hooks.PermissionRequest = [];
   const groups = hooks.PermissionRequest as { matcher?: unknown; hooks?: ClaudeHookEntry[] }[];

@@ -35,6 +35,7 @@ export function registerHubIpc(hub: AgentHub, options: HubIpcOptions = {}): void
     return result;
   });
   ipcMain.handle("hub:save-panel-image", (_event, dataUrl: unknown) => savePanelImage(dataUrl));
+  ipcMain.on("hub:interaction-hold", (_event, eventId: unknown) => hub.holdInteraction(eventId));
   ipcMain.handle("hub:simulate", (_event, requestedKind?: string) => {
     const event = makeSimulationEvent(requestedKind as EventKind | undefined);
     hub.publish(event);
