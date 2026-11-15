@@ -10,6 +10,7 @@ import { preferencesPath } from "../shared/paths";
 import { createLogger } from "../shared/log";
 import type { AgentHub } from "../events/hub";
 import { clampWindowPosition, defaultWindowPosition } from "./window-position";
+import { PanelFocusTracker, loadPetFocusWin32, readWindowHwnd } from "./panel-focus";
 
 // 平时窗口只有幼苗那么大，面板要弹的时候才临时长大。
 // 🚨 为什么必须这样（2026-08-12 实机）：这台机 3440x1440 缩放 179%，
@@ -78,6 +79,25 @@ let ignoringMouse = true;
 let shuttingDown = false;
 let keepOnTopTimer: NodeJS.Timeout | null = null;
 
+const panelFocus = new PanelFocusTracker({
+  getWin32: loadPetFocusWin32,
+  getSelfHwnd: () => (mainWindow && !mainWindow.isDestroyed() ? readWindowHwnd(mainWindow.getNativeWindowHandle()) : 0n),
+  focusPetWindow: (steal) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.setAlwaysOnTop(true, "screen-saver");
+    mainWindow.moveTop();
+    if (!steal) return;
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.focus();
+  },
+});
+
+/** 点击「返回终端」主动切去 Agent 窗口时调用，防止紧随而来的关面板动作再把焦点还给更早的旧窗口。 */
+export function skipPanelFocusRestore(): void {
+  panelFocus.markSkipRestore();
+}
+
 export function getPetWindow(): BrowserWindow | null {
   return mainWindow;
 }
@@ -95,6 +115,7 @@ export function destroyPetWindow(): void {
     clearInterval(keepOnTopTimer);
     keepOnTopTimer = null;
   }
+  panelFocus.reset();
   mainWindow?.destroy();
   mainWindow = null;
 }
@@ -303,10 +324,11 @@ export function showMainWindow(): void {
  * 藏着时：询问／权限窗露着就临时亮出来；换成完成提醒、设置这些就藏回去（藏着就是不想被它打扰）。
  * 看的是界面上那个窗露没露，不看后台有没有待处理——他按 Esc／关闭关掉的，后台还挂着，不能再被它叫出来（2026-10-31）。
  */
-function syncHiddenReveal(needsAction: boolean): void {
+function syncHiddenReveal(needsAction: boolean, focusPanel = false): void {
   if (!mainWindow || mainWindow.isDestroyed() || !petHiddenNow()) return;
   if (needsAction && !mainWindow.isVisible()) {
-    mainWindow.showInactive();
+    if (focusPanel) mainWindow.show();
+    else mainWindow.showInactive();
     shownForPanel = true;
     log.记("藏着时来了要点的事，临时亮出来", "setPanelVisibility");
   } else if (!needsAction && shownForPanel) {
@@ -316,7 +338,11 @@ function syncHiddenReveal(needsAction: boolean): void {
 }
 
 export function hideMainWindow(): void {
-  mainWindow?.hide();
+  panelFocus.sync(false);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("pet:command", "close-overlays");
+    mainWindow.hide();
+  }
   rememberHidden(true);
 }
 
@@ -389,7 +415,7 @@ export function keepWindowOnVisibleDisplay(): void {
   persistWindowPosition();
 }
 
-export function setPanelVisibility(visible: boolean, height?: number, needsAction = false): void {
+export function setPanelVisibility(visible: boolean, height?: number, needsAction = false, focusPanel = false): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const workAreas = screen.getAllDisplays().map((display) => display.workArea);
   if (visible) {
@@ -404,7 +430,9 @@ export function setPanelVisibility(visible: boolean, height?: number, needsActio
         log.记(`面板换内容，窗口高度改成 ${panelHeight}`, "setPanelVisibility");
       }
       ensureFullyVisible();
-      syncHiddenReveal(needsAction);
+      syncHiddenReveal(needsAction, focusPanel);
+      applyMouseMode();
+      panelFocus.sync(focusPanel);
       return;
     }
     const before = mainWindow.getBounds();
@@ -423,10 +451,13 @@ export function setPanelVisibility(visible: boolean, height?: number, needsActio
     }, false);
     ensureFullyVisible();
     log.记(`面板展开，窗口长大 ${before.x},${before.y} → ${mainWindow.getBounds().x},${mainWindow.getBounds().y} 高 ${panelHeight}`, "setPanelVisibility");
-    syncHiddenReveal(needsAction);
     applyMouseMode();
+    syncHiddenReveal(needsAction, focusPanel);
+    panelFocus.sync(focusPanel);
     return;
   }
+  // 交互面板收起前先趁窗还露着时判断当前前台是不是桌宠，是才把焦点还回原来的窗，然后再 hide
+  panelFocus.sync(false);
   if (!panelOpen) {
     applyMouseMode();
     return;

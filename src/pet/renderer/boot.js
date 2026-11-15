@@ -55,7 +55,7 @@ petMenu.addEventListener("click", (event) => {
   petMenu.hidden = true;
   if (action === "drawer") openDrawer();
   else if (action === "settings") openSettings();
-  else if (action === "hide") window.agentPet.hideWindow();
+  else if (action === "hide") { closeDrawer(); closeSettings(); window.agentPet.hideWindow(); }
   else if (action === "simulate") window.agentPet.simulate();
   else if (action === "logs") window.agentPet.openLogs();
   else if (action === "overview") window.agentPet.openOverview();
@@ -94,10 +94,11 @@ document.addEventListener("keydown", (event) => {
   }
   const inTextField = event.target instanceof Element && Boolean(event.target.closest("textarea, input[type='text'], input[type='search']"));
   if (!elements.interaction.hidden && !inTextField && ["1", "2", "3"].includes(event.key) && elements.interaction.classList.contains("direct-single")) {
+    event.preventDefault();
+    if (isInteractionQuickActionGuarded()) return;
     const idx = Number(event.key) - 1;
     const radios = [...elements.interactionPrompts.querySelectorAll("input[data-direct-option='1']")];
     if (radios[idx]) {
-      event.preventDefault();
       radios[idx].checked = true;
       submitInteraction();
     }
@@ -106,6 +107,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     if (!elements.interaction.hidden && !inTextField) {
       event.preventDefault();
+      if (isInteractionQuickActionGuarded()) return;
       submitInteraction();
     }
   }
@@ -215,6 +217,7 @@ if (elements.noticePanel) {
 elements.interactionPrompts.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
   event.preventDefault();
+  if (isInteractionQuickActionGuarded()) return;
   submitInteraction();
 });
 elements.sessionList.addEventListener("click", (event) => {
@@ -255,6 +258,7 @@ window.agentPet.onNoteSide((side) => { document.body.dataset.noteSide = side ===
 window.agentPet.onPetCommand((command) => {
   if (command === "drawer") openDrawer();
   else if (command === "settings") openSettings();
+  else if (command === "close-overlays") { closeDrawer(); closeSettings(); }
 });
 
 window.agentPet.onSnapshot((next) => renderSnapshot(next));

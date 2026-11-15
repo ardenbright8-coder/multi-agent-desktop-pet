@@ -167,6 +167,48 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     assert.equal(permissionResponse?.eventId, permission.eventId);
     assert.deepEqual(permissionResponse?.answers, [{ promptId: "permission", optionIds: ["once"], customText: undefined }]);
 
+    // 0.4 秒防误触保护 + 弹出即支持 Esc / Enter / 1 键盘直操（2026-11-14）
+    const guarded = makePermissionEvent("guard-session", "guard-request");
+    hub.publish(guarded);
+    await interactionVisible(win, guarded.eventId);
+    // 刚弹出来还在 400ms 保护期内：按 Enter 和 1 都不许误通过，Esc 随时立刻能关
+    await press(win, "Return");
+    await press(win, "1");
+    await rendererAssert(win, "!document.querySelector('#interaction-panel').hidden", "400ms 保护期内按 Enter/1 不该误提交");
+    assert.notEqual(context.getLastInteractionResponse()?.eventId, guarded.eventId, "400ms 保护期内不该产生提交回传");
+    await press(win, "Escape");
+    await waitForRenderer(win, "document.querySelector('#interaction-panel').hidden");
+    hub.publish(makeEvent("permission.resolved", "guard-session", { requestId: "guard-request" }));
+
+    // 等过 400ms 保护期后：不用鼠标点按钮，直接按 Enter 默认允许一次
+    const enterSubmit = makePermissionEvent("enter-submit-session", "enter-submit-request");
+    hub.publish(enterSubmit);
+    await interactionVisible(win, enterSubmit.eventId);
+    await delay(460);
+    await press(win, "Return");
+    await waitForRenderer(win, "document.querySelector('#interaction-panel').hidden");
+    const enterResponse = context.getLastInteractionResponse();
+    assert.equal(enterResponse?.eventId, enterSubmit.eventId);
+    assert.deepEqual(enterResponse?.answers, [{ promptId: "permission", optionIds: ["once"], customText: undefined }]);
+
+    // 等过 400ms 保护期后：按数字键 1 直接选中第一项提交
+    const keySubmit = makePermissionEvent("key-submit-session", "key-submit-request");
+    hub.publish(keySubmit);
+    await interactionVisible(win, keySubmit.eventId);
+    await delay(460);
+    await press(win, "1");
+    await waitForRenderer(win, "document.querySelector('#interaction-panel').hidden");
+    const keyResponse = context.getLastInteractionResponse();
+    assert.equal(keyResponse?.eventId, keySubmit.eventId);
+    assert.deepEqual(keyResponse?.answers, [{ promptId: "permission", optionIds: ["once"], customText: undefined }]);
+
+    // vivo 截图补图往剪贴板塞了图片路径文本时，仍识别为剪贴板附图，不把普通命令误判成图（2026-11-15 实机抓到）
+    await rendererAssert(
+      win,
+      "isClipboardImagePathText('D:\\\\Downloads\\\\vivo办公套件\\\\截图中转\\\\clip_01.jpg') && !isClipboardImagePathText('echo hello.jpg && dir')",
+      "剪贴板图片路径识别规则回归失败",
+    );
+
     // 点击穿透：鼠标不在幼苗上时，窗口必须让开，否则透明区域会挡住底下的程序（踩过的 bug）。
     await hidden(win, "#interaction-panel");
     // 窗口缩成幼苗大小后，幼苗区占了绝大部分，只有左上角这几像素是真空——拿它验穿透。
@@ -237,13 +279,24 @@ export async function runControlsTest(context: ControlsTestContext): Promise<voi
     win.webContents.sendInputEvent({ type: "mouseUp", x: petPoint.x, y: petPoint.y, button: "left", clickCount: 1 });
     await waitForRenderer(win, "!document.body.classList.contains('pet-picked-up')", 2_000);
 
+    // 开着事件抽屉时点「藏起来」：必须先收掉抽屉再藏窗，否则来了新权限会被残留抽屉拦住不亮出来（2026-11-15 实机抓到）
+    context.trayActions.openDrawer();
+    await visible(win, "#drawer");
     context.trayActions.hide();
     await delay(150);
     await waitFor(() => !win.isVisible(), 1_500, "Hide button did not hide the window");
+    await hidden(win, "#drawer");
     // 2026-10-27 起「藏起来」是勾选开关：勾着时单击托盘图标不叫出来，要取消勾选（show）才出来
     context.tray.emit("click", {} as never, {} as never, {} as never);
     await delay(150);
     assert.ok(!win.isVisible(), "Tray click brought back a pet the user chose to hide");
+    const hiddenWake = makePermissionEvent("hidden-wake-session", "hidden-wake-request");
+    hub.publish(hiddenWake);
+    await waitFor(() => win.isVisible(), 1_500, "藏着桌宠时来了新权限却没有临时亮出来");
+    await interactionVisible(win, hiddenWake.eventId);
+    await delay(460);
+    await press(win, "Return");
+    await waitFor(() => !win.isVisible(), 1_500, "临时亮出的权限处理完后没有自动藏回去");
     context.trayActions.show();
     await waitFor(() => win.isVisible(), 1_500, "Tray show callback did not restore the hidden window");
     const beforeTraySimulation = hub.snapshot().eventCount;

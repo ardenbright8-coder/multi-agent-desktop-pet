@@ -8,6 +8,7 @@ import {
   setHoveringInteractive,
   setPanelVisibility,
   showMainWindow,
+  skipPanelFocusRestore,
   startDragging,
   stopDragging,
   setShuttingDown,
@@ -30,8 +31,9 @@ export function registerWindowIpc(extras: WindowIpcExtras = {}): void {
   });
   ipcMain.on("window:drag-stop", () => stopDragging());
   ipcMain.on("window:hover-interactive", (_event, hovering: boolean) => setHoveringInteractive(Boolean(hovering)));
-  ipcMain.on("window:panel-visibility", (_event, visible: boolean, height?: number, needsAction?: boolean) => setPanelVisibility(Boolean(visible), typeof height === "number" ? height : undefined, Boolean(needsAction)));
+  ipcMain.on("window:panel-visibility", (_event, visible: boolean, height?: number, needsAction?: boolean, focusPanel?: boolean) => setPanelVisibility(Boolean(visible), typeof height === "number" ? height : undefined, Boolean(needsAction), Boolean(focusPanel)));
   ipcMain.on("window:focus-agent", (_event, hint: { agent?: unknown; project?: unknown; originPid?: unknown }) => {
+    skipPanelFocusRestore();
     focusAgentWindow({
       agent: String(hint?.agent || ""),
       project: String(hint?.project || ""),

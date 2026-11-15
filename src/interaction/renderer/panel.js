@@ -19,6 +19,7 @@ function isDirectSingleChoice(pending) {
 
 function renderInteraction(session) {
   const pending = session?.pendingInteraction;
+  const wasHidden = elements.interaction.hidden;
   if (!pending || drawerOpen || settingsOpen || dismissedInteractions.has(pending.eventId)) {
     elements.interaction.hidden = true;
     if (!pending || pending.eventId === activeInteractionEventId) activeInteractionEventId = null;
@@ -29,6 +30,12 @@ function renderInteraction(session) {
   activeInteractionEventId = pending.eventId;
   openPanel("interaction");
   elements.interaction.hidden = false;
+  if (wasHidden || !samePending) {
+    markInteractionOpened();
+    if (document.activeElement instanceof HTMLElement && !elements.interaction.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+  }
   const directSingle = isDirectSingleChoice(pending);
   elements.interaction.classList.toggle("direct-single", directSingle);
   const actions = document.querySelector("#interaction-actions");
@@ -142,11 +149,11 @@ async function submitInteraction() {
   const session = currentInteractionSession();
   const pending = session?.pendingInteraction;
   if (!session || !pending || interactionSubmitting) return;
-  // 这家 Agent 没有回传通道：按钮的意思就是「我知道了，去终端办」，收起面板即可。
+  // 这家 Agent 没有回传通道：按钮的意思就是「我知道了，去终端办」，先通知主进程切终端并跳过还焦点，再收起面板。
   if (!pending.responseCapability) {
     const target = { agent: session.agent, project: session.project, originPid: session.originPid };
-    dismissInteraction();
     window.agentPet.focusAgent(target);
+    dismissInteraction();
     return;
   }
   const directSingle = isDirectSingleChoice(pending);
@@ -295,20 +302,37 @@ function renderPanelImages(textarea) {
   syncPanelVisibility();
 }
 
-// 弹窗开着但还没点进输入框时按 Ctrl+V，先把焦点送到输入框，接住原生粘贴
+function isClipboardImagePathText(text) {
+  const trimmed = String(text || "").trim().replace(/^["']|["']$/g, "");
+  if (!trimmed || /[\r\n]/.test(trimmed)) return false;
+  return /^(?:[a-zA-Z]:[\\/]|\\\\)[^\r\n]+\.(?:png|jpe?g|webp|gif|bmp)$/i.test(trimmed);
+}
+
+let lastPasteEventAt = 0;
+
+// 弹窗开着但还没点进输入框时按 Ctrl+V，先把焦点送到输入框，接住原生粘贴；
+// 若纯图片剪贴板或刚切焦点导致 Chromium 没派发 paste 事件，60ms 后直接从系统剪贴板读图兜底。
 document.addEventListener("keydown", (event) => {
   if (elements.interaction.hidden) return;
   if ((event.ctrlKey || event.metaKey) && !event.altKey && String(event.key || "").toLowerCase() === "v") {
+    const textarea = elements.interactionPrompts.querySelector("textarea");
+    if (!textarea) return;
     const active = document.activeElement;
     if (!(active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement)) {
-      const textarea = elements.interactionPrompts.querySelector("textarea");
-      if (textarea) textarea.focus();
+      textarea.focus();
     }
+    const downAt = Date.now();
+    setTimeout(() => {
+      if (lastPasteEventAt < downAt && !elements.interaction.hidden) {
+        addPanelClipboardImage(textarea);
+      }
+    }, 60);
   }
 });
 
 document.addEventListener("paste", (event) => {
   if (elements.interaction.hidden) return;
+  lastPasteEventAt = Date.now();
   const target = event.target instanceof HTMLTextAreaElement && elements.interactionPrompts.contains(event.target)
     ? event.target
     : elements.interactionPrompts.querySelector("textarea");
@@ -325,7 +349,8 @@ document.addEventListener("paste", (event) => {
     return;
   }
   const plainText = event.clipboardData?.getData?.("text/plain") || "";
-  if (!plainText) {
+  if (!plainText || isClipboardImagePathText(plainText)) {
+    event.preventDefault();
     addPanelClipboardImage(target);
   }
 });

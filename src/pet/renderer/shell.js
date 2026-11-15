@@ -221,8 +221,8 @@ function closeCompletion() {
 
 function returnToAgentFromCompletion() {
   const target = completionTarget;
-  closeCompletion();
   if (target) window.agentPet.focusAgent(target);
+  closeCompletion();
 }
 
 function noteCompletionTransitions(sessions) {
@@ -371,8 +371,21 @@ function renderSnapshot(next) {
 // 事件抽屉照旧给满高（返回 null，主进程用默认值）。
 const PANEL_TOP_BAND = 8;
 const PANEL_BOTTOM_GAP = 20;
+const INTERACTION_OPEN_GUARD_MS = 400;
 let panelHeightSent = null;
 let panelNeedsActionSent = false;
+let panelFocusSent = false;
+let interactionOpenedAt = 0;
+
+/** 交互弹窗刚出现（或切换下一条）时记住时刻，前 400ms 拦截 1/2/3 与 Enter，防别的窗口正回车时误通过。 */
+function markInteractionOpened(now = Date.now()) {
+  interactionOpenedAt = now;
+}
+
+/** 是否还在弹窗刚出现的前 400ms 误触保护期内（Esc 不走这个保护，随时能关）。 */
+function isInteractionQuickActionGuarded(now = Date.now()) {
+  return interactionOpenedAt > 0 && now - interactionOpenedAt < INTERACTION_OPEN_GUARD_MS;
+}
 
 function panelFitHeight() {
   if (drawerOpen) return null;
@@ -409,11 +422,14 @@ function syncPanelVisibility() {
   const height = visible ? panelFitHeight() : null;
   // 要他点的（询问／权限／完成／纯提示）露着没有：桌宠藏着时临时亮出来，点完或倒计时结束藏回去
   const needsAction = !elements.interaction.hidden || completionOpen || noticeOpen;
-  if (panelVisible === visible && panelHeightSent === height && panelNeedsActionSent === needsAction) return;
+  // 只有需要键盘拍板的询问／权限面板露着时才置顶拿焦点，完成提醒与纯提示不抢正在打字的焦点
+  const focusPanel = !elements.interaction.hidden;
+  if (panelVisible === visible && panelHeightSent === height && panelNeedsActionSent === needsAction && panelFocusSent === focusPanel) return;
   panelVisible = visible;
   panelHeightSent = height;
   panelNeedsActionSent = needsAction;
-  window.agentPet.setPanelVisibility(visible, height ?? undefined, needsAction);
+  panelFocusSent = focusPanel;
+  window.agentPet.setPanelVisibility(visible, height ?? undefined, needsAction, focusPanel);
 }
 
 function activateTab(name) {

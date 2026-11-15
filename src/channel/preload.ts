@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld("agentPet", {
   startDragging: (offset: { x: number; y: number }): void => ipcRenderer.send("window:drag-start", offset),
   stopDragging: (): void => ipcRenderer.send("window:drag-stop"),
   setHoveringInteractive: (hovering: boolean): void => ipcRenderer.send("window:hover-interactive", hovering),
-  setPanelVisibility: (visible: boolean, height?: number, needsAction?: boolean): void => ipcRenderer.send("window:panel-visibility", visible, height, needsAction),
+  setPanelVisibility: (visible: boolean, height?: number, needsAction?: boolean, focusPanel?: boolean): void => ipcRenderer.send("window:panel-visibility", visible, height, needsAction, focusPanel),
   focusAgent: (hint?: { agent?: string; project?: string; originPid?: number }): void => ipcRenderer.send("window:focus-agent", hint || {}),
   hideWindow: (): void => ipcRenderer.send("window:hide"),
   // 2026-08-14：托盘功能集成到窗口右键菜单
