@@ -1,10 +1,10 @@
 // 渲染层跟事件中心之间的请求（快照、搜索、诊断、交回答案、发模拟事件）。
 // 只跟 hub 打交道，不碰窗口——窗口那几个请求在 pet\window-ipc.ts。
 
-import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ipcMain } from "electron";
+import { clipboard, ipcMain } from "electron";
 import type { InteractionResponseInput, SearchQuery } from "../shared/protocol";
 import type { AgentHub } from "../events/hub";
 import { makeSimulationEvent } from "../events/simulation";
@@ -50,19 +50,78 @@ export function registerHubIpc(hub: AgentHub, options: HubIpcOptions = {}): void
 const PANEL_IMAGE_DIR = join(tmpdir(), "桌宠附图");
 const PANEL_IMAGE_KEEP_MS = 24 * 60 * 60 * 1000;
 const PANEL_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
-const PANEL_IMAGE_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/bmp": "bmp" };
+const PANEL_IMAGE_TYPES: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/bmp": "bmp",
+};
 
 export function panelImageDirectory(): string {
   return PANEL_IMAGE_DIR;
 }
 
+function sniffImageExt(bytes: Buffer): string | undefined {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return "gif";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) return "bmp";
+  return undefined;
+}
+
+function readClipboardImage(): { bytes: Buffer; ext: string } | null {
+  try {
+    if (clipboard && typeof clipboard.readImage === "function") {
+      const img = clipboard.readImage();
+      if (img && !img.isEmpty()) {
+        const png = img.toPNG();
+        if (png.length > 0 && png.length <= PANEL_IMAGE_MAX_BYTES) {
+          return { bytes: png, ext: "png" };
+        }
+      }
+    }
+    if (clipboard && typeof clipboard.readBuffer === "function") {
+      const raw = clipboard.readBuffer("FileNameW");
+      if (raw && raw.length >= 4) {
+        const filePath = raw.toString("utf16le").split("\0")[0]?.trim() || "";
+        if (filePath && existsSync(filePath)) {
+          const stat = statSync(filePath);
+          if (stat.isFile() && stat.size > 0 && stat.size <= PANEL_IMAGE_MAX_BYTES) {
+            const bytes = readFileSync(filePath);
+            const ext = sniffImageExt(bytes);
+            if (ext) return { bytes, ext };
+          }
+        }
+      }
+    }
+  } catch { /* 剪贴板读不出就放弃 */ }
+  return null;
+}
+
 export function savePanelImage(dataUrl: unknown, now = new Date()): string | null {
   if (typeof dataUrl !== "string") return null;
-  const match = /^data:(image\/[a-z]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  const ext = match ? PANEL_IMAGE_TYPES[match[1]] : undefined;
-  if (!match || !ext) return null;
-  const bytes = Buffer.from(match[2], "base64");
-  if (!bytes.length || bytes.length > PANEL_IMAGE_MAX_BYTES) return null;
+  let bytes: Buffer;
+  let ext: string | undefined;
+  if (dataUrl === "clipboard") {
+    const clip = readClipboardImage();
+    if (!clip) return null;
+    bytes = clip.bytes;
+    ext = clip.ext;
+  } else {
+    const match = /^data:([a-z0-9/+.-]*);base64,([A-Za-z0-9+/=]+)$/i.exec(dataUrl);
+    if (!match) return null;
+    const mime = (match[1] || "").toLowerCase();
+    bytes = Buffer.from(match[2], "base64");
+    if (!bytes.length || bytes.length > PANEL_IMAGE_MAX_BYTES) return null;
+    ext = PANEL_IMAGE_TYPES[mime];
+    if (!ext && (mime === "" || mime === "application/octet-stream")) {
+      ext = sniffImageExt(bytes);
+    }
+    if (!ext) return null;
+  }
   mkdirSync(PANEL_IMAGE_DIR, { recursive: true });
   sweepPanelImages(now.getTime());
   const pad = (n: number) => String(n).padStart(2, "0");

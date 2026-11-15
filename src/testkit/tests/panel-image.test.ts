@@ -42,3 +42,18 @@ test("超过 24 小时的旧图，下次存图时顺手删掉", () => {
     for (const file of [first, second, stale]) if (file && existsSync(file)) unlinkSync(file);
   }
 });
+
+test("PixPin 等无 MIME（octet-stream / 空类型）截图按图片文件头识别落盘", () => {
+  const f1 = savePanelImage(`data:application/octet-stream;base64,${PNG_1PX}`, new Date(2026, 10, 5, 9, 10, 11));
+  const f2 = savePanelImage(`data:;base64,${PNG_1PX}`, new Date(2026, 10, 5, 9, 10, 12));
+  assert.ok(f1, "octet-stream 头是真 PNG 应该收下");
+  assert.ok(f2, "空 MIME 头是真 PNG 应该收下");
+  try {
+    assert.match(f1, /\.png$/);
+    assert.match(f2, /\.png$/);
+    assert.deepEqual(readFileSync(f1), Buffer.from(PNG_1PX, "base64"));
+  } finally {
+    for (const file of [f1, f2]) if (file && existsSync(file)) unlinkSync(file);
+  }
+  assert.equal(savePanelImage("data:application/octet-stream;base64,PGh0bWw+"), null, "假图文件头要拦住");
+});

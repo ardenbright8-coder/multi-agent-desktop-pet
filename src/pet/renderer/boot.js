@@ -43,8 +43,8 @@ document.addEventListener("contextmenu", (event) => {
 const petMenu = document.querySelector("#pet-menu");
 function showPetMenu(clientX, clientY) {
   petMenu.hidden = false;
-  const x = Math.min(Math.max(0, clientX), window.innerWidth - petMenu.offsetWidth - 4);
-  const y = Math.min(Math.max(0, clientY), window.innerHeight - petMenu.offsetHeight - 4);
+  const x = Math.max(0, Math.min(clientX, window.innerWidth - petMenu.offsetWidth - 4));
+  const y = Math.max(0, Math.min(clientY, window.innerHeight - petMenu.offsetHeight - 4));
   petMenu.style.left = `${x}px`;
   petMenu.style.top = `${y}px`;
 }

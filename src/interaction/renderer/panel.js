@@ -236,15 +236,23 @@ elements.interaction.addEventListener("input", reportInteractionHeld);
 setInterval(reportInteractionHeld, 2_000);
 
 // ═══ 输入框粘图 / 拖图 ═══
+function isImageFile(file) {
+  if (!file) return false;
+  if (typeof file.type === "string" && file.type.startsWith("image/")) return true;
+  if (typeof file.name === "string" && /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)) return true;
+  return false;
+}
+
 function addPanelImageFile(file, textarea) {
-  if (!file || !file.type?.startsWith("image/")) return;
+  if (!isImageFile(file)) return;
   const save = new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = async () => {
       const url = String(reader.result || "");
       const path = await window.agentPet.savePanelImage(url).catch(() => null);
       if (path) {
-        panelImages.push({ path, url });
+        const previewUrl = url.startsWith("data:image/") ? url : `file:///${path.replace(/\\/g, "/")}`;
+        panelImages.push({ path, url: previewUrl });
         renderPanelImages(textarea);
       } else {
         showInteractionError("这张图存不下来（太大或格式不认），换一张试试。");
@@ -254,6 +262,18 @@ function addPanelImageFile(file, textarea) {
     reader.onerror = () => resolve();
     reader.readAsDataURL(file);
   });
+  panelImageSaves.push(save);
+}
+
+function addPanelClipboardImage(textarea) {
+  const save = (async () => {
+    const path = await window.agentPet.savePanelImage("clipboard").catch(() => null);
+    if (path) {
+      const previewUrl = `file:///${path.replace(/\\/g, "/")}`;
+      panelImages.push({ path, url: previewUrl });
+      renderPanelImages(textarea);
+    }
+  })();
   panelImageSaves.push(save);
 }
 
@@ -275,19 +295,45 @@ function renderPanelImages(textarea) {
   syncPanelVisibility();
 }
 
-elements.interactionPrompts.addEventListener("paste", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLTextAreaElement)) return;
-  const files = [...(event.clipboardData?.items || [])].filter((item) => item.kind === "file" && item.type.startsWith("image/")).map((item) => item.getAsFile());
-  if (!files.length) return; // 纯文字照常粘
-  event.preventDefault();
-  for (const file of files) addPanelImageFile(file, target);
+// 弹窗开着但还没点进输入框时按 Ctrl+V，先把焦点送到输入框，接住原生粘贴
+document.addEventListener("keydown", (event) => {
+  if (elements.interaction.hidden) return;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && String(event.key || "").toLowerCase() === "v") {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement)) {
+      const textarea = elements.interactionPrompts.querySelector("textarea");
+      if (textarea) textarea.focus();
+    }
+  }
+});
+
+document.addEventListener("paste", (event) => {
+  if (elements.interaction.hidden) return;
+  const target = event.target instanceof HTMLTextAreaElement && elements.interactionPrompts.contains(event.target)
+    ? event.target
+    : elements.interactionPrompts.querySelector("textarea");
+  if (!target) return;
+  const itemFiles = [...(event.clipboardData?.items || [])]
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  const rawFiles = [...(event.clipboardData?.files || [])];
+  const files = (itemFiles.length ? itemFiles : rawFiles).filter(isImageFile);
+  if (files.length) {
+    event.preventDefault();
+    for (const file of files) addPanelImageFile(file, target);
+    return;
+  }
+  const plainText = event.clipboardData?.getData?.("text/plain") || "";
+  if (!plainText) {
+    addPanelClipboardImage(target);
+  }
 });
 elements.interaction.addEventListener("dragover", (event) => {
   if ([...(event.dataTransfer?.items || [])].some((item) => item.kind === "file")) event.preventDefault();
 });
 elements.interaction.addEventListener("drop", (event) => {
-  const files = [...(event.dataTransfer?.files || [])].filter((file) => file.type.startsWith("image/"));
+  const files = [...(event.dataTransfer?.files || [])].filter(isImageFile);
   if (!files.length) return;
   event.preventDefault();
   const textarea = elements.interactionPrompts.querySelector("textarea");

@@ -42,11 +42,43 @@ const BIG_DEAL = [
   /proxy-groups|nameserver-policy|\bsubscri/i, /\bssh\s+\S/i, /vmiss|gateway/i,
 ];
 
+const READ_ONLY_TOOLS = new Set([
+  "read_file", "view_file", "view_file_outline", "view_code_item",
+  "grep_search", "find_by_name", "list_dir",
+  "search_web", "web_search", "read_url_content", "search_marketplace",
+  "list_resources", "read_resource", "list_plugin_accounts",
+  "mcp_kb-card_find", "mcp_kb-card_outline", "mcp_kb-card_section",
+  "mcp_kb-search_search", "mcp_kb-search_status", "mcp_kb-search_read",
+  "mcp_kb-search-board_search", "mcp_kb-search-board_status", "mcp_kb-search-board_read",
+]);
+const KB_READ_SERVERS = new Set(["kb-card", "kb-search", "kb-search-board"]);
+const KB_READ_METHODS = new Set(["find", "outline", "section", "search", "status", "read"]);
+
 const EVENT_KINDS = new Set([
   "session.started", "context.updated", "state.thinking", "state.working",
   "permission.requested", "permission.resolved", "question.asked", "question.resolved",
   "task.completed", "task.failed", "session.ended", "heartbeat",
 ]);
+
+const GENERIC_PROJECT_DIRS = new Set([
+  "config",
+  ".gemini",
+  ".claude",
+  ".pi",
+  ".codex",
+  ".agents",
+  "scratch",
+  "sys" + "tem32",
+  "windows",
+  "users",
+  "user",
+  "desktop",
+  "嘉楷",
+  "work",
+]);
+
+const argv = process.argv.slice(2);
+const [agentArg = "generic", hookArg = "context.updated"] = argv;
 
 process.on("uncaughtException", (error) => {
   failOpen(error);
@@ -55,7 +87,6 @@ process.on("unhandledRejection", (error) => {
   failOpen(error);
 });
 
-const argv = process.argv.slice(2);
 if (argv[0] === "--self-test") {
   process.exit(runSelfTest() ? 0 : 1);
 }
@@ -63,8 +94,6 @@ if (argv[0] === "--watch-pending") {
   await watchPendingPermission(argv[1]);
   process.exit(0);
 }
-
-const [agentArg = "generic", hookArg = "context.updated"] = argv;
 // 「直拨」接法（2026-11-04，学 clawd-on-desk）：Claude 用网址钩子把权限请求直接打给桌宠，桌宠再起本脚本处理。
 // 这时谁先答由桌宠盯着电话线定（Claude 挂断＝终端先答了），本脚本不再靠「钩子进程活没活、聊天记录动没动」去猜。
 const httpGate = process.env.AGENT_PET_HTTP_GATE === "1";
@@ -173,6 +202,14 @@ async function readInput() {
   try { return JSON.parse(body); } catch { return { message: body.slice(0, 2_000) }; }
 }
 
+function projectNameFromCwd(cwd, fallbackAgent) {
+  const raw = String(cwd || "").trim();
+  if (!raw) return fallbackAgent;
+  const name = basename(raw).trim();
+  if (!name || GENERIC_PROJECT_DIRS.has(name.toLowerCase())) return fallbackAgent;
+  return name;
+}
+
 function translate(agent, hook, input) {
   const normalizedAgent = clean(agent, 80) || "generic";
   const normalizedHook = String(hook || "").toLowerCase();
@@ -215,7 +252,7 @@ function translate(agent, hook, input) {
     agent: normalizedAgent,
     sessionId: clean(sessionId, 200) || `${normalizedAgent}-default`,
     kind,
-    project: cwd ? basename(cwd) : normalizedAgent,
+    project: projectNameFromCwd(cwd, normalizedAgent),
     cwd: clean(cwd, 1_000),
     title: clean(firstString(input.session_title, input.title, `${agentLabel(normalizedAgent)} 会话`), 500),
     summary: clean(summary, 2_000),
@@ -525,7 +562,7 @@ function writeHookDecision(agent, decision, input = {}) {
       return;
     }
     if (decision === "timeout") {
-      process.stdout.write(`${JSON.stringify({ decision: "deny", reason: "桌宠权限等待超时（2分钟未点击），已自动拦截并收起弹窗" })}\n`);
+      process.stdout.write(`${JSON.stringify({ decision: "deny", reason: "桌宠权限等待超时（1分钟未点击），已自动拦截并收起弹窗" })}\n`);
       return;
     }
     const agReason = decision === "reject"
@@ -801,11 +838,25 @@ function shouldGateThroughPet(hook, input, agent) {
     return firstString(input.tool_name, input.toolName, input.tool) !== "AskUserQuestion";
   }
   if (agent === "antigravity" && name.includes("pretooluse")) {
-    return input.petGate === true || isBigDeal(input);
+    return input.petGate === true || (!isReadOnlyTool(input) && isBigDeal(input));
   }
   // PreToolUse 不再走桌宠网关：它在 CC 还没决定要不要问你之前就触发，
   // 结果是每一次 Bash/Edit/Write 都要去桌宠上点一下，会话直接没法用。
   // CC 自己放行的照常飞过，等它真要问你时会发 PermissionRequest，那时才弹桌宠。
+  return false;
+}
+
+function isReadOnlyTool(input) {
+  const raw = firstString(input.tool_name, input.toolName, input.tool, input.toolCall?.name, input.name);
+  const tool = String(raw || "").trim().toLowerCase().replace(/^cortex_step_type_/, "");
+  if (!tool) return false;
+  if (READ_ONLY_TOOLS.has(tool)) return true;
+  if (tool === "call_mcp_tool") {
+    const args = objectValue(input.tool_input, input.toolInput, input.toolCall?.args, input.input, input.arguments);
+    const server = String(firstString(args?.ServerName, args?.serverName, args?.server) || "").trim().toLowerCase();
+    const method = String(firstString(args?.ToolName, args?.toolName, args?.tool) || "").trim().toLowerCase();
+    return KB_READ_SERVERS.has(server) && KB_READ_METHODS.has(method);
+  }
   return false;
 }
 
@@ -958,7 +1009,7 @@ async function gateThroughPet(agent, hook, input) {
     agent,
     sessionId: clean(sessionId, 200) || `${agent}-default`,
     kind: "permission.requested",
-    project: basename(firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()) || agent),
+    project: projectNameFromCwd(firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()), agent),
     cwd: firstString(input.cwd, input.workspaceRoot, process.env.GROK_WORKSPACE_ROOT, process.cwd()),
     title: `${agentLabel(agent)} 要用 ${tool}`,
     // 「要干啥」先用 AI 自己写的那句说明（Claude 的 description），没有才用原命令（2026-11-04）
@@ -1143,6 +1194,19 @@ function runSelfTest() {
   if (!shouldGateThroughPet("PermissionRequest", small, "claude-code") || shouldGateThroughPet("PermissionRequest", { tool_name: "AskUserQuestion" }, "claude-code")
     || shouldGateThroughPet("Notification", { message: "Claude needs your permission" }, "claude-code")) {
     process.stderr.write("self-test fail: 该弹的没弹 / 不该弹的弹了\n");
+    ok = false;
+  }
+  const agReadBig = { toolCall: { name: "search_web", args: { query: "rm " + "-rf" } } };
+  const agKbReadBig = { toolCall: { name: "call_mcp_tool", args: { ServerName: "kb-card", ToolName: "find", Arguments: { queries: ["rm " + "-rf"] } } } };
+  const agExecBig = { toolCall: { name: "run_command", args: { CommandLine: "rm " + "-rf /tmp/x" } } };
+  if (shouldGateThroughPet("PreToolUse", agReadBig, "antigravity") || shouldGateThroughPet("PreToolUse", agKbReadBig, "antigravity")
+    || !shouldGateThroughPet("PreToolUse", agExecBig, "antigravity")) {
+    process.stderr.write("self-test fail: Antigravity 只读查资料不该拦、危险命令该拦\n");
+    ok = false;
+  }
+  if (projectNameFromCwd("C:\\Users\\嘉楷\\.gemini\\config", "antigravity") !== "antigravity"
+    || projectNameFromCwd("F:\\程序\\0016_多Agent桌面宠物", "antigravity") !== "0016_多Agent桌面宠物") {
+    process.stderr.write("self-test fail: 配置目录名不该当成项目名\n");
     ok = false;
   }
   const tmpTranscript = join(process.env.TEMP || hubDataDir(), `pet-self-test-${process.pid}.jsonl`);

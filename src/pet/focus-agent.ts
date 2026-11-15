@@ -27,6 +27,33 @@ const AGENT_NEEDLES: Record<string, string[]> = {
 const REJECT_TITLE = ["多agent桌面宠物", "续枝", "续知"];
 const REJECT_PROCESS = ["multi-agent-desktop-pet", "tabbit", "chrome", "msedge", "firefox", "brave", "opera", "iexplore"];
 const CLI_HOST_PROCESS = ["grok", "windowsterminal", "windows terminal", "wt", "cmd", "powershell", "pwsh", "conhost"];
+const GENERIC_PROJECT_NAMES = new Set([
+  "config",
+  ".gemini",
+  ".claude",
+  ".pi",
+  ".codex",
+  ".agents",
+  "scratch",
+  "sys" + "tem32",
+  "windows",
+  "users",
+  "user",
+  "desktop",
+  "嘉楷",
+  "work",
+  "未命名项目",
+  "默认会话",
+]);
+
+export function normalizeFocusProject(project?: string, agent?: string): string {
+  const clean = String(project || "").trim();
+  const lower = clean.toLowerCase();
+  if (clean.length < 2) return "";
+  if (GENERIC_PROJECT_NAMES.has(lower)) return "";
+  if (agent && lower === String(agent).toLowerCase().trim()) return "";
+  return clean;
+}
 
 export function isRejectedFocusWindow(input: { title: string; processName: string }): boolean {
   const title = String(input.title || "").toLowerCase();
@@ -61,9 +88,9 @@ export function scoreAgentWindow(input: {
     const needle = raw.toLowerCase().trim();
     if (!needle) continue;
     if (title.includes(needle)) score += 12;
-    if (proc.includes(needle.replace(/\s+/g, ""))) score += 14;
+    if (proc.includes(needle.replace(/\s+/g, ""))) score += 22;
   }
-  const project = String(input.project || "").toLowerCase().trim();
+  const project = normalizeFocusProject(input.project, input.agent).toLowerCase();
   if (project.length >= 2 && title.includes(project)) score += 6;
   return score;
 }
@@ -72,7 +99,7 @@ export function scoreAgentWindow(input: {
 export function focusAgentWindow(hint: FocusAgentHint): void {
   if (isIsolatedRun()) return;
   const agent = String(hint.agent || "").trim();
-  const project = String(hint.project || "").trim();
+  const project = normalizeFocusProject(hint.project, agent);
   const originPid = Number(hint.originPid) > 0 ? Math.floor(Number(hint.originPid)) : 0;
   const script = [
     "$ErrorActionPreference = 'SilentlyContinue'",
@@ -99,15 +126,16 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "$allCim = @(Get-WmiObject -Class Win32_Process -ErrorAction SilentlyContinue)",
     "$pidCmd = @{}; $pidParent = @{}; $pidName = @{}",
     "foreach ($c in $allCim) { $id = [int]$c.ProcessId; $pidCmd[$id] = if ($c.CommandLine) { [string]$c.CommandLine.ToLowerInvariant() } else { '' }; $pidParent[$id] = [int]$c.ParentProcessId; $pidName[$id] = [string]$c.Name }",
-    "$needles = @()",
-    "if ($agent -eq 'opencode') { $needles += 'opencode','open code' }",
-    "elseif ($agent -eq 'claude-code') { $needles += 'claude','claude code' }",
-    "elseif ($agent -eq 'hermes') { $needles += 'hermes' }",
-    "elseif ($agent -eq 'pi') { $needles += 'pi coding','pi-ai','pi agent' }",
-    "elseif ($agent -eq 'grok') { $needles += 'grok','grok build' }",
-    "elseif ($agent -eq 'codex') { $needles += 'codex' }",
-    "elseif ($agent -eq 'antigravity') { $needles += 'antigravity','反重力' }",
-    "elseif ($agent) { $needles += $agent }",
+    "$agentNeedles = @()",
+    "if ($agent -eq 'opencode') { $agentNeedles += 'opencode','open code' }",
+    "elseif ($agent -eq 'claude-code') { $agentNeedles += 'claude','claude code' }",
+    "elseif ($agent -eq 'hermes') { $agentNeedles += 'hermes' }",
+    "elseif ($agent -eq 'pi') { $agentNeedles += 'pi coding','pi-ai','pi agent' }",
+    "elseif ($agent -eq 'grok') { $agentNeedles += 'grok','grok build' }",
+    "elseif ($agent -eq 'codex') { $agentNeedles += 'codex' }",
+    "elseif ($agent -eq 'antigravity') { $agentNeedles += 'antigravity','反重力' }",
+    "elseif ($agent) { $agentNeedles += $agent }",
+    "$needles = @($agentNeedles)",
     "if ($project -and $project.Length -ge 2) { $needles += $project }",
     "function Activate-Handle([IntPtr]$hwnd, [string]$label) {",
     "  if ($hwnd -eq [IntPtr]::Zero) { return }",
@@ -138,8 +166,14 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "    if ([int]$winPid -eq $pidTarget -and [AgentPetFocus]::IsWindowVisible($hwnd)) {",
     "      $sb = New-Object System.Text.StringBuilder 512",
     "      [void][AgentPetFocus]::GetWindowText($hwnd, $sb, 512)",
-    "      $script:foundWindow = @{ HWND = $hwnd; Title = $sb.ToString() }",
-    "      return $false",
+    "      $t = $sb.ToString()",
+    "      if ($t) {",
+    "        $script:foundWindow = @{ HWND = $hwnd; Title = $t }",
+    "        return $false",
+    "      }",
+    "      if (-not $script:foundWindow) {",
+    "        $script:foundWindow = @{ HWND = $hwnd; Title = '' }",
+    "      }",
     "    }",
     "    return $true",
     "  }",
@@ -165,10 +199,10 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "          Activate-Handle $win.HWND ($procName + ' pid=' + $walk + ' | ' + $win.Title)",
     "          return",
     "        }",
-    "      } elseif ($win -and -not $win.Title -and $agent -ne 'grok') {",
+    "      } elseif ($win -and -not $win.Title -and ($agent -notin @('grok','antigravity'))) {",
     "        $cmd = CmdLineOf $walk",
     "        $cmdHit = $false",
-    "        foreach ($needle in $needles) { if ($cmd.Contains([string]$needle.ToLowerInvariant())) { $cmdHit = $true; break } }",
+    "        foreach ($needle in $agentNeedles) { if ($cmd.Contains([string]$needle.ToLowerInvariant())) { $cmdHit = $true; break } }",
     "        if ($cmdHit) { Activate-Handle $win.HWND ($procName + ' pid=' + $walk + ' | 终端窗口'); return }",
     "      }",
     "    }",
@@ -190,19 +224,16 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "  return $true",
     "}",
     "[void][AgentPetFocus]::EnumWindows($allCb, [IntPtr]::Zero)",
-    "$seenPids = @{}",
     "foreach ($w in $script:allWindows) {",
-    "  if ($seenPids.ContainsKey($w.PID)) { continue }",
-    "  $seenPids[$w.PID] = $true",
     "  if (-not $pidName.ContainsKey($w.PID)) { continue }",
     "  $procNameRaw = $pidName[$w.PID]",
     "  $procName = $procNameRaw.ToLowerInvariant()",
     "  $title = $w.Title.ToLowerInvariant()",
     "  if (Rejected-Window $w.Title $procNameRaw) {",
-    "    if (-not $w.Title -and $agent -ne 'grok') {",
+    "    if (-not $w.Title -and ($agent -notin @('grok','antigravity'))) {",
     "      $cmd = CmdLineOf $w.PID",
     "      $cmdHit = $false",
-    "      foreach ($needle in $needles) { if ($cmd.Contains([string]$needle.ToLowerInvariant())) { $cmdHit = $true; break } }",
+    "      foreach ($needle in $agentNeedles) { if ($cmd.Contains([string]$needle.ToLowerInvariant())) { $cmdHit = $true; break } }",
     "      if (-not $cmdHit) { continue }",
     "    } else { continue }",
     "  }",
@@ -215,7 +246,7 @@ export function focusAgentWindow(hint: FocusAgentHint): void {
     "      $n = [string]$needle; if (-not $n) { continue }",
     "      $nl = $n.ToLowerInvariant()",
     "      if ($title.Contains($nl)) { $score += 12 }",
-    "      if ($procName.Contains(($nl -replace '\\s',''))) { $score += 14 }",
+    "      if ($procName.Contains(($nl -replace '\\s',''))) { $score += 22 }",
     "    }",
     "    if (-not $w.Title) { $score += 20 }",
     "  }",
