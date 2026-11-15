@@ -16,7 +16,10 @@ export function listBoardSkills(root: string) {
       if (rel.startsWith('..') || isAbsolute(rel) || statSync(file).size > 128 * 1024) return [];
       const text = readFileSync(file, 'utf8');
       const description = text.match(descKey)?.[1] ?? '点击查看完整说明';
-      return [{ name, description, path: file }];
+      // 技能页给人看的三样（2026-11-14 用户：卡太大、字太多、没关键信息）：只认文件开头那段的 功能 / 说 / 界，正本就在那份 md 里。
+      const head = text.startsWith('---') ? text.slice(3, text.indexOf('\n---', 3) + 1 || undefined) : '';
+      const field = (key: string) => head.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1].trim() ?? '';
+      return [{ name, description, path: file, feature: field('功能'), say: field('说'), edge: field('界') }];
     } catch { return []; }
   };
   return readdirSync(root, { withFileTypes: true })

@@ -20,7 +20,7 @@ function run(args, ok = true) {
 }
 let app;
 try {
-  app = await _electron.launch({ executablePath: join(root, 'node_modules/electron/dist/electron.exe'), args: [join(root, 'dist/app.js')], env });
+  app = await _electron.launch({ executablePath: join(root, 'node_modules/electron/dist/electron.exe'), args: [join(resolve(root, process.env.BM_VERIFY_DIST || 'dist'), 'app.js')], env });
   await app.evaluate(({ clipboard }) => {
     // 只在隔离 Electron 进程中截获复制内容，测试不写用户的系统剪贴板。
     globalThis.__dispatchClipboard = '';
@@ -123,18 +123,24 @@ try {
   await page.evaluate(() => window.bookmark.setMode('day'));
 
   await page.locator('#tab-skills').click();
-  const card = page.locator('.skill-card').filter({ has: page.locator('h3', { hasText: '看板派工' }) });
-  await card.locator('button').click();
+  // 技能页一个技能一行（2026-11-14）：名字＋一句功能，单击展开正本，右键「详情」看上下两段
+  const card = page.locator('.skill-item[data-name="看板派工"]');
+  assert.equal(await card.locator('.skill-feature').textContent(), '一摊活分成几捆，工兵逐条领、交报告', '一行只摆一句功能');
+  await card.locator('.skill-row').click();
   await page.waitForFunction(() => document.querySelector('.skill-content:not([hidden])')?.textContent.includes('用户自己开新窗口'));
   const cliSkill = JSON.parse(run(['dispatch', 'skill', '看板派工'])).skill;
   assert.equal(await card.locator('.skill-content').textContent(), cliSkill.text, '人和AI同一正本');
+  await card.locator('.skill-row').click({ button: 'right' });
+  await page.locator('#ctx-menu .ctx-item', { hasText: '详情' }).click();
+  const detail = await card.locator('.skill-detail').innerText();
+  assert.ok(detail.startsWith('10-07 Pi 建') && detail.includes('跟派活单的区别') && (await card.locator('.skill-detail hr').count()) === 1, `详情上下两段：${detail}`);
   run(['dispatch', 'skill', '../../auth.json'], false);
   await page.locator('#tab-projects').click();
   assert.equal(await page.locator('#tab-projects').getAttribute('class').then(x => x.includes('active')), true);
   assert.deepEqual(errors, []);
   mkdirSync(join(root, '.runtime/dispatch'), { recursive: true });
   await page.locator('#tab-skills').click();
-  await page.waitForSelector('.skill-card');
+  await page.waitForSelector('.skill-item');
   await page.screenshot({ path: join(root, '.runtime/dispatch/技能页.png') });
   console.log('DISPATCH_UI_OK ctrl-two-bundles whole-bundle-lock report-wait-notify same-skill-source no-agent-launch original-records-preserved');
 } finally {

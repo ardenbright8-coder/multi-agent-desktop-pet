@@ -161,30 +161,64 @@ async function bmRenderSkills() {
     const skills = await window.bookmark.boardSkills();
     if (generation !== bmSkillRenderGeneration || bmCurrentPage !== 'skills') return;
     board.textContent = '';
-    const intro = document.createElement('p');
-    intro.className = 'dispatch-intro';
-    intro.textContent = '这里是看板技能正本：你可以看完整规则，助手也读取同一份文件。查看不会启动助手或执行代码。';
-    board.appendChild(intro);
+    // 一个技能一行（2026-11-14 用户：卡太大、三条看不完、没关键信息）：页面只摆名字＋一句功能，
+    // 单击展开完整规则，右键看详情（说／界）、复制路径——照项目规则《界面只摆名字》《起名与详情》。
+    const list = document.createElement('ul');
+    list.className = 'skill-list';
     for (const skill of skills) {
-      const card = document.createElement('section');
-      card.className = 'group skill-card';
-      const title = document.createElement('h3'); title.textContent = skill.name;
-      const desc = document.createElement('p');
-      const summary = skill.description.split('。')[0];
-      desc.textContent = summary.length > 130 ? `${summary.slice(0, 130)}…` : `${summary}。`;
-      const path = document.createElement('p'); path.className = 'skill-path'; path.textContent = skill.path;
-      const open = document.createElement('button'); open.textContent = '查看完整规则';
+      const item = document.createElement('li');
+      item.className = 'skill-item';
+      item.dataset.name = skill.name;
+      const row = document.createElement('div');
+      row.className = 'skill-row';
+      const title = document.createElement('span'); title.className = 'skill-name'; title.textContent = skill.name;
+      const feature = document.createElement('span'); feature.className = 'skill-feature';
+      feature.textContent = skill.feature || skill.description.split(/[。：:]/)[0];
+      row.append(title, feature);
+      const detail = document.createElement('div'); detail.className = 'skill-detail'; detail.hidden = true;
       const content = document.createElement('pre'); content.className = 'skill-content'; content.hidden = true;
-      open.addEventListener('click', async () => {
+      row.addEventListener('click', async () => {
         try {
-          const data = await window.bookmark.readBoardSkill(skill.name);
-          content.textContent = data.text;
+          if (content.hidden) content.textContent = (await window.bookmark.readBoardSkill(skill.name)).text;
           content.hidden = !content.hidden;
-          open.textContent = content.hidden ? '查看完整规则' : '收起规则';
+          item.classList.toggle('open', !content.hidden);
         } catch (e) { bmShowError(bmErrorText(e)); }
       });
-      card.append(title, desc, path, open, content); board.appendChild(card);
+      row.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        bmShowSkillMenu(skill, row, detail);
+      });
+      item.append(row, detail, content);
+      list.appendChild(item);
     }
-    if (!skills.length) intro.textContent += ' 当前没有技能文件。';
+    board.appendChild(list);
+    if (!skills.length) {
+      const empty = document.createElement('p'); empty.className = 'dispatch-intro'; empty.textContent = '当前没有技能文件。';
+      board.appendChild(empty);
+    }
   } catch (e) { if (bmCurrentPage === 'skills') bmShowError(bmErrorText(e)); }
+}
+
+/** 右键技能那一行：详情（上段说、横线下界，照《起名与详情》）、复制路径。 */
+function bmShowSkillMenu(skill, row, detail) {
+  const menu = document.getElementById('ctx-menu');
+  menu.textContent = '';
+  menu.appendChild(bmCtxButton(detail.hidden ? '详情' : '收起详情', () => {
+    if (detail.hidden) {
+      detail.textContent = '';
+      const say = document.createElement('p'); say.textContent = skill.say || skill.description;
+      detail.appendChild(say);
+      if (skill.edge) {
+        detail.appendChild(document.createElement('hr'));
+        const edge = document.createElement('p'); edge.textContent = skill.edge;
+        detail.appendChild(edge);
+      }
+    }
+    detail.hidden = !detail.hidden;
+  }));
+  menu.appendChild(bmCtxButton('复制路径', async () => {
+    await navigator.clipboard.writeText(skill.path);
+    bmToast('路径复制好了', 1500);
+  }));
+  bmPlaceCtxMenu(menu, row.querySelector('.skill-name') || row);
 }
