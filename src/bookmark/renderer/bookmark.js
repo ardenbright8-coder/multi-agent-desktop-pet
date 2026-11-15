@@ -1094,7 +1094,9 @@ function bmBindDrag(opts) {
         const id = opts.idOf(row);
         finish(false);
         delete row.dataset.swallow;
-        void bmStartDragOut([id]);
+        // 项目页的行传进来一个函数（拖的是那份文件或那个夹），条目照旧拖单独文件
+        if (typeof opts.dragOut === "function") void opts.dragOut();
+        else void bmStartDragOut([id]);
         return;
       }
       paint(event.clientX, event.clientY);
@@ -1131,6 +1133,21 @@ async function bmStartDragOut(ids) {
   try {
     await window.bookmark.dragOutFiles(list);
     bmToast(`拖出去了，${list.length > 1 ? `这 ${list.length} 条` : "这条"}标成交给 AI${BM_HANDOUT_UNDO}`, 3500);
+  } catch (error) {
+    bmShowError(bmErrorText(error));
+  } finally {
+    bmDragOutActive = false;
+  }
+}
+
+/** 项目页按住拖出窗口边（2026-11-14 用户：照 Agent 分组复刻）：拖的是那份 md 或那个夹本身，放进 AI 窗口贴路径。 */
+async function bmProjDragOut(relPath) {
+  if (!relPath || bmDragOutActive || !window.bookmark.projectsDragOut) return;
+  bmHideProjPop();
+  bmDragOutActive = true;
+  try {
+    await window.bookmark.projectsDragOut(relPath);
+    bmToast("拖出去了", 2000);
   } catch (error) {
     bmShowError(bmErrorText(error));
   } finally {
@@ -1692,12 +1709,18 @@ function bmBuildProjectRow(entry) {
   } else {
     row.addEventListener("click", () => { void window.bookmark.projectsOpen(entry.relPath); });
   }
+  row.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    bmShowProjRowMenu(entry, row);
+  });
   bmBindDrag({
     handle: row,
     row,
     list: () => row.parentElement,
     accept: (el) => el.classList.contains("proj-row"),
     idOf: (el) => el.dataset.name || "",
+    dragOut: () => bmProjDragOut(entry.relPath),
     onDrop: async (hit) => {
       if (!hit.anchorId || hit.anchorId === hit.id) return;
       await window.bookmark.projectsReorder(bmProjectsCwd, hit.id, hit.anchorId, hit.place);
@@ -1740,6 +1763,7 @@ function bmBuildProjKit(entry) {
       event.stopPropagation();
       bmShowKitChipMenu(entry.relPath, item, chip);
     });
+    chip.dataset.rel = item.relPath;
     bmBindKitDrag(chip, kit, entry.relPath);
     kit.appendChild(chip);
   }
@@ -1793,18 +1817,51 @@ async function bmShowKitAddMenu(project, kit, plus) {
   bmPlaceCtxMenu(menu, plus);
 }
 
-/** 右键小按钮：从这排拿掉（只是不显示，文件不删）。 */
+/** 右键小按钮：复制给 AI、从这排拿掉（只是不显示，文件不删）、删掉（进回收站）。 */
 function bmShowKitChipMenu(project, item, chip) {
   bmHideProjPop();
   const menu = document.getElementById("ctx-menu");
   menu.textContent = "";
+  menu.appendChild(bmCtxButton("复制给 AI", () => bmProjCopyLine(item.relPath)));
   menu.appendChild(bmCtxButton("从这排拿掉（文件不删）", async () => {
     bmKitRemember(project);
     await window.bookmark.projectsKit({ op: "remove", project, name: item.name });
     bmToast(`拿掉了「${item.label}」${BM_KIT_UNDO_HINT}`, 2500);
     await bmRenderProjects();
   }));
+  menu.appendChild(bmCtxButton(`删掉「${item.label}」（进回收站）`, () => bmProjDelete(item.relPath, item.label)));
   bmPlaceCtxMenu(menu, chip);
+}
+
+/** 右键项目行（2026-11-14 用户：右键直接能删，整个项目夹也能删）：复制给 AI、删掉（进回收站）。 */
+function bmShowProjRowMenu(entry, row) {
+  bmHideProjPop();
+  const menu = document.getElementById("ctx-menu");
+  menu.textContent = "";
+  menu.appendChild(bmCtxButton("复制给 AI", () => bmProjCopyLine(entry.relPath)));
+  const label = entry.isDir ? `删掉整个「${entry.name}」夹（进回收站）` : `删掉「${entry.name.replace(/\.md$/i, "")}」（进回收站）`;
+  menu.appendChild(bmCtxButton(label, () => bmProjDelete(entry.relPath, entry.name)));
+  bmPlaceCtxMenu(menu, row.querySelector(".proj-name") || row);
+}
+
+async function bmProjCopyLine(relPath) {
+  try {
+    await window.bookmark.projectsCopyLine(relPath);
+    bmToast("复制好了，贴给 AI 就行", 2000);
+  } catch (error) {
+    bmShowError("复制没成： " + bmErrorText(error));
+  }
+}
+
+/** 删进回收站，不弹确认（2026-11-14 用户：自由点）；删错了去回收站「还原」。 */
+async function bmProjDelete(relPath, label) {
+  try {
+    await window.bookmark.projectsDelete(relPath);
+    bmToast(`「${label.replace(/\.md$/i, "")}」进回收站了（删错了去回收站还原）`, 3500);
+  } catch (error) {
+    bmShowError("删没成： " + bmErrorText(error));
+  }
+  await bmRenderProjects();
 }
 
 /** 新建时「＋」原地变成起名框（2026-10-29 用户：点哪都算保存，弄错了 Ctrl+Z）：回车或点别处就建好，框是空的或按 Esc 作罢。 */
@@ -1929,6 +1986,13 @@ function bmBindKitDrag(chip, kit, project) {
         try { chip.setPointerCapture(pointerId); } catch (e) { /* 捕不到也不挡拖 */ }
       }
       ev.preventDefault();
+      // 拖出看板窗口边（2026-11-14 用户：照条目复刻）：换位置这次作废，改走系统拖拽，拖的是这份 md 或这个夹
+      if (bmOutsideWindow(ev.clientX, ev.clientY)) {
+        finish(false);
+        delete chip.dataset.swallow;
+        void bmProjDragOut(chip.dataset.rel);
+        return;
+      }
       ghost.style.left = (ev.clientX - 20) + "px";
       ghost.style.top = (ev.clientY - 14) + "px";
       clear();

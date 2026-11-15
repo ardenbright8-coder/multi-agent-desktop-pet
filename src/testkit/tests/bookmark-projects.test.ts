@@ -15,6 +15,7 @@ import {
   kitCandidates,
   listProjects,
   moveInOrder,
+  projectLineForAgent,
   reorderProjects,
   resolveProjectPath,
   sanitizeEntryName,
@@ -167,4 +168,26 @@ test("listProjects：越界相对路径抛错、不存在的目录回落空列�
   const empty = listProjects(root, "不存在的夹");
   assert.equal(empty.dirs.length, 0);
   assert.equal(empty.files.length, 0);
+});
+
+test("projectLineForAgent：交给 AI 的几行带完整路径、项目夹、同夹还有啥；项目根和越界不给", () => {
+  const root = tempRoot();
+  createProjectFolder(root, "", "库管");
+  writeFileSync(join(root, "库管", "第2步派活.md"), "# 第2步\n", "utf8");
+  const step = projectLineForAgent(root, "库管/第2步派活.md");
+  assert.equal(step.path, join(root, "库管", "第2步派活.md"));
+  const lines = step.line.split("\n");
+  assert.equal(lines[0], `看板项目「库管」的「第2步派活」：${join(root, "库管", "第2步派活.md")}`);
+  assert.equal(lines[1], `项目夹：${join(root, "库管")}\\`);
+  assert.match(lines[2], /^项目夹里还有：/);
+  assert.ok(lines[2].includes("设计思路.md") && lines[2].includes("资源包\\"), lines[2]);
+  assert.ok(!lines[2].includes("第2步派活.md"), "自己不再列一遍");
+  const folder = projectLineForAgent(root, "库管");
+  assert.match(folder.line, /^看板项目「库管」的项目夹：/);
+  assert.ok(folder.line.includes("夹里有：") && folder.line.includes("第2步派活.md"));
+  const pack = projectLineForAgent(root, "库管/资源包");
+  assert.match(pack.line, /的「资源包」夹：/);
+  assert.throws(() => projectLineForAgent(root, ""), /项目根/);
+  assert.throws(() => projectLineForAgent(root, ".."), /越出项目夹/);
+  assert.throws(() => projectLineForAgent(root, "库管/没有.md"), /不在了/);
 });

@@ -30,7 +30,7 @@ import { handleDispatchAction } from './dispatch-cli';
 import { listBoardSkills, readBoardSkill } from './skills';
 import { clampOpacity, DEFAULT_BOARD_OPACITY, parseAppearance } from "./appearance";
 import { clampZoom, DEFAULT_BOARD_ZOOM, parseZoom, stepZoom, zoomActionForKey } from "./zoom";
-import { createKitEntry, createProjectFolder, createProjectMarkdown, discardKitEntry, editProjectKit, ensureProjectsRoot, kitCandidates, listProjects, projectsRoot, reorderProjects, resolveProjectPath } from "./projects";
+import { createKitEntry, createProjectFolder, createProjectMarkdown, discardKitEntry, editProjectKit, ensureProjectsRoot, kitCandidates, listProjects, projectLineForAgent, projectsRoot, reorderProjects, resolveProjectPath, toRelPath } from "./projects";
 import { composeForAgent, listTemplates } from "./templates";
 import {
   agentShortcutFor, formatLaunchConfig, isAbsoluteTarget, LAUNCH_CONFIG_FILE, launchKey, parseLaunchConfig, pasteIntoAppWindow, pasteIntoNewWindow,
@@ -1097,6 +1097,36 @@ function registerIpc(): void {
     const abs = resolveProjectPath(projectsRoot(), String(relative ?? ""));
     const errorMessage = await shell.openPath(abs);
     if (errorMessage) throw new Error(`打不开：${errorMessage}`);
+    return true;
+  });
+  // 项目页交给 AI（2026-11-14 用户：照 Agent 分组复刻）：右键「复制给 AI」、按住拖出窗口边，给的都是 projectLineForAgent 那几行。
+  ipcMain.handle("bookmark:projects:copy-line", (_event, relative: unknown) => {
+    const { line } = projectLineForAgent(projectsRoot(), String(relative ?? ""));
+    clipboard.writeText(line);
+    return line;
+  });
+  // 拖出去走 Electron 自带的拖文件（条目 drag-out-files 同一条路）；夹也能拖，放进 AI 窗口贴的是路径。
+  ipcMain.handle("bookmark:projects:drag-out", (event, relative: unknown) => {
+    const { path } = projectLineForAgent(projectsRoot(), String(relative ?? ""));
+    const icon = nativeImage.createFromPath(join(__dirname, "..", "assets", "app-icon.png")).resize({ width: 32, height: 32 });
+    event.sender.startDrag({ file: path, icon });
+    log.记(`拖出看板：项目里的 ${basename(path)}`, "window");
+    return path;
+  });
+  // 项目页右键删除（2026-11-14 用户：整个项目夹、单个小按钮都能删，自由点）：进回收站，删错了去回收站还原。
+  ipcMain.handle("bookmark:projects:delete", async (_event, relative: unknown) => {
+    const root = projectsRoot();
+    const abs = resolveProjectPath(root, String(relative ?? ""));
+    const rel = toRelPath(root, abs);
+    if (!rel) throw new Error("项目根不能删");
+    if (!existsSync(abs)) throw new Error("已经不在了");
+    await shell.trashItem(abs);
+    // 删的是项目根下一层的东西：顺手从小按钮账上划掉
+    const parts = rel.split("/");
+    if (parts.length === 2) {
+      try { editProjectKit(root, parts[0], { op: "remove", name: parts[1] }); } catch { /* 账划不掉不碍事，列表本来就跳过不在的 */ }
+    }
+    log.记(`项目页删进回收站：${rel}`, "window");
     return true;
   });
   // 复制给 AI（2026-09-24）：模板夹一份 md = 气泡一项；拼好直接进剪贴板，用户自己粘、自己发（不替他开窗、不替他发）。

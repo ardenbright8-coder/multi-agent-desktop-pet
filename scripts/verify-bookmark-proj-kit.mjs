@@ -4,6 +4,7 @@
 //   ③ 「＋」→ 挑已有的：夹里手放的 md 出现在菜单里，点了就加上
 //   ④ 按住「执行过程」往左拖到「设计思路」前面：松手换了位置，重画后还是这个顺序；拖完不误开文件
 //   ⑤ 右键「从这排拿掉」：按钮没了，文件还在
+//   ⑤b 小按钮、项目行右键「复制给 AI」给完整路径那几行；「删掉（进回收站）」文件真没了、账上划掉、整个项目夹也能删
 //   ⑥ 点号码复制单独文件路径 → 条目标成「已交出」（♻️ 小标）；命令行 next 这条 → 换成窗口名
 // 用法：npm run build 之后 node scripts/verify-bookmark-proj-kit.mjs（BM_VERIFY_DIST 可指到别的编译夹，桌宠开着时不动 dist）
 // 注意：独立 AGENT_PET_HUB_HOME 起实例，不碰真看板。
@@ -130,6 +131,30 @@ try {
   await page.keyboard.press("Control+z");
   await waitFor(async () => (await chips())[0] === "设计思路.md");
   check("⑤ 再 Ctrl+Z 一下：拖的那步也退回去，设计思路回到第一个", (await chips()).slice(0, 2).join() === "设计思路.md,执行过程.md", (await chips()).join());
+
+  // ⑤b 交给 AI、删掉（2026-11-14）：小按钮和项目行右键都有「复制给 AI」「删掉（进回收站）」
+  const clip = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  await kit.locator('.proj-kit-btn[data-name="药方.md"]').click({ button: "right" });
+  const chipMenu = await page.locator("#ctx-menu .ctx-item").allTextContents();
+  check("⑤b 小按钮右键：复制给 AI、拿掉、删掉三样", chipMenu.join("|") === "复制给 AI|从这排拿掉（文件不删）|删掉「药方」（进回收站）", chipMenu.join("|"));
+  await page.locator("#ctx-menu .ctx-item", { hasText: "复制给 AI" }).click();
+  const chipLine = await waitFor(async () => ((await clip()).includes("药方") ? clip() : ""));
+  check("⑤b 复制给 AI：完整路径＋项目夹＋同夹还有啥", chipLine.startsWith(`看板项目「中医」的「药方」：${join(projDir, "中医", "药方.md")}`) && chipLine.includes(`项目夹：${join(projDir, "中医")}\\`) && chipLine.includes("设计思路.md"), chipLine.split("\n")[0]);
+  await kit.locator('.proj-kit-btn[data-name="药方.md"]').click({ button: "right" });
+  await page.locator("#ctx-menu .ctx-item", { hasText: "删掉「药方」" }).click();
+  await waitFor(async () => !(await chips()).includes("药方.md"));
+  const kitAccount = JSON.parse(readFileSync(join(projDir, "中医", ".小按钮.json"), "utf8"));
+  check("⑤b 右键删掉：按钮没了、文件进回收站、账上也划掉", !(await chips()).includes("药方.md") && !existsSync(join(projDir, "中医", "药方.md")) && !kitAccount.includes("药方.md"), kitAccount.join());
+  await page.evaluate(() => window.bookmark.projectsMkdir("", "阿萨德"));
+  await page.evaluate(() => bmRenderProjects());
+  const asd = page.locator("#board .proj-row", { hasText: "阿萨德" });
+  await waitFor(async () => (await asd.count()) === 1);
+  await asd.locator(".proj-name").click({ button: "right" });
+  const rowMenu = await page.locator("#ctx-menu .ctx-item").allTextContents();
+  check("⑤b 项目行右键：复制给 AI、删掉整个夹", rowMenu.join("|") === "复制给 AI|删掉整个「阿萨德」夹（进回收站）", rowMenu.join("|"));
+  await page.locator("#ctx-menu .ctx-item", { hasText: "删掉整个" }).click();
+  await waitFor(async () => (await asd.count()) === 0);
+  check("⑤b 删掉整个项目夹：行没了、夹进回收站、没进到夹里面去", (await asd.count()) === 0 && !existsSync(join(projDir, "阿萨德")) && (await page.locator("#board .proj-up").count()) === 0);
 
   // ⑥ 接活自动标
   const rec = await page.evaluate(() => window.bookmark.add({ text: "改一下搜索框", assignee: "Claude" }));

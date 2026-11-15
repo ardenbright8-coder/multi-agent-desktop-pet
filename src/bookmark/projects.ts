@@ -283,6 +283,30 @@ export function createProjectMarkdown(root: string, parentRelative: string, rawN
   return toRelPath(root, target);
 }
 
+/** 交给 AI 的那几行（2026-11-14 用户：照 Agent 分组复刻，拖出去、复制都给这几行）：完整路径＋项目夹＋同夹还有哪几份。
+ *  派活稿里写的「同夹」「本项目夹」，AI 照这几行就找得到，不用满盘翻。 */
+export function projectLineForAgent(root: string, relative: string): { path: string; line: string } {
+  const abs = resolveProjectPath(root, relative);
+  const rel = toRelPath(root, abs);
+  if (!rel) throw new Error("项目根不能交出去");
+  if (!existsSync(abs)) throw new Error("这份已经不在了");
+  const project = rel.split("/")[0];
+  const projectAbs = join(resolve(root), project);
+  const isDir = statSync(abs).isDirectory();
+  const others = readdirSync(projectAbs, { withFileTypes: true })
+    .filter((d) => !d.name.startsWith(".") && join(projectAbs, d.name) !== abs && (d.isDirectory() || d.name.toLowerCase().endsWith(".md")))
+    .map((d) => (d.isDirectory() ? `${d.name}\\` : d.name))
+    .sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+  const what = rel === project ? "的项目夹" : `的「${basename(abs).replace(/\.md$/i, "")}」${isDir ? "夹" : ""}`;
+  const lines = [`看板项目「${project}」${what}：${abs}${isDir ? "\\" : ""}`];
+  if (rel !== project) lines.push(`项目夹：${projectAbs}\\`);
+  if (others.length) {
+    const hint = rel === project ? "（用到哪份开哪份）" : "（先照这份开头说要读的读，别的用到再开）";
+    lines.push(`${rel === project ? "夹里有" : "项目夹里还有"}：${others.join("、")}${hint}`);
+  }
+  return { path: abs, line: lines.join("\n") };
+}
+
 /** 项目根（数据窝 bookmark\projects\，真实文件夹真实 md 都落这）。 */
 export function projectsRoot(): string {
   return bookmarkProjectsDirectory();

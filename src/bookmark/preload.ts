@@ -138,6 +138,10 @@ contextBridge.exposeInMainWorld("bookmark", {
   projectsReorder: (parent: string, moving: string, anchor: string, place: "above" | "below") =>
     ipcRenderer.invoke("bookmark:projects:reorder", { parent, moving, anchor, place }),
   projectsOpen: (relative: string) => ipcRenderer.invoke("bookmark:projects:open", relative),
+  // 项目页交给 AI、删除（2026-11-14）：复制那几行进剪贴板／按住拖出窗口边（等松手才回来）／删进回收站。
+  projectsCopyLine: (relative: string) => ipcRenderer.invoke("bookmark:projects:copy-line", relative) as Promise<string>,
+  projectsDragOut: (relative: string) => ipcRenderer.invoke("bookmark:projects:drag-out", relative) as Promise<string>,
+  projectsDelete: (relative: string) => ipcRenderer.invoke("bookmark:projects:delete", relative) as Promise<boolean>,
   // 项目行尾小按钮（2026-10-29）：op＝candidates 挑已有的 / create 新建（kind md|dir）/ add / remove / move（anchor、place）
   // / set（names，撤回用）/ discard（撤回新建的）。
   projectsKit: (payload: { op: string; project: string; name?: string; anchor?: string; place?: "above" | "below"; kind?: "md" | "dir"; names?: string[] }) =>
