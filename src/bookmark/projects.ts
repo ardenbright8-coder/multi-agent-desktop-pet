@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { bookmarkProjectsDirectory } from "../shared/paths";
+import { boardSkillMainPath } from "./item-files";
 
 /** 项目条目（列表渲染用）：name=条目名，relPath=相对 projects 根的路径（正斜杠风格给渲染层），isDir=是不是文件夹。 */
 export interface ProjectEntry {
@@ -40,6 +41,17 @@ export const PROJECT_ORDER_FILE = ".排序.json";
 export const PROJECT_KIT_FILE = ".小按钮.json";
 /** 没记过账的项目：照新建项目夹自带的三块。 */
 export const DEFAULT_KIT = ["设计思路.md", "执行过程.md", "资源包"];
+
+/** 设计思路与执行过程的顶部硬规矩（2026-11-18 用户拍板写死进程序，免得每次口头提醒）。 */
+export const CONFIRMED_ONLY_BANNER = "> 🚨 **硬规矩：只写咱俩已经聊定、拍板敲定的方案；还在商量、设想、草案阶段的一律不写。**";
+export const CONFIRMED_ONLY_AGENT_RULE = "写入铁律：设计思路与执行过程只写用户已拍板敲定的内容，商量中的草案与设想严禁写入。";
+
+function initialMarkdownContent(title: string): string {
+  if (/思路|执行过程|方案/.test(title)) {
+    return `# ${title}\n\n${CONFIRMED_ONLY_BANNER}\n`;
+  }
+  return `# ${title}\n`;
+}
 
 // Windows 文件名禁用字符 + 保留尾点尾空格；.. 单独拦（防穿越）。
 const FORBIDDEN_NAME = /[\\/:*?"<>|]/;
@@ -178,7 +190,7 @@ export function discardKitEntry(root: string, projectRel: string, rawName: strin
     rmdirSync(target);
     return { kit, deleted: true };
   }
-  const fresh = `# ${name.replace(/\.md$/i, "")}\n`;
+  const fresh = initialMarkdownContent(name.replace(/\.md$/i, ""));
   if (readFileSync(target, "utf8") !== fresh) return { kit, deleted: false };
   unlinkSync(target);
   return { kit, deleted: true };
@@ -252,10 +264,10 @@ function readProjectOrder(abs: string): string[] {
   }
 }
 
-/** 新建项目夹自带三块：两份稿 + 一个空资源包。资源包本身不再套三块。 */
+/** 新建项目夹自带三块：两份稿（顶部自带「敲定的才写」硬规矩）+ 一个空资源包。资源包本身不再套三块。 */
 function seedProjectTemplate(target: string): void {
-  writeFileSync(join(target, "设计思路.md"), "# 设计思路\n\n（还没写）\n", "utf8");
-  writeFileSync(join(target, "执行过程.md"), "# 执行过程\n\n（还没写）\n", "utf8");
+  writeFileSync(join(target, "设计思路.md"), `# 设计思路\n\n${CONFIRMED_ONLY_BANNER}\n\n（还没写）\n`, "utf8");
+  writeFileSync(join(target, "执行过程.md"), `# 执行过程\n\n${CONFIRMED_ONLY_BANNER}\n\n（还没写）\n`, "utf8");
   mkdirSync(join(target, "资源包"));
 }
 
@@ -279,7 +291,7 @@ export function createProjectMarkdown(root: string, parentRelative: string, rawN
   if (!existsSync(parentAbs)) throw new Error("上级文件夹不存在");
   const target = join(parentAbs, name);
   if (existsSync(target)) throw new Error(`「${name}」已经存在了`);
-  writeFileSync(target, `# ${trimmed.replace(/\.md$/i, "")}\n`, "utf8");
+  writeFileSync(target, initialMarkdownContent(trimmed.replace(/\.md$/i, "")), "utf8");
   return toRelPath(root, target);
 }
 
@@ -304,6 +316,8 @@ export function projectLineForAgent(root: string, relative: string): { path: str
     const hint = rel === project ? "（用到哪份开哪份）" : "（先照这份开头说要读的读，别的用到再开）";
     lines.push(`${rel === project ? "夹里有" : "项目夹里还有"}：${others.join("、")}${hint}`);
   }
+  lines.push(`接手必读看板技能（先打开读完再干，给哪份只读哪份、给整个夹才全读）：${boardSkillMainPath()}`);
+  lines.push(CONFIRMED_ONLY_AGENT_RULE);
   return { path: abs, line: lines.join("\n") };
 }
 

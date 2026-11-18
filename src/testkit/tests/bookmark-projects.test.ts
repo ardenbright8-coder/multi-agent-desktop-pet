@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  CONFIRMED_ONLY_AGENT_RULE,
+  CONFIRMED_ONLY_BANNER,
   createKitEntry,
   createProjectFolder,
   createProjectMarkdown,
@@ -182,6 +184,16 @@ test("projectLineForAgent：交给 AI 的几行带完整路径、项目夹、同
   assert.match(lines[2], /^项目夹里还有：/);
   assert.ok(lines[2].includes("设计思路.md") && lines[2].includes("资源包\\"), lines[2]);
   assert.ok(!lines[2].includes("第2步派活.md"), "自己不再列一遍");
+  assert.match(lines[3], /接手必读看板技能.+Agent看板[\\/]SKILL\.md/, "强提醒必读看板技能");
+  assert.equal(lines[4], CONFIRMED_ONLY_AGENT_RULE, "强制附带敲定的才写、商量草案严禁写入铁律");
+  const designContent = readFileSync(join(root, "库管", "设计思路.md"), "utf8");
+  const execContent = readFileSync(join(root, "库管", "执行过程.md"), "utf8");
+  assert.ok(designContent.includes(CONFIRMED_ONLY_BANNER), "设计思路默认带敲定才写硬规矩");
+  assert.ok(execContent.includes(CONFIRMED_ONLY_BANNER), "执行过程默认带敲定才写硬规矩");
+  // 新建带「思路」字样的小按钮同样自动带硬规矩，且未改动前 Ctrl+Z 可干净撤回删除
+  createKitEntry(root, "库管", "md", "扩展思路");
+  assert.ok(readFileSync(join(root, "库管", "扩展思路.md"), "utf8").includes(CONFIRMED_ONLY_BANNER));
+  assert.equal(discardKitEntry(root, "库管", "扩展思路.md").deleted, true);
   const folder = projectLineForAgent(root, "库管");
   assert.match(folder.line, /^看板项目「库管」的项目夹：/);
   assert.ok(folder.line.includes("夹里有：") && folder.line.includes("第2步派活.md"));
